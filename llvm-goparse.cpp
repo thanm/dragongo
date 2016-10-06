@@ -14,6 +14,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
@@ -36,22 +37,6 @@ using namespace llvm;
 
 static cl::opt<std::string>
 TargetTriple("mtriple", cl::desc("Override target triple for module"));
-
-static cl::opt<std::string>
-MArch("march",
-      cl::desc("Architecture to target."));
-
-static cl::opt<std::string>
-MCPU("mcpu",
-     cl::desc("Target a specific cpu type (-mcpu=help for details)"),
-     cl::value_desc("cpu-name"),
-     cl::init(""));
-
-static cl::list<std::string>
-MAttrs("mattr",
-       cl::CommaSeparated,
-       cl::desc("Target specific attributes (-mattr=help for details)"),
-       cl::value_desc("a1,+a2,-a3,..."));
 
 static cl::list<std::string>
 InputFilenames(cl::Positional,
@@ -100,7 +85,7 @@ EscapeDebugLevel("fgo-debug-escape",
                           "-fgo-optimize-allocs."),
                  cl::init(0));
 
-static void init_gogo(std::unique_ptr<TargetMachine> Target)
+static void init_gogo(TargetMachine *Target)
 
 {
   // does the comment below still apply?
@@ -152,6 +137,7 @@ int main(int argc, char **argv)
     return 1;
   }
 
+  // FIXME: cpu, features not yet supported
   std::string CPUStr = getCPUStr(), FeaturesStr = getFeaturesStr();
 
   TargetOptions Options = InitTargetOptionsFromCodeGenFlags();
@@ -166,7 +152,7 @@ int main(int argc, char **argv)
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
 
-  init_gogo(Target);
+  init_gogo(Target.get());
 
 #if 0
 extern void go_parse_input_files (const char**, unsigned int,

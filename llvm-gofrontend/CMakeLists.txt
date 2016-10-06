@@ -20,6 +20,7 @@ go-location.cpp
 go-linemap.cpp
 go-llvm-diagnostics.cpp
 go-sha1.cpp
+go-llvm.cpp
   )
 
 include_directories(${CMAKE_BINARY_DIR}/external/gmp)
