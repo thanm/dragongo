@@ -14,7 +14,7 @@
 
 #include "llvm/Support/SHA1.h"
 
-class Llvm_Sha1_Helper : public Sha1_Helper
+class Llvm_Sha1_Helper : public Go_sha1_helper
 {
  public:
 
@@ -52,7 +52,7 @@ Llvm_Sha1_Helper::finish()
   return rval;
 }
 
-Sha1_Helper*
+Go_sha1_helper*
 go_create_sha1_helper()
 {
   return new Llvm_Sha1_Helper();
