@@ -2,36 +2,17 @@
 include(ExternalProject)
 include(ProcessorCount)
 
-add_llvm_library(LLVMCppGoFrontEnd
-gofrontend/go/ast-dump.cc
-gofrontend/go/escape.cc
-gofrontend/go/export.cc
-gofrontend/go/expressions.cc
-gofrontend/go/go.cc
-gofrontend/go/gogo.cc
-gofrontend/go/go-optimize.cc
-gofrontend/go/import-archive.cc
-gofrontend/go/import.cc
-gofrontend/go/lex.cc
-gofrontend/go/parse.cc
-gofrontend/go/runtime.cc
-gofrontend/go/statements.cc
-gofrontend/go/types.cc
-gofrontend/go/unsafe.cc
-go-sha1.cpp
+add_subdirectory(llvm-gofrontend)
 
-DEPENDS gmp
-  )
-
-include_directories(${CMAKE_BINARY_DIR}/external/gmp)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/gofrontend/go)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/llvm-gofrontend)
 
 processorcount(PROCESSOR_COUNT)
 
 # Removed from below:
 # DEPENDS clang
 
-externalproject_add(gmp
+externalproject_add(libgmp
   URL ftp://ftp.gnu.org/gnu/gmp/gmp-6.1.0.tar.bz2
   DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/gmp
@@ -42,3 +23,17 @@ externalproject_add(gmp
   LOG_CONFIGURE 1
   LOG_BUILD 1
   )
+
+# LLVMCppGoFrontEnd
+
+set(LLVM_LINK_COMPONENTS
+  CppGoFrontEnd
+  Object
+  Support
+  )
+
+add_llvm_tool(llvm-goparse
+  llvm-goparse.cpp
+  )
+
+
