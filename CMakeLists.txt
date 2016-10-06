@@ -28,6 +28,12 @@ externalproject_add(libgmp
 
 set(LLVM_LINK_COMPONENTS
   CppGoFrontEnd
+  CodeGen
+  Core
+  IRReader
+  MC
+  Support
+  Target
   Object
   Support
   )
