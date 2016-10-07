@@ -5,17 +5,28 @@
 #include "gogo.h"
 #include "backend.h"
 
-// Class wrapping an LLVM type
+#include "llvm/IR/Type.h"
+#include "llvm/IR/DerivedTypes.h"
 
-class Btype : public llvm::Type
-{
+#include <unordered_map>
+
+// Btype wraps llvm::Type
+
+class Btype {
+ public:
+  explicit Btype(llvm::Type *type) : type_(type) { }
+  llvm::Type *type() const { return type_; }
+ private:
+  Btype() : type_(NULL) { }
+  llvm::Type *type_;
 };
 
+// Back end implementation
 
 class Llvm_backend : public Backend
 {
  public:
-  Llvm_backend(llvm::Context &context);
+  Llvm_backend(llvm::LLVMContext &context);
 
   // Types.
 
@@ -23,20 +34,36 @@ class Llvm_backend : public Backend
   error_type()
   {
     // hack: token type will be stand-in for error type
-    return Type::getTokenTy(context_);
+    return make_type(llvm::Type::getTokenTy(context_));
   }
 
   Btype*
   void_type()
   {
-    return llvm::Type::getVoidTy(context_);
+    return make_type(llvm::Type::getVoidTy(context_));
   }
 
   Btype*
   bool_type()
   {
     // LLVM has no predefined boolean type. Use int8 for now
-    return llvm::Type::getInt1Ty(context_);
+    return make_type(llvm::Type::getInt1Ty(context_));
+  }
+
+  // Make a Btype from an llvm::Type
+  Btype*
+  make_type(llvm::Type *lt)
+  {
+    assert(lt);
+    // Not sure if caching is a net win, but for now cache all
+    // previously created types and return the cached result
+    // if we ask for the same type twice.
+    auto it = typemap_.find(lt);
+    if (it != typemap_.end())
+      return it->second;
+    Btype *rval = new Btype(lt);
+    typemap_[lt] = rval;
+    return rval;
   }
 
   Btype*
@@ -113,12 +140,10 @@ class Llvm_backend : public Backend
   zero_expression(Btype*);
 
   Bexpression*
-  error_expression()
-  { return this->make_expression(error_mark_node); }
+  error_expression();
 
   Bexpression*
-  nil_pointer_expression()
-  { return this->make_expression(null_pointer_node); }
+  nil_pointer_expression();
 
   Bexpression*
   var_expression(Bvariable* var, Location);
@@ -202,8 +227,7 @@ class Llvm_backend : public Backend
   // Statements.
 
   Bstatement*
-  error_statement()
-  { return this->make_statement(error_mark_node); }
+  error_statement();
 
   Bstatement*
   expression_statement(Bexpression*);
@@ -253,8 +277,7 @@ class Llvm_backend : public Backend
   // Variables.
 
   Bvariable*
-  error_variable()
-  { return new Bvariable(error_mark_node); }
+  error_variable();
 
   Bvariable*
   global_variable(const std::string& package_name,
@@ -322,8 +345,7 @@ class Llvm_backend : public Backend
   // Functions.
 
   Bfunction*
-  error_function()
-  { return this->make_function(error_mark_node); }
+  error_function();
 
   Bfunction*
   function(Btype* fntype, const std::string& name, const std::string& asm_name,
@@ -350,24 +372,6 @@ class Llvm_backend : public Backend
                            const std::vector<Bvariable*>&);
 
  private:
-  // Make a Bexpression from a tree.
-  Bexpression*
-  make_expression(tree t)
-  { return new Bexpression(t); }
-
-  // Make a Bstatement from a tree.
-  Bstatement*
-  make_statement(tree t)
-  { return new Bstatement(t); }
-
-  // Make a Btype from a tree.
-  Btype*
-  make_type(tree t)
-  { return new Btype(t); }
-
-  Bfunction*
-  make_function(tree t)
-  { return new Bfunction(t); }
 
   Btype*
   fill_in_struct(Btype*, const std::vector<Btyped_identifier>&);
@@ -375,28 +379,26 @@ class Llvm_backend : public Backend
   Btype*
   fill_in_array(Btype*, Btype*, Bexpression*);
 
-  tree
-  non_zero_size_type(tree);
-
+#if 0
 private:
   void
   define_builtin(built_in_function bcode, const char* name, const char* libname,
                  tree fntype, bool const_p, bool noreturn_p);
+#endif
 
-  // A mapping of the GCC built-ins exposed to GCCGo.
+ private:
+  llvm::LLVMContext &context_;
+  std::unordered_map<llvm::Type *, Btype *> typemap_;
+  Btype *complex_float_type_;
+  Btype *complex_double_type_;
+
+  // A mapping of the LLVM built-ins exposed to Go
   std::map<std::string, Bfunction*> builtin_functions_;
 };
 
-// A helper function to create a GCC identifier from a C++ string.
-
-static inline tree
-get_identifier_from_string(const std::string& str)
-{
-  return get_identifier_with_length(str.data(), str.length());
-}
-
 // Return whether the character c is OK to use in the assembler.
 
+// TODO: move to common location
 static bool
 char_needs_encoding(char c)
 {
@@ -424,6 +426,7 @@ char_needs_encoding(char c)
 // Return whether the identifier needs to be translated because it
 // contains non-ASCII characters.
 
+// TODO: move to common location
 static bool
 needs_encoding(const std::string& str)
 {
@@ -438,6 +441,7 @@ needs_encoding(const std::string& str)
 // Pull the next UTF-8 character out of P and store it in *PC.  Return
 // the number of bytes read.
 
+// TODO: move to common location
 static size_t
 fetch_utf8_char(const char* p, unsigned int* pc)
 {
@@ -466,6 +470,7 @@ fetch_utf8_char(const char* p, unsigned int* pc)
 
 // Encode an identifier using ASCII characters.
 
+// TODO: move to common location
 static std::string
 encode_id(const std::string id)
 {
@@ -493,8 +498,11 @@ encode_id(const std::string id)
 
 // Define the built-in functions that are exposed to GCCGo.
 
-Llvm_backend::Llvm_backend(llvm::Context &context)
+Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     : context_(context)
+    , complex_float_type_(NULL)
+    , complex_double_type_(NULL)
+    , error_type_(NULL)
 {
 #if 0
   /* We need to define the fetch_and_add functions, since we use them
@@ -683,97 +691,80 @@ Llvm_backend::Llvm_backend(llvm::Context &context)
 #endif
 }
 
-// Get an unnamed integer type.
+// Get an unnamed integer type. Note that in the LLVM world, we don't
+// have signed/unsigned on types, we only have signed/unsigned on operations
+// over types (e.g. signed addition of two integers).
 
 Btype*
-Gcc_backend::integer_type(bool is_unsigned, int bits)
+Llvm_backend::integer_type(bool /*is_unsigned*/, int bits)
 {
-  tree type;
-  if (is_unsigned)
-    {
-      if (bits == INT_TYPE_SIZE)
-        type = unsigned_type_node;
-      else if (bits == CHAR_TYPE_SIZE)
-        type = unsigned_char_type_node;
-      else if (bits == SHORT_TYPE_SIZE)
-        type = short_unsigned_type_node;
-      else if (bits == LONG_TYPE_SIZE)
-        type = long_unsigned_type_node;
-      else if (bits == LONG_LONG_TYPE_SIZE)
-        type = long_long_unsigned_type_node;
-      else
-        type = make_unsigned_type(bits);
-    }
-  else
-    {
-      if (bits == INT_TYPE_SIZE)
-        type = integer_type_node;
-      else if (bits == CHAR_TYPE_SIZE)
-        type = signed_char_type_node;
-      else if (bits == SHORT_TYPE_SIZE)
-        type = short_integer_type_node;
-      else if (bits == LONG_TYPE_SIZE)
-        type = long_integer_type_node;
-      else if (bits == LONG_LONG_TYPE_SIZE)
-        type = long_long_integer_type_node;
-      else
-        type = make_signed_type(bits);
-    }
-  return this->make_type(type);
+  return make_type(llvm::IntegerType::get(context_, bits));
 }
 
 // Get an unnamed float type.
 
 Btype*
-Gcc_backend::float_type(int bits)
+Llvm_backend::float_type(int bits)
 {
-  tree type;
-  if (bits == FLOAT_TYPE_SIZE)
-    type = float_type_node;
-  else if (bits == DOUBLE_TYPE_SIZE)
-    type = double_type_node;
-  else if (bits == LONG_DOUBLE_TYPE_SIZE)
-    type = long_double_type_node;
-  else
-    {
-      type = make_node(REAL_TYPE);
-      TYPE_PRECISION(type) = bits;
-      layout_type(type);
-    }
-  return this->make_type(type);
+  if (bits == 32)
+    return make_type(llvm::Type::getFloatTy(context_));
+  else if (bits == 64)
+    return make_type(llvm::Type::getDoubleTy(context_));
+  else if (bits == 128)
+    return make_type(llvm::Type::getFP128Ty(context_));
+  assert(false && "unsupported float width");
+  return NULL;
 }
 
-// Get an unnamed complex type.
+// Make a struct type.
+// FIXME: llvm::StructType::get has no means of specifying field
+// names, meaning that for debug info generation we'll need to
+// capture fields here in some way, either by eagerly creating the DI
+// (preferrable) or recording the field names for later use (less so)
 
 Btype*
-Gcc_backend::complex_type(int bits)
+Llvm_backend::struct_type(const std::vector<Btyped_identifier>& fields)
 {
-  tree type;
-  if (bits == FLOAT_TYPE_SIZE * 2)
-    type = complex_float_type_node;
-  else if (bits == DOUBLE_TYPE_SIZE * 2)
-    type = complex_double_type_node;
-  else if (bits == LONG_DOUBLE_TYPE_SIZE * 2)
-    type = complex_long_double_type_node;
+  llvm::SmallVector<llvm::Type*> elems(fields.size());
+  for (auto bti : fields) {
+    // TODO: handle error types here?
+    elems[i] = bti.btype->type();
+  }
+  return make_type(llvm::StructType::get(context_, elems));
+}
+
+// LLVM has no such thing as a complex type -- it expects the front
+// end to lower all complex operations from the get-go, meaning
+// that the back end only sees two-element structs.
+
+Btype*
+Llvm_backend::complex_type(int bits)
+{
+  if (bits == 64 && complex_float_type_)
+    return complex_float_type_;
+  if (bits == 128 && complex_double_type_)
+    return complex_double_type_;
+  assert(bits == 64 || bits == 128);
+  llvm::Type *elemTy = (bits == 64 ?
+                        llvm::Type::getFloatTy(context_) :
+                        llvm::Type::getDoubleTy(context_));
+  llvm::SmallVector<llvm::Type*> elems(2);
+  elems[0] = elemTy;
+  elems[1] = elemTy;
+  Btype *rval = make_type(llvm::StructType::get(context_, elems));
+  if (bits == 64)
+    complex_float_type_ = rval;
   else
-    {
-      type = make_node(REAL_TYPE);
-      TYPE_PRECISION(type) = bits / 2;
-      layout_type(type);
-      type = build_complex_type(type);
-    }
-  return this->make_type(type);
+    complex_double_type_ = rval;
+  return rval;
 }
 
 // Get a pointer type.
 
 Btype*
-Gcc_backend::pointer_type(Btype* to_type)
+Llvm_backend::pointer_type(Btype* to_type)
 {
-  tree to_type_tree = to_type->get_tree();
-  if (to_type_tree == error_mark_node)
-    return this->error_type();
-  tree type = build_pointer_type(to_type_tree);
+  if (to_type
   return this->make_type(type);
 }
 
@@ -838,42 +829,6 @@ Gcc_backend::function_type(const Btyped_identifier& receiver,
     return this->error_type();
 
   return this->make_type(build_pointer_type(fntype));
-}
-
-// Make a struct type.
-
-Btype*
-Gcc_backend::struct_type(const std::vector<Btyped_identifier>& fields)
-{
-  return this->fill_in_struct(this->make_type(make_node(RECORD_TYPE)), fields);
-}
-
-// Fill in the fields of a struct type.
-
-Btype*
-Gcc_backend::fill_in_struct(Btype* fill,
-                            const std::vector<Btyped_identifier>& fields)
-{
-  tree fill_tree = fill->get_tree();
-  tree field_trees = NULL_TREE;
-  tree* pp = &field_trees;
-  for (std::vector<Btyped_identifier>::const_iterator p = fields.begin();
-       p != fields.end();
-       ++p)
-    {
-      tree name_tree = get_identifier_from_string(p->name);
-      tree type_tree = p->btype->get_tree();
-      if (type_tree == error_mark_node)
-        return this->error_type();
-      tree field = build_decl(p->location.gcc_location(), FIELD_DECL, name_tree,
-                              type_tree);
-      DECL_CONTEXT(field) = fill_tree;
-      *pp = field;
-      pp = &DECL_CHAIN(field);
-    }
-  TYPE_FIELDS(fill_tree) = field_trees;
-  layout_type(fill_tree);
-  return fill;
 }
 
 // Make an array type.
