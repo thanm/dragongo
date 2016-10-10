@@ -197,7 +197,7 @@ Llvm_linemap::is_unknown(Location loc)
 // Return the Linemap to use for the gcc backend.
 
 Linemap*
-go_get_linemap()
+go_get_linemap(llvm::LLVMContext &context)
 {
   return new Llvm_linemap;
 }

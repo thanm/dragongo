@@ -14,6 +14,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
@@ -32,6 +33,8 @@
 #include <system_error>
 
 #include "go-c.h"
+#include "go-llvm-linemap.h"
+#include "go-llvm-backend.h"
 
 using namespace llvm;
 
@@ -85,8 +88,7 @@ EscapeDebugLevel("fgo-debug-escape",
                           "-fgo-optimize-allocs."),
                  cl::init(0));
 
-static void init_gogo(TargetMachine *Target)
-
+static void init_gogo(TargetMachine *Target, llvm::LLVMContext &Context)
 {
   // does the comment below still apply?
 #if 0
@@ -108,6 +110,8 @@ static void init_gogo(TargetMachine *Target)
   args.check_divide_overflow = CheckDivideOverflow;
   args.compiling_runtime = false; // FIXME: not yet supported
   args.debug_escape_level = EscapeDebugLevel;
+  args.linemap = go_get_linemap();
+  args.backend = go_get_backend(Context);
   go_create_gogo (&args);
 
 #if 0
@@ -148,11 +152,12 @@ int main(int argc, char **argv)
   assert(Target && "Could not allocate target machine!");
 
   // Print a stack trace if we signal out.
+  llvm::LLVMContext Context;
   sys::PrintStackTraceOnErrorSignal(argv[0]);
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
 
-  init_gogo(Target.get());
+  init_gogo(Target.get(), Context);
 
 #if 0
 extern void go_parse_input_files (const char**, unsigned int,

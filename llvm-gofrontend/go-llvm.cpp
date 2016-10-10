@@ -33,8 +33,7 @@ class Llvm_backend : public Backend
   Btype*
   error_type()
   {
-    // hack: token type will be stand-in for error type
-    return make_type(llvm::Type::getTokenTy(context_));
+    return error_type_;
   }
 
   Btype*
@@ -391,6 +390,8 @@ private:
   std::unordered_map<llvm::Type *, Btype *> typemap_;
   Btype *complex_float_type_;
   Btype *complex_double_type_;
+  Btype *error_type_;
+  unsigned address_space_;
 
   // A mapping of the LLVM built-ins exposed to Go
   std::map<std::string, Bfunction*> builtin_functions_;
@@ -503,7 +504,12 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     , complex_float_type_(NULL)
     , complex_double_type_(NULL)
     , error_type_(NULL)
+    , address_space_(0)
 {
+  // LLVM doesn't have anything that corresponds directly to the
+  // gofrontend notion of an error type -- use token type as a stand-in
+  error_type_ = make_type(llvm::Type::getTokenTy(context_));
+
 #if 0
   /* We need to define the fetch_and_add functions, since we use them
      for ++ and --.  */
@@ -725,10 +731,10 @@ Llvm_backend::float_type(int bits)
 Btype*
 Llvm_backend::struct_type(const std::vector<Btyped_identifier>& fields)
 {
-  llvm::SmallVector<llvm::Type*> elems(fields.size());
-  for (auto bti : fields) {
+  llvm::SmallVector<llvm::Type*, 64> elems(fields.size());
+  for (unsigned i = 0; i < fields.size(); ++i) {
     // TODO: handle error types here?
-    elems[i] = bti.btype->type();
+    elems[i] = fields[i].btype->type();
   }
   return make_type(llvm::StructType::get(context_, elems));
 }
@@ -748,7 +754,7 @@ Llvm_backend::complex_type(int bits)
   llvm::Type *elemTy = (bits == 64 ?
                         llvm::Type::getFloatTy(context_) :
                         llvm::Type::getDoubleTy(context_));
-  llvm::SmallVector<llvm::Type*> elems(2);
+  llvm::SmallVector<llvm::Type*, 2> elems(2);
   elems[0] = elemTy;
   elems[1] = elemTy;
   Btype *rval = make_type(llvm::StructType::get(context_, elems));
@@ -764,9 +770,13 @@ Llvm_backend::complex_type(int bits)
 Btype*
 Llvm_backend::pointer_type(Btype* to_type)
 {
-  if (to_type
-  return this->make_type(type);
+  if (to_type == error_type_)
+    return error_type_;
+  return this->make_type(llvm::PointerType::get(to_type->type(),
+                                                address_space_));
 }
+
+#if 0
 
 // Make a function type.
 
@@ -3129,16 +3139,12 @@ Gcc_backend::define_builtin(built_in_function bcode, const char* name,
     }
 }
 
+#endif
+
 // Return the backend generator.
 
 Backend*
-go_get_backend()
+go_get_backend(llvm::LLVMContext &context)
 {
-  return new Gcc_backend();
-}
-
-Backend*
-go_get_backend()
-{
-  return new Gcc_backend();
+  return new Llvm_backend(context);
 }
