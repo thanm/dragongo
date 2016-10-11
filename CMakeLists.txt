@@ -10,14 +10,11 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/llvm-gofrontend)
 
 processorcount(PROCESSOR_COUNT)
 
-# Removed from below:
-# DEPENDS clang
-
 #externalproject_add(libgmp
 # URL ftp://ftp.gnu.org/gnu/gmp/gmp-6.1.0.tar.bz2
 # URL ftp://gcc.gnu.org/pub/gcc/infrastructure/mpfr-3.1.4.tar.bz2
 
-llvm_ExternalProject_Add(libgmp
+externalproject_add(libgmp
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/gmp
   DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/gmp
@@ -28,7 +25,8 @@ llvm_ExternalProject_Add(libgmp
   LOG_BUILD 1
   )
 
-llvm_ExternalProject_Add(libmpfr
+externalproject_add(libmpfr
+  DEPENDS libgmp
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/mpfr
   DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/mpfr
@@ -57,6 +55,6 @@ add_llvm_tool(llvm-goparse
   llvm-goparse.cpp
   )
 
-target_link_libraries(llvm-goparse libgmp.a libmpfr.a)
+target_link_libraries(llvm-goparse libmpfr.a libmpc.a libgmp.a)
 
 

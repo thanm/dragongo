@@ -14,8 +14,10 @@
 #ifndef GO_LLVM_LINEMAP_H
 #define GO_LLVM_LINEMAP_H
 
+#include "llvm/IR/LLVMContext.h"
+
 class Linemap;
 
-extern Linemap *go_get_linemap();
+extern Linemap *go_get_linemap(llvm::LLVMContext &Context);
 
 #endif // !defined(GO_LLVM_LINEMAP_H)

@@ -110,7 +110,7 @@ static void init_gogo(TargetMachine *Target, llvm::LLVMContext &Context)
   args.check_divide_overflow = CheckDivideOverflow;
   args.compiling_runtime = false; // FIXME: not yet supported
   args.debug_escape_level = EscapeDebugLevel;
-  args.linemap = go_get_linemap();
+  args.linemap = go_get_linemap(Context);
   args.backend = go_get_backend(Context);
   go_create_gogo (&args);
 

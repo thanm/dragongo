@@ -18,6 +18,7 @@ gofrontend/go/types.cc
 gofrontend/go/unsafe.cc
 go-location.cpp
 go-linemap.cpp
+go-backend.cpp
 go-llvm-diagnostics.cpp
 go-sha1.cpp
 go-llvm.cpp

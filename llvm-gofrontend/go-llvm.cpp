@@ -508,6 +508,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 {
   // LLVM doesn't have anything that corresponds directly to the
   // gofrontend notion of an error type -- use token type as a stand-in
+  // for now.
   error_type_ = make_type(llvm::Type::getTokenTy(context_));
 
 #if 0
@@ -733,7 +734,8 @@ Llvm_backend::struct_type(const std::vector<Btyped_identifier>& fields)
 {
   llvm::SmallVector<llvm::Type*, 64> elems(fields.size());
   for (unsigned i = 0; i < fields.size(); ++i) {
-    // TODO: handle error types here?
+    if (fields[i].btype == error_type())
+      return error_type();
     elems[i] = fields[i].btype->type();
   }
   return make_type(llvm::StructType::get(context_, elems));
@@ -776,70 +778,68 @@ Llvm_backend::pointer_type(Btype* to_type)
                                                 address_space_));
 }
 
-#if 0
-
 // Make a function type.
 
 Btype*
-Gcc_backend::function_type(const Btyped_identifier& receiver,
-                           const std::vector<Btyped_identifier>& parameters,
-                           const std::vector<Btyped_identifier>& results,
-                           Btype* result_struct,
-                           Location)
+Llvm_backend::function_type(const Btyped_identifier& receiver,
+                            const std::vector<Btyped_identifier>& parameters,
+                            const std::vector<Btyped_identifier>& results,
+                            Btype* result_struct,
+                            Location)
 {
-  tree args = NULL_TREE;
-  tree* pp = &args;
-  if (receiver.btype != NULL)
-    {
-      tree t = receiver.btype->get_tree();
-      if (t == error_mark_node)
-        return this->error_type();
-      *pp = tree_cons(NULL_TREE, t, NULL_TREE);
-      pp = &TREE_CHAIN(*pp);
-    }
+  constexpr size_t esz = parameters.size() + results.size() + 1;
+  llvm::SmallVector<llvm::Type*, 64> elems(esz);
+  unsigned pos = 0;
 
+  // Receiver type if applicable
+  if (receiver.btype != NULL) {
+    if (receiver.btype == error_type())
+      return error_type();
+    elems[pos++] = receiver.btype->type();
+  }
+
+  // Argument types
   for (std::vector<Btyped_identifier>::const_iterator p = parameters.begin();
        p != parameters.end();
        ++p)
-    {
-      tree t = p->btype->get_tree();
-      if (t == error_mark_node)
-        return this->error_type();
-      *pp = tree_cons(NULL_TREE, t, NULL_TREE);
-      pp = &TREE_CHAIN(*pp);
-    }
+  {
+    if (p->btype == error_type())
+      return error_type();
+    elems[pos++] = p->btype->type();
+  }
 
-  // Varargs is handled entirely at the Go level.  When converted to
-  // GENERIC functions are not varargs.
-  *pp = void_list_node;
-
-  tree result;
+  // Result types
+  llvm::Type *rtyp = NULL;
   if (results.empty())
-    result = void_type_node;
-  else if (results.size() == 1)
-    result = results.front().btype->get_tree();
-  else
-    {
-      gcc_assert(result_struct != NULL);
-      result = result_struct->get_tree();
-    }
-  if (result == error_mark_node)
-    return this->error_type();
+    rtyp = llvm::Type::getVoidTy(context_);
+  else if (results.size() == 1) {
+    if (results.front().btype == error_type())
+      return error_type();
+    rtyp = results.front().btype->type();
+  } else {
+    assert(result_struct != NULL);
+    rtyp = result_struct->type();
+  }
+  assert(rtyp != NULL);
 
+  // https://gcc.gnu.org/PR72814 handling. From the go-gcc.cc
+  // equivalent, here is an explanatory comment:
+  //
   // The libffi library can not represent a zero-sized object.  To
   // avoid causing confusion on 32-bit SPARC, we treat a function that
   // returns a zero-sized value as returning void.  That should do no
-  // harm since there is no actual value to be returned.  See
-  // https://gcc.gnu.org/PR72814 for details.
-  if (result != void_type_node && int_size_in_bytes(result) == 0)
-    result = void_type_node;
+  // harm since there is no actual value to be returned.
+  //
+  if (DataLayout::getTypeSizeInBits(rtyp) == 0)
+    rtyp = llvm::Type::getVoidTy(context_);
 
-  tree fntype = build_function_type(result, args);
-  if (fntype == error_mark_node)
-    return this->error_type();
-
-  return this->make_type(build_pointer_type(fntype));
+  // from LLVM's perspective, no functions have varargs (all that
+  // is dealt with by the front end).
+  const bool isVarargs = false;
+  return make_type(llvm::FunctionType::get(rtyp, elems, isVarargs));
 }
+
+#if 0
 
 // Make an array type.
 
@@ -3140,6 +3140,17 @@ Gcc_backend::define_builtin(built_in_function bcode, const char* name,
 }
 
 #endif
+
+// Convert an identifier for use in an error message.
+// TODO(tham): scan the identifier to determine if contains
+// only ASCII or printable UTF-8, then perform character set
+// conversions if needed.
+
+const char *
+go_localize_identifier (const char *ident)
+{
+  return ident;
+}
 
 // Return the backend generator.
 
