@@ -1,6 +1,7 @@
 
 include(ExternalProject)
 include(ProcessorCount)
+include(LLVMExternalProjectUtils)
 
 add_subdirectory(llvm-gofrontend)
 
@@ -12,11 +13,25 @@ processorcount(PROCESSOR_COUNT)
 # Removed from below:
 # DEPENDS clang
 
-externalproject_add(libgmp
-  URL ftp://ftp.gnu.org/gnu/gmp/gmp-6.1.0.tar.bz2
-  DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external
+#externalproject_add(libgmp
+# URL ftp://ftp.gnu.org/gnu/gmp/gmp-6.1.0.tar.bz2
+# URL ftp://gcc.gnu.org/pub/gcc/infrastructure/mpfr-3.1.4.tar.bz2
+
+llvm_ExternalProject_Add(libgmp
   SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/gmp
+  DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/gmp
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure "CC=${CMAKE_BINARY_DIR}/bin/clang"
+  BUILD_COMMAND make -j${PROCESSOR_COUNT}
+  INSTALL_COMMAND ""
+  LOG_CONFIGURE 1
+  LOG_BUILD 1
+  )
+
+llvm_ExternalProject_Add(libmpfr
+  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/mpfr
+  DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external
+  BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/mpfr
   CONFIGURE_COMMAND <SOURCE_DIR>/configure "CC=${CMAKE_BINARY_DIR}/bin/clang"
   BUILD_COMMAND make -j${PROCESSOR_COUNT}
   INSTALL_COMMAND ""
@@ -41,5 +56,7 @@ set(LLVM_LINK_COMPONENTS
 add_llvm_tool(llvm-goparse
   llvm-goparse.cpp
   )
+
+target_link_libraries(llvm-goparse libgmp.a libmpfr.a)
 
 
