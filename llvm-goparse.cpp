@@ -26,6 +26,7 @@
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetRegistry.h"
+#include "llvm/Support/TargetSelect.h"
 #include "llvm/Target/TargetMachine.h"
 #include <algorithm>
 #include <cstring>
@@ -125,6 +126,9 @@ static void init_gogo(TargetMachine *Target, llvm::LLVMContext &Context)
 int main(int argc, char **argv)
 {
   Triple TheTriple;
+
+  InitializeAllTargets();
+  InitializeAllTargetsMCs();
 
   cl::ParseCommandLineOptions(argc, argv, "llvm go parser driver\n");
 

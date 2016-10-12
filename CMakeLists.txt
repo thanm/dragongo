@@ -40,6 +40,7 @@ externalproject_add(libmpfr
 # LLVMCppGoFrontEnd
 
 set(LLVM_LINK_COMPONENTS
+  ${LLVM_TARGETS_TO_BUILD}
   CppGoFrontEnd
   CodeGen
   Core
