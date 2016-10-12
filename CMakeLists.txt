@@ -55,6 +55,6 @@ add_llvm_tool(llvm-goparse
   llvm-goparse.cpp
   )
 
-target_link_libraries(llvm-goparse libmpfr.a libmpc.a libgmp.a)
+target_link_libraries(llvm-goparse libmpc.a libmpfr.a libgmp.a)
 
 

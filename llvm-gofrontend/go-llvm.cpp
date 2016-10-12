@@ -5,10 +5,10 @@
 #include "gogo.h"
 #include "backend.h"
 
-#include "llvm/IR/Type.h"
-#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Module.h"
+#include "llvm/IR/Type.h"
 
 #include <unordered_map>
 #include <unordered_set>
@@ -16,372 +16,280 @@
 // Btype wraps llvm::Type
 
 class Btype {
- public:
-  explicit Btype(llvm::Type *type)
-      : type_(type)
-  {
-  }
+public:
+  explicit Btype(llvm::Type *type) : type_(type) {}
 
   llvm::Type *type() const { return type_; }
 
- private:
-  Btype() : type_(NULL) { }
+private:
+  Btype() : type_(NULL) {}
   llvm::Type *type_;
   friend class Llvm_backend;
 };
 
 // Back end implementation
 
-class Llvm_backend : public Backend
-{
- public:
+class Llvm_backend : public Backend {
+public:
   Llvm_backend(llvm::LLVMContext &context);
 
   // Types.
 
-  Btype*
-  error_type()
-  {
-    return error_type_;
-  }
+  Btype *error_type() { return error_type_; }
 
-  Btype*
-  void_type()
-  {
-    return make_anon_type(llvm::Type::getVoidTy(context_));
-  }
+  Btype *void_type() { return make_anon_type(llvm::Type::getVoidTy(context_)); }
 
-  Btype*
-  bool_type()
-  {
+  Btype *bool_type() {
     // LLVM has no predefined boolean type. Use int8 for now
     return make_anon_type(llvm::Type::getInt1Ty(context_));
   }
 
-  Btype*
-  integer_type(bool, int);
+  Btype *integer_type(bool, int);
 
-  Btype*
-  float_type(int);
+  Btype *float_type(int);
 
-  Btype*
-  complex_type(int);
+  Btype *complex_type(int);
 
-  Btype*
-  pointer_type(Btype*);
+  Btype *pointer_type(Btype *);
 
-  Btype*
-  function_type(const Btyped_identifier&,
-                const std::vector<Btyped_identifier>&,
-                const std::vector<Btyped_identifier>&,
-                Btype*,
-                const Location);
+  Btype *function_type(const Btyped_identifier &,
+                       const std::vector<Btyped_identifier> &,
+                       const std::vector<Btyped_identifier> &, Btype *,
+                       const Location);
 
-  Btype*
-  struct_type(const std::vector<Btyped_identifier>&);
+  Btype *struct_type(const std::vector<Btyped_identifier> &);
 
-  Btype*
-  array_type(Btype*, Bexpression*);
+  Btype *array_type(Btype *, Bexpression *);
 
-  Btype*
-  placeholder_pointer_type(const std::string&, Location, bool);
+  Btype *placeholder_pointer_type(const std::string &, Location, bool);
 
-  bool
-  set_placeholder_pointer_type(Btype*, Btype*);
+  bool set_placeholder_pointer_type(Btype *, Btype *);
 
-  bool
-  set_placeholder_function_type(Btype*, Btype*);
+  bool set_placeholder_function_type(Btype *, Btype *);
 
-  Btype*
-  placeholder_struct_type(const std::string&, Location);
+  Btype *placeholder_struct_type(const std::string &, Location);
 
-  bool
-  set_placeholder_struct_type(Btype* placeholder,
-                              const std::vector<Btyped_identifier>&);
+  bool set_placeholder_struct_type(Btype *placeholder,
+                                   const std::vector<Btyped_identifier> &);
 
-  Btype*
-  placeholder_array_type(const std::string&, Location);
+  Btype *placeholder_array_type(const std::string &, Location);
 
-  bool
-  set_placeholder_array_type(Btype*, Btype*, Bexpression*);
+  bool set_placeholder_array_type(Btype *, Btype *, Bexpression *);
 
-  Btype*
-  named_type(const std::string&, Btype*, Location);
+  Btype *named_type(const std::string &, Btype *, Location);
 
-  Btype*
-  circular_pointer_type(Btype*, bool);
+  Btype *circular_pointer_type(Btype *, bool);
 
-  bool
-  is_circular_pointer_type(Btype*);
+  bool is_circular_pointer_type(Btype *);
 
-  int64_t
-  type_size(Btype*);
+  int64_t type_size(Btype *);
 
-  int64_t
-  type_alignment(Btype*);
+  int64_t type_alignment(Btype *);
 
-  int64_t
-  type_field_alignment(Btype*);
+  int64_t type_field_alignment(Btype *);
 
-  int64_t
-  type_field_offset(Btype*, size_t index);
+  int64_t type_field_offset(Btype *, size_t index);
 
   // Expressions.
 
-  Bexpression*
-  zero_expression(Btype*);
+  Bexpression *zero_expression(Btype *);
 
-  Bexpression*
-  error_expression();
+  Bexpression *error_expression();
 
-  Bexpression*
-  nil_pointer_expression();
+  Bexpression *nil_pointer_expression();
 
-  Bexpression*
-  var_expression(Bvariable* var, Location);
+  Bexpression *var_expression(Bvariable *var, Location);
 
-  Bexpression*
-  indirect_expression(Btype*, Bexpression* expr, bool known_valid, Location);
+  Bexpression *indirect_expression(Btype *, Bexpression *expr, bool known_valid,
+                                   Location);
 
-  Bexpression*
-  named_constant_expression(Btype* btype, const std::string& name,
-                            Bexpression* val, Location);
+  Bexpression *named_constant_expression(Btype *btype, const std::string &name,
+                                         Bexpression *val, Location);
 
-  Bexpression*
-  integer_constant_expression(Btype* btype, mpz_t val);
+  Bexpression *integer_constant_expression(Btype *btype, mpz_t val);
 
-  Bexpression*
-  float_constant_expression(Btype* btype, mpfr_t val);
+  Bexpression *float_constant_expression(Btype *btype, mpfr_t val);
 
-  Bexpression*
-  complex_constant_expression(Btype* btype, mpc_t val);
+  Bexpression *complex_constant_expression(Btype *btype, mpc_t val);
 
-  Bexpression*
-  string_constant_expression(const std::string& val);
+  Bexpression *string_constant_expression(const std::string &val);
 
-  Bexpression*
-  boolean_constant_expression(bool val);
+  Bexpression *boolean_constant_expression(bool val);
 
-  Bexpression*
-  real_part_expression(Bexpression* bcomplex, Location);
+  Bexpression *real_part_expression(Bexpression *bcomplex, Location);
 
-  Bexpression*
-  imag_part_expression(Bexpression* bcomplex, Location);
+  Bexpression *imag_part_expression(Bexpression *bcomplex, Location);
 
-  Bexpression*
-  complex_expression(Bexpression* breal, Bexpression* bimag, Location);
+  Bexpression *complex_expression(Bexpression *breal, Bexpression *bimag,
+                                  Location);
 
-  Bexpression*
-  convert_expression(Btype* type, Bexpression* expr, Location);
+  Bexpression *convert_expression(Btype *type, Bexpression *expr, Location);
 
-  Bexpression*
-  function_code_expression(Bfunction*, Location);
+  Bexpression *function_code_expression(Bfunction *, Location);
 
-  Bexpression*
-  address_expression(Bexpression*, Location);
+  Bexpression *address_expression(Bexpression *, Location);
 
-  Bexpression*
-  struct_field_expression(Bexpression*, size_t, Location);
+  Bexpression *struct_field_expression(Bexpression *, size_t, Location);
 
-  Bexpression*
-  compound_expression(Bstatement*, Bexpression*, Location);
+  Bexpression *compound_expression(Bstatement *, Bexpression *, Location);
 
-  Bexpression*
-  conditional_expression(Btype*, Bexpression*, Bexpression*, Bexpression*,
-                         Location);
+  Bexpression *conditional_expression(Btype *, Bexpression *, Bexpression *,
+                                      Bexpression *, Location);
 
-  Bexpression*
-  unary_expression(Operator, Bexpression*, Location);
+  Bexpression *unary_expression(Operator, Bexpression *, Location);
 
-  Bexpression*
-  binary_expression(Operator, Bexpression*, Bexpression*, Location);
+  Bexpression *binary_expression(Operator, Bexpression *, Bexpression *,
+                                 Location);
 
-  Bexpression*
-  constructor_expression(Btype*, const std::vector<Bexpression*>&, Location);
+  Bexpression *
+  constructor_expression(Btype *, const std::vector<Bexpression *> &, Location);
 
-  Bexpression*
-  array_constructor_expression(Btype*, const std::vector<unsigned long>&,
-                               const std::vector<Bexpression*>&, Location);
+  Bexpression *array_constructor_expression(Btype *,
+                                            const std::vector<unsigned long> &,
+                                            const std::vector<Bexpression *> &,
+                                            Location);
 
-  Bexpression*
-  pointer_offset_expression(Bexpression* base, Bexpression* offset, Location);
+  Bexpression *pointer_offset_expression(Bexpression *base, Bexpression *offset,
+                                         Location);
 
-  Bexpression*
-  array_index_expression(Bexpression* array, Bexpression* index, Location);
+  Bexpression *array_index_expression(Bexpression *array, Bexpression *index,
+                                      Location);
 
-  Bexpression*
-  call_expression(Bexpression* fn, const std::vector<Bexpression*>& args,
-                  Bexpression* static_chain, Location);
+  Bexpression *call_expression(Bexpression *fn,
+                               const std::vector<Bexpression *> &args,
+                               Bexpression *static_chain, Location);
 
-  Bexpression*
-  stack_allocation_expression(int64_t size, Location);
+  Bexpression *stack_allocation_expression(int64_t size, Location);
 
   // Statements.
 
-  Bstatement*
-  error_statement();
+  Bstatement *error_statement();
 
-  Bstatement*
-  expression_statement(Bexpression*);
+  Bstatement *expression_statement(Bexpression *);
 
-  Bstatement*
-  init_statement(Bvariable* var, Bexpression* init);
+  Bstatement *init_statement(Bvariable *var, Bexpression *init);
 
-  Bstatement*
-  assignment_statement(Bexpression* lhs, Bexpression* rhs, Location);
+  Bstatement *assignment_statement(Bexpression *lhs, Bexpression *rhs,
+                                   Location);
 
-  Bstatement*
-  return_statement(Bfunction*, const std::vector<Bexpression*>&,
-                   Location);
+  Bstatement *return_statement(Bfunction *, const std::vector<Bexpression *> &,
+                               Location);
 
-  Bstatement*
-  if_statement(Bexpression* condition, Bblock* then_block, Bblock* else_block,
-               Location);
+  Bstatement *if_statement(Bexpression *condition, Bblock *then_block,
+                           Bblock *else_block, Location);
 
-  Bstatement*
-  switch_statement(Bfunction* function, Bexpression* value,
-                   const std::vector<std::vector<Bexpression*> >& cases,
-                   const std::vector<Bstatement*>& statements,
-                   Location);
+  Bstatement *
+  switch_statement(Bfunction *function, Bexpression *value,
+                   const std::vector<std::vector<Bexpression *>> &cases,
+                   const std::vector<Bstatement *> &statements, Location);
 
-  Bstatement*
-  compound_statement(Bstatement*, Bstatement*);
+  Bstatement *compound_statement(Bstatement *, Bstatement *);
 
-  Bstatement*
-  statement_list(const std::vector<Bstatement*>&);
+  Bstatement *statement_list(const std::vector<Bstatement *> &);
 
-  Bstatement*
-  exception_handler_statement(Bstatement* bstat, Bstatement* except_stmt,
-                              Bstatement* finally_stmt, Location);
+  Bstatement *exception_handler_statement(Bstatement *bstat,
+                                          Bstatement *except_stmt,
+                                          Bstatement *finally_stmt, Location);
 
   // Blocks.
 
-  Bblock*
-  block(Bfunction*, Bblock*, const std::vector<Bvariable*>&,
-        Location, Location);
+  Bblock *block(Bfunction *, Bblock *, const std::vector<Bvariable *> &,
+                Location, Location);
 
-  void
-  block_add_statements(Bblock*, const std::vector<Bstatement*>&);
+  void block_add_statements(Bblock *, const std::vector<Bstatement *> &);
 
-  Bstatement*
-  block_statement(Bblock*);
+  Bstatement *block_statement(Bblock *);
 
   // Variables.
 
-  Bvariable*
-  error_variable();
+  Bvariable *error_variable();
 
-  Bvariable*
-  global_variable(const std::string& package_name,
-                  const std::string& pkgpath,
-                  const std::string& name,
-                  Btype* btype,
-                  bool is_external,
-                  bool is_hidden,
-                  bool in_unique_section,
-                  Location location);
+  Bvariable *global_variable(const std::string &package_name,
+                             const std::string &pkgpath,
+                             const std::string &name, Btype *btype,
+                             bool is_external, bool is_hidden,
+                             bool in_unique_section, Location location);
 
-  void
-  global_variable_set_init(Bvariable*, Bexpression*);
+  void global_variable_set_init(Bvariable *, Bexpression *);
 
-  Bvariable*
-  local_variable(Bfunction*, const std::string&, Btype*, bool,
-                 Location);
+  Bvariable *local_variable(Bfunction *, const std::string &, Btype *, bool,
+                            Location);
 
-  Bvariable*
-  parameter_variable(Bfunction*, const std::string&, Btype*, bool,
-                     Location);
+  Bvariable *parameter_variable(Bfunction *, const std::string &, Btype *, bool,
+                                Location);
 
-  Bvariable*
-  static_chain_variable(Bfunction*, const std::string&, Btype*, Location);
+  Bvariable *static_chain_variable(Bfunction *, const std::string &, Btype *,
+                                   Location);
 
-  Bvariable*
-  temporary_variable(Bfunction*, Bblock*, Btype*, Bexpression*, bool,
-                     Location, Bstatement**);
+  Bvariable *temporary_variable(Bfunction *, Bblock *, Btype *, Bexpression *,
+                                bool, Location, Bstatement **);
 
-  Bvariable*
-  implicit_variable(const std::string&, Btype*, bool, bool, bool,
-                    int64_t);
+  Bvariable *implicit_variable(const std::string &, Btype *, bool, bool, bool,
+                               int64_t);
 
-  void
-  implicit_variable_set_init(Bvariable*, const std::string&, Btype*,
-                             bool, bool, bool, Bexpression*);
+  void implicit_variable_set_init(Bvariable *, const std::string &, Btype *,
+                                  bool, bool, bool, Bexpression *);
 
-  Bvariable*
-  implicit_variable_reference(const std::string&, Btype*);
+  Bvariable *implicit_variable_reference(const std::string &, Btype *);
 
-  Bvariable*
-  immutable_struct(const std::string&, bool, bool, Btype*, Location);
+  Bvariable *immutable_struct(const std::string &, bool, bool, Btype *,
+                              Location);
 
-  void
-  immutable_struct_set_init(Bvariable*, const std::string&, bool, bool, Btype*,
-                            Location, Bexpression*);
+  void immutable_struct_set_init(Bvariable *, const std::string &, bool, bool,
+                                 Btype *, Location, Bexpression *);
 
-  Bvariable*
-  immutable_struct_reference(const std::string&, Btype*, Location);
+  Bvariable *immutable_struct_reference(const std::string &, Btype *, Location);
 
   // Labels.
 
-  Blabel*
-  label(Bfunction*, const std::string& name, Location);
+  Blabel *label(Bfunction *, const std::string &name, Location);
 
-  Bstatement*
-  label_definition_statement(Blabel*);
+  Bstatement *label_definition_statement(Blabel *);
 
-  Bstatement*
-  goto_statement(Blabel*, Location);
+  Bstatement *goto_statement(Blabel *, Location);
 
-  Bexpression*
-  label_address(Blabel*, Location);
+  Bexpression *label_address(Blabel *, Location);
 
   // Functions.
 
-  Bfunction*
-  error_function();
+  Bfunction *error_function();
 
-  Bfunction*
-  function(Btype* fntype, const std::string& name, const std::string& asm_name,
-           bool is_visible, bool is_declaration, bool is_inlinable,
-           bool disable_split_stack, bool in_unique_section, Location);
+  Bfunction *function(Btype *fntype, const std::string &name,
+                      const std::string &asm_name, bool is_visible,
+                      bool is_declaration, bool is_inlinable,
+                      bool disable_split_stack, bool in_unique_section,
+                      Location);
 
-  Bstatement*
-  function_defer_statement(Bfunction* function, Bexpression* undefer,
-                           Bexpression* defer, Location);
+  Bstatement *function_defer_statement(Bfunction *function,
+                                       Bexpression *undefer, Bexpression *defer,
+                                       Location);
 
-  bool
-  function_set_parameters(Bfunction* function, const std::vector<Bvariable*>&);
+  bool function_set_parameters(Bfunction *function,
+                               const std::vector<Bvariable *> &);
 
-  bool
-  function_set_body(Bfunction* function, Bstatement* code_stmt);
+  bool function_set_body(Bfunction *function, Bstatement *code_stmt);
 
-  Bfunction*
-  lookup_builtin(const std::string&);
+  Bfunction *lookup_builtin(const std::string &);
 
-  void
-  write_global_definitions(const std::vector<Btype*>&,
-                           const std::vector<Bexpression*>&,
-                           const std::vector<Bfunction*>&,
-                           const std::vector<Bvariable*>&);
+  void write_global_definitions(const std::vector<Btype *> &,
+                                const std::vector<Bexpression *> &,
+                                const std::vector<Bfunction *> &,
+                                const std::vector<Bvariable *> &);
 
- private:
-
+private:
   // Make an anonymous Btype from an llvm::Type
-  Btype*
-  make_anon_type(llvm::Type *lt);
+  Btype *make_anon_type(llvm::Type *lt);
 
   // Create a Btype from an llvm::Type, recording the fact that this
   // is a placeholder type.
-  Btype*
-  make_placeholder_type(llvm::Type *placeholder);
+  Btype *make_placeholder_type(llvm::Type *placeholder);
 
   // Replace the underlying llvm::Type for a given placeholder type once
   // we've determined what the final type will be.
-  void
-  update_placeholder_underlying_type(Btype* plt, llvm::Type *newtyp);
+  void update_placeholder_underlying_type(Btype *plt, llvm::Type *newtyp);
 
   // Create an opaque type for use as part of a placeholder type.
-  llvm::Type *
-  make_opaque_type();
+  llvm::Type *make_opaque_type();
 
 #if 0
 private:
@@ -390,13 +298,13 @@ private:
                  tree fntype, bool const_p, bool noreturn_p);
 #endif
 
- private:
+private:
   typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
   llvm::LLVMContext &context_;
   std::unique_ptr<llvm::Module> module_;
   const llvm::DataLayout &datalayout_;
   std::unordered_map<llvm::Type *, Btype *> anon_typemap_;
-  //std::unordered_map<named_llvm_type, Btype *> named_typemap_;
+  // std::unordered_map<named_llvm_type, Btype *> named_typemap_;
   std::unordered_set<Btype *> placeholders_;
   Btype *complex_float_type_;
   Btype *complex_double_type_;
@@ -405,46 +313,92 @@ private:
   unsigned address_space_;
 
   // A mapping of the LLVM built-ins exposed to Go
-  std::map<std::string, Bfunction*> builtin_functions_;
+  std::map<std::string, Bfunction *> builtin_functions_;
 };
 
 // Return whether the character c is OK to use in the assembler.
 
 // TODO: move to common location
-static bool
-char_needs_encoding(char c)
-{
-  switch (c)
-    {
-    case 'A': case 'B': case 'C': case 'D': case 'E': case 'F':
-    case 'G': case 'H': case 'I': case 'J': case 'K': case 'L':
-    case 'M': case 'N': case 'O': case 'P': case 'Q': case 'R':
-    case 'S': case 'T': case 'U': case 'V': case 'W': case 'X':
-    case 'Y': case 'Z':
-    case 'a': case 'b': case 'c': case 'd': case 'e': case 'f':
-    case 'g': case 'h': case 'i': case 'j': case 'k': case 'l':
-    case 'm': case 'n': case 'o': case 'p': case 'q': case 'r':
-    case 's': case 't': case 'u': case 'v': case 'w': case 'x':
-    case 'y': case 'z':
-    case '0': case '1': case '2': case '3': case '4':
-    case '5': case '6': case '7': case '8': case '9':
-    case '_': case '.': case '$': case '/':
-      return false;
-    default:
-      return true;
-    }
+static bool char_needs_encoding(char c) {
+  switch (c) {
+  case 'A':
+  case 'B':
+  case 'C':
+  case 'D':
+  case 'E':
+  case 'F':
+  case 'G':
+  case 'H':
+  case 'I':
+  case 'J':
+  case 'K':
+  case 'L':
+  case 'M':
+  case 'N':
+  case 'O':
+  case 'P':
+  case 'Q':
+  case 'R':
+  case 'S':
+  case 'T':
+  case 'U':
+  case 'V':
+  case 'W':
+  case 'X':
+  case 'Y':
+  case 'Z':
+  case 'a':
+  case 'b':
+  case 'c':
+  case 'd':
+  case 'e':
+  case 'f':
+  case 'g':
+  case 'h':
+  case 'i':
+  case 'j':
+  case 'k':
+  case 'l':
+  case 'm':
+  case 'n':
+  case 'o':
+  case 'p':
+  case 'q':
+  case 'r':
+  case 's':
+  case 't':
+  case 'u':
+  case 'v':
+  case 'w':
+  case 'x':
+  case 'y':
+  case 'z':
+  case '0':
+  case '1':
+  case '2':
+  case '3':
+  case '4':
+  case '5':
+  case '6':
+  case '7':
+  case '8':
+  case '9':
+  case '_':
+  case '.':
+  case '$':
+  case '/':
+    return false;
+  default:
+    return true;
+  }
 }
 
 // Return whether the identifier needs to be translated because it
 // contains non-ASCII characters.
 
 // TODO: move to common location
-static bool
-needs_encoding(const std::string& str)
-{
-  for (std::string::const_iterator p = str.begin();
-       p != str.end();
-       ++p)
+static bool needs_encoding(const std::string &str) {
+  for (std::string::const_iterator p = str.begin(); p != str.end(); ++p)
     if (char_needs_encoding(*p))
       return true;
   return false;
@@ -454,28 +408,23 @@ needs_encoding(const std::string& str)
 // the number of bytes read.
 
 // TODO: move to common location
-static size_t
-fetch_utf8_char(const char* p, unsigned int* pc)
-{
+static size_t fetch_utf8_char(const char *p, unsigned int *pc) {
   unsigned char c = *p;
-  if ((c & 0x80) == 0)
-    {
-      *pc = c;
-      return 1;
-    }
+  if ((c & 0x80) == 0) {
+    *pc = c;
+    return 1;
+  }
   size_t len = 0;
-  while ((c & 0x80) != 0)
-    {
-      ++len;
-      c <<= 1;
-    }
+  while ((c & 0x80) != 0) {
+    ++len;
+    c <<= 1;
+  }
   unsigned int rc = *p & ((1 << (7 - len)) - 1);
-  for (size_t i = 1; i < len; i++)
-    {
-      unsigned int u = p[i];
-      rc <<= 6;
-      rc |= u & 0x3f;
-    }
+  for (size_t i = 1; i < len; i++) {
+    unsigned int u = p[i];
+    rc <<= 6;
+    rc |= u & 0x3f;
+  }
   *pc = rc;
   return len;
 }
@@ -483,43 +432,34 @@ fetch_utf8_char(const char* p, unsigned int* pc)
 // Encode an identifier using ASCII characters.
 
 // TODO: move to common location
-static std::string
-encode_id(const std::string id)
-{
+static std::string encode_id(const std::string id) {
   std::string ret;
-  const char* p = id.c_str();
-  const char* pend = p + id.length();
-  while (p < pend)
-    {
-      unsigned int c;
-      size_t len = fetch_utf8_char(p, &c);
-      if (len == 1 && !char_needs_encoding(c))
-        ret += c;
-      else
-        {
-          ret += "$U";
-          char buf[30];
-          snprintf(buf, sizeof buf, "%x", c);
-          ret += buf;
-          ret += "$";
-        }
-      p += len;
+  const char *p = id.c_str();
+  const char *pend = p + id.length();
+  while (p < pend) {
+    unsigned int c;
+    size_t len = fetch_utf8_char(p, &c);
+    if (len == 1 && !char_needs_encoding(c))
+      ret += c;
+    else {
+      ret += "$U";
+      char buf[30];
+      snprintf(buf, sizeof buf, "%x", c);
+      ret += buf;
+      ret += "$";
     }
+    p += len;
+  }
   return ret;
 }
 
 // Define the built-in functions that are exposed to GCCGo.
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
-    : context_(context)
-    , module_(new llvm::Module("gomodule", context))
-    , datalayout_(module_->getDataLayout())
-    , complex_float_type_(NULL)
-    , complex_double_type_(NULL)
-    , error_type_(NULL)
-    , llvm_ptr_type_(NULL)
-    , address_space_(0)
-{
+    : context_(context), module_(new llvm::Module("gomodule", context)),
+      datalayout_(module_->getDataLayout()), complex_float_type_(NULL),
+      complex_double_type_(NULL), error_type_(NULL), llvm_ptr_type_(NULL),
+      address_space_(0) {
   // LLVM doesn't have anything that corresponds directly to the
   // gofrontend notion of an error type. For now we create a so-called
   // 'identified' anonymous struct type and have that act as a
@@ -527,8 +467,8 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   error_type_ = make_anon_type(llvm::StructType::create(context_));
 
   // For use handling circular types
-  llvm_ptr_type_ = llvm::PointerType::get(llvm::Type::getVoidTy(context_),
-                                         address_space_);
+  llvm_ptr_type_ =
+      llvm::PointerType::get(llvm::Type::getVoidTy(context_), address_space_);
 
 #if 0
   /* We need to define the fetch_and_add functions, since we use them
@@ -717,9 +657,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 #endif
 }
 
-Btype*
-Llvm_backend::make_anon_type(llvm::Type *lt)
-{
+Btype *Llvm_backend::make_anon_type(llvm::Type *lt) {
   assert(lt);
 
   // unsure whether caching is a net win, but for now cache all
@@ -733,19 +671,15 @@ Llvm_backend::make_anon_type(llvm::Type *lt)
   return rval;
 }
 
-Btype*
-Llvm_backend::make_placeholder_type(llvm::Type *pht)
-{
+Btype *Llvm_backend::make_placeholder_type(llvm::Type *pht) {
   Btype *bplace = make_anon_type(pht);
   assert(placeholders_.find(bplace) == placeholders_.end());
   placeholders_.insert(bplace);
   return bplace;
 }
 
-void
-Llvm_backend::update_placeholder_underlying_type(Btype* pht,
-                                                 llvm::Type *newtyp)
-{
+void Llvm_backend::update_placeholder_underlying_type(Btype *pht,
+                                                      llvm::Type *newtyp) {
   assert(placeholders_.find(pht) != placeholders_.end());
   placeholders_.erase(pht);
   pht->type_ = newtyp;
@@ -755,17 +689,13 @@ Llvm_backend::update_placeholder_underlying_type(Btype* pht,
 // have signed/unsigned on types, we only have signed/unsigned on operations
 // over types (e.g. signed addition of two integers).
 
-Btype*
-Llvm_backend::integer_type(bool /*is_unsigned*/, int bits)
-{
+Btype *Llvm_backend::integer_type(bool /*is_unsigned*/, int bits) {
   return make_anon_type(llvm::IntegerType::get(context_, bits));
 }
 
 // Get an unnamed float type.
 
-Btype*
-Llvm_backend::float_type(int bits)
-{
+Btype *Llvm_backend::float_type(int bits) {
   if (bits == 32)
     return make_anon_type(llvm::Type::getFloatTy(context_));
   else if (bits == 64)
@@ -782,10 +712,8 @@ Llvm_backend::float_type(int bits)
 // capture fields here in some way, either by eagerly creating the DI
 // (preferrable) or recording the field names for later use (less so)
 
-Btype*
-Llvm_backend::struct_type(const std::vector<Btyped_identifier>& fields)
-{
-  llvm::SmallVector<llvm::Type*, 64> elems(fields.size());
+Btype *Llvm_backend::struct_type(const std::vector<Btyped_identifier> &fields) {
+  llvm::SmallVector<llvm::Type *, 64> elems(fields.size());
   for (unsigned i = 0; i < fields.size(); ++i) {
     if (fields[i].btype == error_type())
       return error_type();
@@ -798,18 +726,15 @@ Llvm_backend::struct_type(const std::vector<Btyped_identifier>& fields)
 // end to lower all complex operations from the get-go, meaning
 // that the back end only sees two-element structs.
 
-Btype*
-Llvm_backend::complex_type(int bits)
-{
+Btype *Llvm_backend::complex_type(int bits) {
   if (bits == 64 && complex_float_type_)
     return complex_float_type_;
   if (bits == 128 && complex_double_type_)
     return complex_double_type_;
   assert(bits == 64 || bits == 128);
-  llvm::Type *elemTy = (bits == 64 ?
-                        llvm::Type::getFloatTy(context_) :
-                        llvm::Type::getDoubleTy(context_));
-  llvm::SmallVector<llvm::Type*, 2> elems(2);
+  llvm::Type *elemTy = (bits == 64 ? llvm::Type::getFloatTy(context_)
+                                   : llvm::Type::getDoubleTy(context_));
+  llvm::SmallVector<llvm::Type *, 2> elems(2);
   elems[0] = elemTy;
   elems[1] = elemTy;
   Btype *rval = make_anon_type(llvm::StructType::get(context_, elems));
@@ -822,26 +747,22 @@ Llvm_backend::complex_type(int bits)
 
 // Get a pointer type.
 
-Btype*
-Llvm_backend::pointer_type(Btype* to_type)
-{
+Btype *Llvm_backend::pointer_type(Btype *to_type) {
   if (to_type == error_type_)
     return error_type_;
-  return make_anon_type(llvm::PointerType::get(to_type->type(),
-                                               address_space_));
+  return make_anon_type(
+      llvm::PointerType::get(to_type->type(), address_space_));
 }
 
 // Make a function type.
 
-Btype*
-Llvm_backend::function_type(const Btyped_identifier& receiver,
-                            const std::vector<Btyped_identifier>& parameters,
-                            const std::vector<Btyped_identifier>& results,
-                            Btype* result_struct,
-                            Location)
-{
+Btype *
+Llvm_backend::function_type(const Btyped_identifier &receiver,
+                            const std::vector<Btyped_identifier> &parameters,
+                            const std::vector<Btyped_identifier> &results,
+                            Btype *result_struct, Location) {
   const size_t esz = parameters.size() + results.size() + 1;
-  llvm::SmallVector<llvm::Type*, 64> elems(esz);
+  llvm::SmallVector<llvm::Type *, 64> elems(esz);
   unsigned pos = 0;
 
   // Receiver type if applicable
@@ -853,9 +774,7 @@ Llvm_backend::function_type(const Btyped_identifier& receiver,
 
   // Argument types
   for (std::vector<Btyped_identifier>::const_iterator p = parameters.begin();
-       p != parameters.end();
-       ++p)
-  {
+       p != parameters.end(); ++p) {
     if (p->btype == error_type())
       return error_type();
     elems[pos++] = p->btype->type();
@@ -892,9 +811,7 @@ Llvm_backend::function_type(const Btyped_identifier& receiver,
   return make_anon_type(llvm::FunctionType::get(rtyp, elems, isVarargs));
 }
 
-Btype*
-Llvm_backend::array_type(Btype* element_btype, Bexpression* length)
-{
+Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
   assert(false && "LLvm_backend::array_type not yet implemented");
   return NULL;
 }
@@ -907,18 +824,14 @@ Llvm_backend::array_type(Btype* element_btype, Bexpression* length)
 // out the name/location information passed into the placeholder type
 // creation routines.
 
-llvm::Type *
-Llvm_backend::make_opaque_type()
-{
+llvm::Type *Llvm_backend::make_opaque_type() {
   return llvm::StructType::create(context_);
 }
 
 // Create a placeholder for a pointer type.
 
-Btype*
-Llvm_backend::placeholder_pointer_type(const std::string& name,
-                                       Location location, bool)
-{
+Btype *Llvm_backend::placeholder_pointer_type(const std::string &name,
+                                              Location location, bool) {
   llvm::Type *opaque = make_opaque_type();
   llvm::Type *ph_ptr_typ = llvm::PointerType::get(opaque, address_space_);
   return make_placeholder_type(ph_ptr_typ);
@@ -926,10 +839,8 @@ Llvm_backend::placeholder_pointer_type(const std::string& name,
 
 // Set the real target type for a placeholder pointer type.
 
-bool
-Llvm_backend::set_placeholder_pointer_type(Btype* placeholder,
-                                           Btype* to_type)
-{
+bool Llvm_backend::set_placeholder_pointer_type(Btype *placeholder,
+                                                Btype *to_type) {
   assert(placeholder);
   assert(to_type);
   if (placeholder == error_type_ || to_type == error_type_)
@@ -941,28 +852,22 @@ Llvm_backend::set_placeholder_pointer_type(Btype* placeholder,
 
 // Set the real values for a placeholder function type.
 
-bool
-Llvm_backend::set_placeholder_function_type(Btype* placeholder, Btype* ft)
-{
+bool Llvm_backend::set_placeholder_function_type(Btype *placeholder,
+                                                 Btype *ft) {
   return set_placeholder_pointer_type(placeholder, ft);
 }
 
 // Create a placeholder for a struct type.
 
-Btype*
-Llvm_backend::placeholder_struct_type(const std::string& name,
-                                      Location location)
-{
+Btype *Llvm_backend::placeholder_struct_type(const std::string &name,
+                                             Location location) {
   return make_placeholder_type(make_opaque_type());
 }
 
 // Fill in the fields of a placeholder struct type.
 
-bool
-Llvm_backend::set_placeholder_struct_type(
-    Btype* placeholder,
-    const std::vector<Btyped_identifier>& fields)
-{
+bool Llvm_backend::set_placeholder_struct_type(
+    Btype *placeholder, const std::vector<Btyped_identifier> &fields) {
   if (placeholder == error_type_)
     return false;
   Btype *stype = struct_type(fields);
@@ -972,21 +877,17 @@ Llvm_backend::set_placeholder_struct_type(
 
 // Create a placeholder for an array type.
 
-Btype*
-Llvm_backend::placeholder_array_type(const std::string& name,
-                                    Location location)
-{
+Btype *Llvm_backend::placeholder_array_type(const std::string &name,
+                                            Location location) {
   assert(false && "LLvm_backend::placeholder_array_type not yet implemented");
   return NULL;
 }
 
 // Fill in the components of a placeholder array type.
 
-bool
-Llvm_backend::set_placeholder_array_type(Btype* placeholder,
-                                         Btype* element_btype,
-                                         Bexpression* length)
-{
+bool Llvm_backend::set_placeholder_array_type(Btype *placeholder,
+                                              Btype *element_btype,
+                                              Bexpression *length) {
   if (placeholder == error_type_)
     return false;
   Btype *atype = array_type(element_btype, length);
@@ -996,10 +897,8 @@ Llvm_backend::set_placeholder_array_type(Btype* placeholder,
 
 // Return a named version of a type.
 
-Btype*
-Llvm_backend::named_type(const std::string& name, Btype* btype,
-                        Location location)
-{
+Btype *Llvm_backend::named_type(const std::string &name, Btype *btype,
+                                Location location) {
   // In the LLVM type world, all types are nameless except for so-called
   // identified struct types. For this reason, names are stored in a side
   // data structure.
@@ -1011,25 +910,19 @@ Llvm_backend::named_type(const std::string& name, Btype* btype,
 
 // Return a pointer type used as a marker for a circular type.
 
-Btype*
-Llvm_backend::circular_pointer_type(Btype*, bool)
-{
+Btype *Llvm_backend::circular_pointer_type(Btype *, bool) {
   return make_anon_type(llvm_ptr_type_);
 }
 
 // Return whether we might be looking at a circular type.
 
-bool
-Llvm_backend::is_circular_pointer_type(Btype* btype)
-{
+bool Llvm_backend::is_circular_pointer_type(Btype *btype) {
   return btype->type() == llvm_ptr_type_;
 }
 
 // Return the size of a type.
 
-int64_t
-Llvm_backend::type_size(Btype* btype)
-{
+int64_t Llvm_backend::type_size(Btype *btype) {
   if (btype == error_type_)
     return 1;
   uint64_t uval = datalayout_.getTypeSizeInBits(btype->type());
@@ -1038,9 +931,7 @@ Llvm_backend::type_size(Btype* btype)
 
 // Return the alignment of a type.
 
-int64_t
-Llvm_backend::type_alignment(Btype* btype)
-{
+int64_t Llvm_backend::type_alignment(Btype *btype) {
   if (btype == error_type_)
     return 1;
   unsigned uval = datalayout_.getPrefTypeAlignment(btype->type());
@@ -1049,9 +940,7 @@ Llvm_backend::type_alignment(Btype* btype)
 
 // Return the alignment of a struct field of type BTYPE.
 
-int64_t
-Llvm_backend::type_field_alignment(Btype* btype)
-{
+int64_t Llvm_backend::type_field_alignment(Btype *btype) {
   // pseudocode: create a new anon struct with two fields, first a single
   // byte field and then a field of type btype. Then use getElementOffset to
   // find out where the second one has been placed. Finally, return min
@@ -1062,9 +951,7 @@ Llvm_backend::type_field_alignment(Btype* btype)
 
 // Return the offset of a field in a struct.
 
-int64_t
-Llvm_backend::type_field_offset(Btype* btype, size_t index)
-{
+int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index) {
   if (btype == error_type_)
     return 0;
   assert(btype->type()->isStructTy());
@@ -1076,28 +963,33 @@ Llvm_backend::type_field_offset(Btype* btype, size_t index)
 
 // Return the zero value for a type.
 
-Bexpression*
-Llvm_backend::zero_expression(Btype* btype)
-{
+Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   assert(false && "LLvm_backend::zero_expression not yet implemented");
+  return NULL;
+}
+
+Bexpression *Llvm_backend::error_expression() {
+  assert(false && "LLvm_backend::error_expression not yet implemented");
+  return NULL;
+}
+
+Bexpression *Llvm_backend::nil_pointer_expression() {
+  assert(false && "LLvm_backend::nil_pointer_expression not yet implemented");
   return NULL;
 }
 
 // An expression that references a variable.
 
-Bexpression*
-Llvm_backend::var_expression(Bvariable* var, Location location)
-{
+Bexpression *Llvm_backend::var_expression(Bvariable *var, Location location) {
   assert(false && "LLvm_backend::var_expression not yet implemented");
   return NULL;
 }
 
 // An expression that indirectly references an expression.
 
-Bexpression*
-Llvm_backend::indirect_expression(Btype* btype, Bexpression* expr,
-                                  bool known_valid, Location location)
-{
+Bexpression *Llvm_backend::indirect_expression(Btype *btype, Bexpression *expr,
+                                               bool known_valid,
+                                               Location location) {
   assert(false && "LLvm_backend::indirect_expression not yet implemented");
   return NULL;
 }
@@ -1105,131 +997,114 @@ Llvm_backend::indirect_expression(Btype* btype, Bexpression* expr,
 // Return an expression that declares a constant named NAME with the
 // constant value VAL in BTYPE.
 
-Bexpression*
-Llvm_backend::named_constant_expression(Btype* btype, const std::string& name,
-                                        Bexpression* val, Location location)
-{
+Bexpression *Llvm_backend::named_constant_expression(Btype *btype,
+                                                     const std::string &name,
+                                                     Bexpression *val,
+                                                     Location location) {
   assert(false && "LLvm_backend::named_constant_expression not yet impl");
   return NULL;
 }
 
 // Return a typed value as a constant integer.
 
-Bexpression*
-Llvm_backend::integer_constant_expression(Btype* btype, mpz_t val)
-{
+Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
+                                                       mpz_t val) {
   assert(false && "LLvm_backend::integer_constant_expression not yet impl");
   return NULL;
 }
 
 // Return a typed value as a constant floating-point number.
 
-Bexpression*
-Llvm_backend::float_constant_expression(Btype* btype, mpfr_t val)
-{
+Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
   assert(false && "Llvm_backend::float_constant_expression not yet impl");
   return NULL;
 }
 
 // Return a typed real and imaginary value as a constant complex number.
 
-Bexpression*
-Llvm_backend::complex_constant_expression(Btype* btype, mpc_t val)
-{
+Bexpression *Llvm_backend::complex_constant_expression(Btype *btype,
+                                                       mpc_t val) {
   assert(false && "Llvm_backend::complex_constant_expression not yet impl");
   return NULL;
 }
 
 // Make a constant string expression.
 
-Bexpression*
-Llvm_backend::string_constant_expression(const std::string& val)
-{
+Bexpression *Llvm_backend::string_constant_expression(const std::string &val) {
   assert(false && "Llvm_backend::string_constant_expression not yet impl");
   return NULL;
 }
 
 // Make a constant boolean expression.
 
-Bexpression*
-Llvm_backend::boolean_constant_expression(bool val)
-{
+Bexpression *Llvm_backend::boolean_constant_expression(bool val) {
   assert(false && "Llvm_backend::boolean_constant_expression not yet impl");
   return NULL;
 }
 
 // Return the real part of a complex expression.
 
-Bexpression*
-Llvm_backend::real_part_expression(Bexpression* bcomplex, Location location)
-{
+Bexpression *Llvm_backend::real_part_expression(Bexpression *bcomplex,
+                                                Location location) {
   assert(false && "Llvm_backend::real_part_expression not yet impl");
   return NULL;
 }
 
 // Return the imaginary part of a complex expression.
 
-Bexpression*
-Llvm_backend::imag_part_expression(Bexpression* bcomplex, Location location)
-{
+Bexpression *Llvm_backend::imag_part_expression(Bexpression *bcomplex,
+                                                Location location) {
   assert(false && "Llvm_backend::imag_part_expression not yet impl");
   return NULL;
 }
 
 // Make a complex expression given its real and imaginary parts.
 
-Bexpression*
-Llvm_backend::complex_expression(Bexpression* breal, Bexpression* bimag,
-                                 Location location)
-{
+Bexpression *Llvm_backend::complex_expression(Bexpression *breal,
+                                              Bexpression *bimag,
+                                              Location location) {
   assert(false && "Llvm_backend::complex_expression not yet impl");
   return NULL;
 }
 
 // An expression that converts an expression to a different type.
 
-Bexpression*
-Llvm_backend::convert_expression(Btype* type, Bexpression* expr,
-                                 Location location)
-{
+Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
+                                              Location location) {
   assert(false && "Llvm_backend::convert_expression not yet impl");
   return NULL;
 }
 
 // Get the address of a function.
 
-Bexpression*
-Llvm_backend::function_code_expression(Bfunction* bfunc, Location location)
-{
+Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
+                                                    Location location) {
   assert(false && "Llvm_backend::function_code_expression not yet impl");
   return NULL;
 }
 
 // Get the address of an expression.
 
-Bexpression*
-Llvm_backend::address_expression(Bexpression* bexpr, Location location)
-{
+Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
+                                              Location location) {
   assert(false && "Llvm_backend::address_code_expression not yet impl");
   return NULL;
 }
 
 // Return an expression for the field at INDEX in BSTRUCT.
 
-Bexpression*
-Llvm_backend::struct_field_expression(Bexpression* bstruct, size_t index,
-                                     Location location)
-{
+Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
+                                                   size_t index,
+                                                   Location location) {
   assert(false && "Llvm_backend::struct_field_expression not yet impl");
   return NULL;
 }
 
 // Return an expression that executes BSTAT before BEXPR.
 
-Bexpression*
-Llvm_backend::compound_expression(Bstatement* bstat, Bexpression* bexpr,
-                                 Location location)
-{
+Bexpression *Llvm_backend::compound_expression(Bstatement *bstat,
+                                               Bexpression *bexpr,
+                                               Location location) {
   assert(false && "Llvm_backend::compound_expression not yet impl");
   return NULL;
 }
@@ -1237,20 +1112,19 @@ Llvm_backend::compound_expression(Bstatement* bstat, Bexpression* bexpr,
 // Return an expression that executes THEN_EXPR if CONDITION is true, or
 // ELSE_EXPR otherwise.
 
-Bexpression*
-Llvm_backend::conditional_expression(Btype* btype, Bexpression* condition,
-                                    Bexpression* then_expr,
-                                    Bexpression* else_expr, Location location)
-{
+Bexpression *Llvm_backend::conditional_expression(Btype *btype,
+                                                  Bexpression *condition,
+                                                  Bexpression *then_expr,
+                                                  Bexpression *else_expr,
+                                                  Location location) {
   assert(false && "Llvm_backend::conditional_expression not yet impl");
   return NULL;
 }
 
 // Return an expression for the unary operation OP EXPR.
 
-Bexpression*
-Llvm_backend::unary_expression(Operator op, Bexpression* expr, Location location)
-{
+Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
+                                            Location location) {
   assert(false && "Llvm_backend::unary_expression not yet impl");
   return NULL;
 }
@@ -1336,108 +1210,97 @@ operator_to_tree_code(Operator op, tree type)
 
 // Return an expression for the binary operation LEFT OP RIGHT.
 
-Bexpression*
-Llvm_backend::binary_expression(Operator op, Bexpression* left,
-                                Bexpression* right, Location location)
-{
+Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
+                                             Bexpression *right,
+                                             Location location) {
   assert(false && "Llvm_backend::binary_expression not yet impl");
   return NULL;
 }
 
 // Return an expression that constructs BTYPE with VALS.
 
-Bexpression*
-Llvm_backend::constructor_expression(Btype* btype,
-                                    const std::vector<Bexpression*>& vals,
-                                    Location location)
-{
+Bexpression *Llvm_backend::constructor_expression(
+    Btype *btype, const std::vector<Bexpression *> &vals, Location location) {
   assert(false && "Llvm_backend::constructor_expression not yet impl");
   return NULL;
 }
 
-Bexpression*
-Llvm_backend::array_constructor_expression(
-    Btype* array_btype, const std::vector<unsigned long>& indexes,
-    const std::vector<Bexpression*>& vals, Location location)
-{
+Bexpression *Llvm_backend::array_constructor_expression(
+    Btype *array_btype, const std::vector<unsigned long> &indexes,
+    const std::vector<Bexpression *> &vals, Location location) {
   assert(false && "Llvm_backend::array_constructor_expression not yet impl");
   return NULL;
 }
 
 // Return an expression for the address of BASE[INDEX].
 
-Bexpression*
-Llvm_backend::pointer_offset_expression(Bexpression* base, Bexpression* index,
-                                       Location location)
-{
+Bexpression *Llvm_backend::pointer_offset_expression(Bexpression *base,
+                                                     Bexpression *index,
+                                                     Location location) {
   assert(false && "Llvm_backend::pointer_offset_expression not yet impl");
   return NULL;
 }
 
 // Return an expression representing ARRAY[INDEX]
 
-Bexpression*
-Llvm_backend::array_index_expression(Bexpression* array, Bexpression* index,
-                                    Location location)
-{
+Bexpression *Llvm_backend::array_index_expression(Bexpression *array,
+                                                  Bexpression *index,
+                                                  Location location) {
   assert(false && "Llvm_backend::array_index_expression not yet impl");
   return NULL;
 }
 
 // Create an expression for a call to FN_EXPR with FN_ARGS.
-Bexpression*
-Llvm_backend::call_expression(Bexpression* fn_expr,
-                             const std::vector<Bexpression*>& fn_args,
-                             Bexpression* chain_expr, Location location)
-{
+Bexpression *
+Llvm_backend::call_expression(Bexpression *fn_expr,
+                              const std::vector<Bexpression *> &fn_args,
+                              Bexpression *chain_expr, Location location) {
   assert(false && "Llvm_backend::call_expression not yet impl");
   return NULL;
 }
 
 // Return an expression that allocates SIZE bytes on the stack.
 
-Bexpression*
-Llvm_backend::stack_allocation_expression(int64_t size, Location location)
-{
+Bexpression *Llvm_backend::stack_allocation_expression(int64_t size,
+                                                       Location location) {
   assert(false && "Llvm_backend::stack_allocation_expression not yet impl");
+  return NULL;
+}
+
+Bstatement *Llvm_backend::error_statement() {
+  assert(false && "Llvm_backend::error_statement not yet impl");
   return NULL;
 }
 
 // An expression as a statement.
 
-Bstatement*
-Llvm_backend::expression_statement(Bexpression* expr)
-{
+Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
   assert(false && "Llvm_backend::expression_statement not yet impl");
   return NULL;
 }
 
 // Variable initialization.
 
-Bstatement*
-Llvm_backend::init_statement(Bvariable* var, Bexpression* init)
-{
+Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
   assert(false && "Llvm_backend::init_statement not yet impl");
   return NULL;
 }
 
 // Assignment.
 
-Bstatement*
-Llvm_backend::assignment_statement(Bexpression* lhs, Bexpression* rhs,
-                                  Location location)
-{
+Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
+                                               Bexpression *rhs,
+                                               Location location) {
   assert(false && "Llvm_backend::assignment_statement not yet impl");
   return NULL;
 }
 
 // Return.
 
-Bstatement*
-Llvm_backend::return_statement(Bfunction* bfunction,
-                              const std::vector<Bexpression*>& vals,
-                              Location location)
-{
+Bstatement *
+Llvm_backend::return_statement(Bfunction *bfunction,
+                               const std::vector<Bexpression *> &vals,
+                               Location location) {
   assert(false && "Llvm_backend::return_statement not yet impl");
   return NULL;
 }
@@ -1448,54 +1311,44 @@ Llvm_backend::return_statement(Bfunction* bfunction,
 // functions.  In C++, the resulting code is of this form:
 //   try { BSTAT; } catch { EXCEPT_STMT; } finally { FINALLY_STMT; }
 
-Bstatement*
-Llvm_backend::exception_handler_statement(Bstatement* bstat,
-                                          Bstatement* except_stmt,
-                                          Bstatement* finally_stmt,
-                                          Location location)
-{
+Bstatement *Llvm_backend::exception_handler_statement(Bstatement *bstat,
+                                                      Bstatement *except_stmt,
+                                                      Bstatement *finally_stmt,
+                                                      Location location) {
   assert(false && "Llvm_backend::exception_handler_statement not yet impl");
   return NULL;
 }
 
 // If.
 
-Bstatement*
-Llvm_backend::if_statement(Bexpression* condition, Bblock* then_block,
-                          Bblock* else_block, Location location)
-{
+Bstatement *Llvm_backend::if_statement(Bexpression *condition,
+                                       Bblock *then_block, Bblock *else_block,
+                                       Location location) {
   assert(false && "Llvm_backend::if_statement not yet impl");
   return NULL;
 }
 
 // Switch.
 
-Bstatement*
-Llvm_backend::switch_statement(
-    Bfunction* function,
-    Bexpression* value,
-    const std::vector<std::vector<Bexpression*> >& cases,
-    const std::vector<Bstatement*>& statements,
-    Location switch_location)
-{
+Bstatement *Llvm_backend::switch_statement(
+    Bfunction *function, Bexpression *value,
+    const std::vector<std::vector<Bexpression *>> &cases,
+    const std::vector<Bstatement *> &statements, Location switch_location) {
   assert(false && "Llvm_backend::switch_statement not yet impl");
   return NULL;
 }
 
 // Pair of statements.
 
-Bstatement*
-Llvm_backend::compound_statement(Bstatement* s1, Bstatement* s2)
-{
+Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
   assert(false && "Llvm_backend::compound_statement not yet impl");
   return NULL;
 }
 
 // List of statements.
 
-Bstatement*
-Llvm_backend::statement_list(const std::vector<Bstatement*>& statements)
-{
+Bstatement *
+Llvm_backend::statement_list(const std::vector<Bstatement *> &statements) {
   assert(false && "Llvm_backend::statement_list not yet impl");
   return NULL;
 }
@@ -1505,46 +1358,35 @@ Llvm_backend::statement_list(const std::vector<Bstatement*>& statements)
 // BIND_EXPR node points to the BLOCK node, we store the BIND_EXPR in
 // the Bblock.
 
-Bblock*
-Llvm_backend::block(Bfunction* function, Bblock* enclosing,
-                   const std::vector<Bvariable*>& vars,
-                   Location start_location,
-                   Location)
-{
+Bblock *Llvm_backend::block(Bfunction *function, Bblock *enclosing,
+                            const std::vector<Bvariable *> &vars,
+                            Location start_location, Location) {
   assert(false && "Llvm_backend::block not yet impl");
   return NULL;
 }
 
 // Add statements to a block.
 
-void
-Llvm_backend::block_add_statements(Bblock* bblock,
-                                  const std::vector<Bstatement*>& statements)
-{
+void Llvm_backend::block_add_statements(
+    Bblock *bblock, const std::vector<Bstatement *> &statements) {
   assert(false && "Llvm_backend::block_add_statements not yet impl");
 }
 
 // Return a block as a statement.
 
-Bstatement*
-Llvm_backend::block_statement(Bblock* bblock)
-{
+Bstatement *Llvm_backend::block_statement(Bblock *bblock) {
   assert(false && "Llvm_backend::block_statement not yet impl");
   return NULL;
 }
 
 // Make a global variable.
 
-Bvariable*
-Llvm_backend::global_variable(const std::string& package_name,
-                              const std::string& pkgpath,
-                              const std::string& name,
-                              Btype* btype,
-                              bool is_external,
-                              bool is_hidden,
-                              bool in_unique_section,
-                              Location location)
-{
+Bvariable *Llvm_backend::global_variable(const std::string &package_name,
+                                         const std::string &pkgpath,
+                                         const std::string &name, Btype *btype,
+                                         bool is_external, bool is_hidden,
+                                         bool in_unique_section,
+                                         Location location) {
   // NB: add code to insure non-zero size
   assert(false && "Llvm_backend::global_variable not yet impl");
   return NULL;
@@ -1552,53 +1394,51 @@ Llvm_backend::global_variable(const std::string& package_name,
 
 // Set the initial value of a global variable.
 
-void
-Llvm_backend::global_variable_set_init(Bvariable* var, Bexpression* expr)
-{
+void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr) {
   assert(false && "Llvm_backend::global_variable_set_init not yet impl");
 }
 
+Bvariable *Llvm_backend::error_variable() {
+  assert(false && "Llvm_backend::error_variable not yet impl");
+  return NULL;
+}
 // Make a local variable.
 
-Bvariable*
-Llvm_backend::local_variable(Bfunction* function, const std::string& name,
-                            Btype* btype, bool is_address_taken,
-                            Location location)
-{
+Bvariable *Llvm_backend::local_variable(Bfunction *function,
+                                        const std::string &name, Btype *btype,
+                                        bool is_address_taken,
+                                        Location location) {
   assert(false && "Llvm_backend::local_variable not yet impl");
   return NULL;
 }
 
 // Make a function parameter variable.
 
-Bvariable*
-Llvm_backend::parameter_variable(Bfunction* function, const std::string& name,
-                                Btype* btype, bool is_address_taken,
-                                Location location)
-{
+Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
+                                            const std::string &name,
+                                            Btype *btype, bool is_address_taken,
+                                            Location location) {
   assert(false && "Llvm_backend::parameter_variable not yet impl");
   return NULL;
 }
 
 // Make a static chain variable.
 
-Bvariable*
-Llvm_backend::static_chain_variable(Bfunction* function, const std::string& name,
-                                   Btype* btype, Location location)
-{
+Bvariable *Llvm_backend::static_chain_variable(Bfunction *function,
+                                               const std::string &name,
+                                               Btype *btype,
+                                               Location location) {
   assert(false && "Llvm_backend::static_chain_variable not yet impl");
   return NULL;
 }
 
 // Make a temporary variable.
 
-Bvariable*
-Llvm_backend::temporary_variable(Bfunction* function, Bblock* bblock,
-                                Btype* btype, Bexpression* binit,
-                                bool is_address_taken,
-                                Location location,
-                                Bstatement** pstatement)
-{
+Bvariable *Llvm_backend::temporary_variable(Bfunction *function, Bblock *bblock,
+                                            Btype *btype, Bexpression *binit,
+                                            bool is_address_taken,
+                                            Location location,
+                                            Bstatement **pstatement) {
   assert(false && "Llvm_backend::temporary_variable not yet impl");
   return NULL;
 }
@@ -1606,11 +1446,9 @@ Llvm_backend::temporary_variable(Bfunction* function, Bblock* bblock,
 // Create an implicit variable that is compiler-defined.  This is used when
 // generating GC root variables and storing the values of a slice initializer.
 
-Bvariable*
-Llvm_backend::implicit_variable(const std::string& name, Btype* type,
-                               bool is_hidden, bool is_constant,
-                               bool is_common, int64_t alignment)
-{
+Bvariable *Llvm_backend::implicit_variable(const std::string &name, Btype *type,
+                                           bool is_hidden, bool is_constant,
+                                           bool is_common, int64_t alignment) {
   assert(false && "Llvm_backend::implicit_variable not yet impl");
   return NULL;
 }
@@ -1618,29 +1456,26 @@ Llvm_backend::implicit_variable(const std::string& name, Btype* type,
 // Set the initalizer for a variable created by implicit_variable.
 // This is where we finish compiling the variable.
 
-void
-Llvm_backend::implicit_variable_set_init(Bvariable* var, const std::string&,
-                                        Btype*, bool, bool, bool is_common,
-                                        Bexpression* init)
-{
+void Llvm_backend::implicit_variable_set_init(Bvariable *var,
+                                              const std::string &, Btype *,
+                                              bool, bool, bool is_common,
+                                              Bexpression *init) {
   assert(false && "Llvm_backend::implicit_variable_set_init not yet impl");
 }
 
 // Return a reference to an implicit variable defined in another package.
 
-Bvariable*
-Llvm_backend::implicit_variable_reference(const std::string& name, Btype* btype)
-{
+Bvariable *Llvm_backend::implicit_variable_reference(const std::string &name,
+                                                     Btype *btype) {
   assert(false && "Llvm_backend::implicit_variable_reference not yet impl");
   return NULL;
 }
 
 // Create a named immutable initialized data structure.
 
-Bvariable*
-Llvm_backend::immutable_struct(const std::string& name, bool is_hidden,
-                              bool is_common, Btype* btype, Location location)
-{
+Bvariable *Llvm_backend::immutable_struct(const std::string &name,
+                                          bool is_hidden, bool is_common,
+                                          Btype *btype, Location location) {
   assert(false && "Llvm_backend::immutable_struct not yet impl");
   return NULL;
 }
@@ -1648,71 +1483,66 @@ Llvm_backend::immutable_struct(const std::string& name, bool is_hidden,
 // Set the initializer for a variable created by immutable_struct.
 // This is where we finish compiling the variable.
 
-void
-Llvm_backend::immutable_struct_set_init(Bvariable* var, const std::string&,
-                                       bool, bool is_common, Btype*, Location,
-                                       Bexpression* initializer)
-{
+void Llvm_backend::immutable_struct_set_init(Bvariable *var,
+                                             const std::string &, bool,
+                                             bool is_common, Btype *, Location,
+                                             Bexpression *initializer) {
   assert(false && "Llvm_backend::immutable_struct_set_init not yet impl");
 }
 
 // Return a reference to an immutable initialized data structure
 // defined in another package.
 
-Bvariable*
-Llvm_backend::immutable_struct_reference(const std::string& name, Btype* btype,
-                                        Location location)
-{
+Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
+                                                    Btype *btype,
+                                                    Location location) {
   assert(false && "Llvm_backend::immutable_struct_reference not yet impl");
   return NULL;
 }
 
 // Make a label.
 
-Blabel*
-Llvm_backend::label(Bfunction* function, const std::string& name,
-                   Location location)
-{
+Blabel *Llvm_backend::label(Bfunction *function, const std::string &name,
+                            Location location) {
   assert(false && "Llvm_backend::label not yet impl");
   return NULL;
 }
 
 // Make a statement which defines a label.
 
-Bstatement*
-Llvm_backend::label_definition_statement(Blabel* label)
-{
+Bstatement *Llvm_backend::label_definition_statement(Blabel *label) {
   assert(false && "Llvm_backend::label_definition_statement not yet impl");
   return NULL;
 }
 
 // Make a goto statement.
 
-Bstatement*
-Llvm_backend::goto_statement(Blabel* label, Location location)
-{
+Bstatement *Llvm_backend::goto_statement(Blabel *label, Location location) {
   assert(false && "Llvm_backend::goto_statement not yet impl");
   return NULL;
 }
 
 // Get the address of a label.
 
-Bexpression*
-Llvm_backend::label_address(Blabel* label, Location location)
-{
+Bexpression *Llvm_backend::label_address(Blabel *label, Location location) {
   assert(false && "Llvm_backend::label_address not yet impl");
+  return NULL;
+}
+
+Bfunction*
+Llvm_backend::error_function()
+{
+  assert(false && "Llvm_backend::error_function not yet impl");
   return NULL;
 }
 
 // Declare or define a new function.
 
-Bfunction*
-Llvm_backend::function(Btype* fntype, const std::string& name,
-                      const std::string& asm_name, bool is_visible,
-                      bool is_declaration, bool is_inlinable,
-                      bool disable_split_stack, bool in_unique_section,
-                      Location location)
-{
+Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
+                                  const std::string &asm_name, bool is_visible,
+                                  bool is_declaration, bool is_inlinable,
+                                  bool disable_split_stack,
+                                  bool in_unique_section, Location location) {
   assert(false && "Llvm_backend::function not yet impl");
   return NULL;
 }
@@ -1722,12 +1552,10 @@ Llvm_backend::function(Btype* fntype, const std::string& name,
 //   finish:
 //     try { UNDEFER; } catch { CHECK_DEFER; goto finish; }
 
-Bstatement*
-Llvm_backend::function_defer_statement(Bfunction* function,
-                                       Bexpression* undefer,
-                                       Bexpression* defer,
-                                       Location location)
-{
+Bstatement *Llvm_backend::function_defer_statement(Bfunction *function,
+                                                   Bexpression *undefer,
+                                                   Bexpression *defer,
+                                                   Location location) {
   assert(false && "Llvm_backend::function_defer_statement not yet impl");
   return NULL;
 }
@@ -1735,19 +1563,16 @@ Llvm_backend::function_defer_statement(Bfunction* function,
 // Record PARAM_VARS as the variables to use for the parameters of FUNCTION.
 // This will only be called for a function definition.
 
-bool
-Llvm_backend::function_set_parameters(Bfunction* function,
-                                     const std::vector<Bvariable*>& param_vars)
-{
+bool Llvm_backend::function_set_parameters(
+    Bfunction *function, const std::vector<Bvariable *> &param_vars) {
   assert(false && "Llvm_backend::function_set_parameters not yet impl");
   return false;
 }
 
 // Set the function body for FUNCTION using the code in CODE_BLOCK.
 
-bool
-Llvm_backend::function_set_body(Bfunction* function, Bstatement* code_stmt)
-{
+bool Llvm_backend::function_set_body(Bfunction *function,
+                                     Bstatement *code_stmt) {
   assert(false && "Llvm_backend::function_set_body not yet impl");
   return false;
 }
@@ -1755,9 +1580,7 @@ Llvm_backend::function_set_body(Bfunction* function, Bstatement* code_stmt)
 // Look up a named built-in function in the current backend implementation.
 // Returns NULL if no built-in function by that name exists.
 
-Bfunction*
-Llvm_backend::lookup_builtin(const std::string& name)
-{
+Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
   assert(false && "Llvm_backend::lookup_builtin not yet impl");
   return NULL;
 }
@@ -1766,13 +1589,11 @@ Llvm_backend::lookup_builtin(const std::string& name)
 // FUNCTION_DECLS, and VARIABLE_DECLS declared globally, as well as
 // emit early debugging information.
 
-void
-Llvm_backend::write_global_definitions(
-    const std::vector<Btype*>& type_decls,
-    const std::vector<Bexpression*>& constant_decls,
-    const std::vector<Bfunction*>& function_decls,
-    const std::vector<Bvariable*>& variable_decls)
-{
+void Llvm_backend::write_global_definitions(
+    const std::vector<Btype *> &type_decls,
+    const std::vector<Bexpression *> &constant_decls,
+    const std::vector<Bfunction *> &function_decls,
+    const std::vector<Bvariable *> &variable_decls) {
   assert(false && "Llvm_backend::write_global_definitions not yet impl");
 }
 
@@ -1798,16 +1619,10 @@ Llvm_backend::define_builtin(built_in_function bcode, const char* name,
 // only ASCII or printable UTF-8, then perform character set
 // conversions if needed.
 
-const char *
-go_localize_identifier (const char *ident)
-{
-  return ident;
-}
+const char *go_localize_identifier(const char *ident) { return ident; }
 
 // Return the backend generator.
 
-Backend*
-go_get_backend(llvm::LLVMContext &context)
-{
+Backend *go_get_backend(llvm::LLVMContext &context) {
   return new Llvm_backend(context);
 }
