@@ -56,10 +56,7 @@
 
 extern const char *lbasename(const char *);
 extern const char *xstrerror(int);
-
 extern bool IS_DIR_SEPARATOR(char);
-
-//extern char *xstrerror (int);
 extern bool ISXDIGIT(char);
 
 #define MAX(X,Y) ((X) > (Y) ? (X) : (Y))

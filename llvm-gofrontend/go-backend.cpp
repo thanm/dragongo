@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "llvm-includes.h"
+#include <ctype.h>
 
 #ifndef GO_EXPORT_SEGMENT_NAME
 #define GO_EXPORT_SEGMENT_NAME "__GNU_GO"
@@ -71,4 +72,39 @@ go_read_export_data (int fd, off_t offset, char **pbuf, size_t *plen,
   // FIXME
   assert(false && "go_read_export_data not yet implemented");
   return "";
+}
+
+const char *lbasename(const char *path)
+{
+  // TODO: add windows support
+  const char *cur, *rval = path;
+
+  for (cur = path; *cur; cur++)
+    if (*cur == '/')
+      rval = cur + 1;
+
+  return rval;
+}
+
+const char *xstrerror(int e)
+{
+  static char unknown_ebuf[128];
+  const char *se = strerror(e);
+  if (se)
+    return se;
+  sprintf(unknown_ebuf, "unknown error #%d", e);
+  se = unknown_ebuf;
+  return se;
+}
+
+bool IS_DIR_SEPARATOR(char c)
+{
+  // TODO: windows support
+  return c == '/';
+}
+
+extern bool ISXDIGIT(char c)
+{
+  // TODO: update if better locale support added
+  return isxdigit(c);
 }
