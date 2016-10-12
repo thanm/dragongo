@@ -468,7 +468,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 
   // For use handling circular types
   llvm_ptr_type_ =
-      llvm::PointerType::get(llvm::Type::getVoidTy(context_), address_space_);
+      llvm::PointerType::get(llvm::StructType::create(context), address_space_);
 
 #if 0
   /* We need to define the fetch_and_add functions, since we use them
