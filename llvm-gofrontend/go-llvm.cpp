@@ -425,6 +425,7 @@ Btype *Llvm_backend::float_type(int bits) {
 }
 
 // Make a struct type.
+
 // FIXME: llvm::StructType::get has no means of specifying field
 // names, meaning that for debug info generation we'll need to
 // capture fields here in some way, either by eagerly creating the DI
