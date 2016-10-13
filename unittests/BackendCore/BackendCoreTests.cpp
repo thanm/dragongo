@@ -48,16 +48,16 @@ TEST(BackendCoreTests, MakeBackend) {
 TEST(BackendCoreTests, ScalarTypes) {
   LLVMContext C;
 
-  std::unique_ptr<Backend> backend(go_get_backend(C));
+  std::unique_ptr<Backend> be(go_get_backend(C));
 
-  Btype *et = backend->error_type();
+  Btype *et = be->error_type();
   ASSERT_TRUE(et != NULL);
-  Btype *vt = backend->void_type();
+  Btype *vt = be->void_type();
   ASSERT_TRUE(vt != NULL);
   ASSERT_TRUE(vt != et);
-  Btype *bt = backend->bool_type();
+  Btype *bt = be->bool_type();
   ASSERT_TRUE(bt != NULL);
-  Btype *pbt = backend->pointer_type(bt);
+  Btype *pbt = be->pointer_type(bt);
   ASSERT_TRUE(pbt != NULL);
   ASSERT_TRUE(pbt->type()->isPointerTy());
 
@@ -65,7 +65,7 @@ TEST(BackendCoreTests, ScalarTypes) {
   std::vector<int> ibits = {8, 16, 32, 64, 128};
   for (auto uns : isuns) {
     for (auto nbits : ibits) {
-      Btype *it = backend->integer_type(uns, nbits);
+      Btype *it = be->integer_type(uns, nbits);
       ASSERT_TRUE(it != NULL);
       ASSERT_TRUE(it->type()->isIntegerTy());
     }
@@ -73,7 +73,7 @@ TEST(BackendCoreTests, ScalarTypes) {
 
   std::vector<int> fbits = {32, 64, 128};
   for (auto nbits : fbits) {
-    Btype *ft = backend->float_type(nbits);
+    Btype *ft = be->float_type(nbits);
     ASSERT_TRUE(ft != NULL);
     ASSERT_TRUE(ft->type()->isFloatingPointTy());
   }
@@ -138,6 +138,7 @@ TEST(BackendCoreTests, StructTypes) {
   ASSERT_TRUE(best != NULL);
   ASSERT_TRUE(llst != NULL);
   ASSERT_EQ(llst, best->type());
+  ASSERT_EQ(repr(best->type()), "{ i1, float*, i64 }");
 
   // If a field has error type, entire struct has error type
   std::vector<Backend::Btyped_identifier> fields = {
@@ -400,6 +401,10 @@ TEST(BackendCoreTests, PlaceholderTypes) {
   Type *i64t = IntegerType::get(C, 64);
   ASSERT_TRUE(phst1->type() == mkTwoFieldLLvmStruct(C, i64t, i64t));
 
+  // Circular pointer support
+  Btype *php4 = be->placeholder_pointer_type("ph", loc, false);
+  Btype *cpt = be->circular_pointer_type(php4, false);
+  be->set_placeholder_pointer_type(php4, cpt);
 }
 
 TEST(BackendCoreTests, ArrayTypes) {
@@ -422,5 +427,22 @@ TEST(BackendCoreTests, NamedTypes) {
   ASSERT_TRUE(nt != nt2);
 }
 
+TEST(BackendCoreTests, TypeUtils) {
+  LLVMContext C;
+
+  // Type size and alignment. Size seems to be in bits, whereas
+  // alignment is in bytes.
+  std::unique_ptr<Backend> be(go_get_backend(C));
+  Btype *i8t = be->integer_type(false, 8);
+  ASSERT_EQ(be->type_size(i8t), int64_t(8));
+  ASSERT_EQ(be->type_alignment(i8t), 1);
+
+  // Slightly more complicated example
+  Btype *u64 = be->integer_type(true, 64);
+  Btype *st = mkTwoFieldStruct(be.get(), u64, u64);
+  ASSERT_EQ(be->type_size(st), int64_t(128));
+  ASSERT_EQ(be->type_alignment(st), 8);
+
+}
 
 }
