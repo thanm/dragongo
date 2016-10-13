@@ -21,9 +21,22 @@
 #include "backend.h"
 #include "go-llvm.h"
 
+#include <stdarg.h>
+
 using namespace llvm;
 
 namespace {
+
+std::string repr(Type *t) {
+  std::string res;
+  llvm::raw_string_ostream OS(res);
+  if (t == NULL) {
+    OS << "<null>";
+  } else {
+    t->print(OS);
+  }
+  return OS.str();
+}
 
 TEST(BackendCoreTests, MakeBackend) {
   LLVMContext C;
@@ -44,6 +57,9 @@ TEST(BackendCoreTests, ScalarTypes) {
   ASSERT_TRUE(vt != et);
   Btype *bt = backend->bool_type();
   ASSERT_TRUE(bt != NULL);
+  Btype *pbt = backend->pointer_type(bt);
+  ASSERT_TRUE(pbt != NULL);
+  ASSERT_TRUE(pbt->type()->isPointerTy());
 
   std::vector<bool> isuns = {false, true};
   std::vector<int> ibits = {8, 16, 32, 64, 128};
@@ -122,6 +138,28 @@ TEST(BackendCoreTests, StructTypes) {
   ASSERT_TRUE(best != NULL);
   ASSERT_TRUE(llst != NULL);
   ASSERT_EQ(llst, best->type());
+
+  // If a field has error type, entire struct has error type
+  std::vector<Backend::Btyped_identifier> fields = {
+    Backend::Btyped_identifier("f1", be->bool_type(), Location()),
+    Backend::Btyped_identifier("fe", be->error_type(), Location())
+  };
+  Btype *badst = be->struct_type(fields);
+  ASSERT_TRUE(badst != NULL);
+  ASSERT_EQ(badst, be->error_type());
+
+  // Llvm_backend should be caching and reusing anonymous types
+  ASSERT_EQ(mkBackendThreeFieldStruct(be.get()),
+            mkBackendThreeFieldStruct(be.get()));
+}
+
+static Btype *mkTwoFieldStruct(Backend *be, Btype *t1, Btype *t2)
+{
+  std::vector<Backend::Btyped_identifier> fields = {
+    Backend::Btyped_identifier("f1", t1, Location()),
+    Backend::Btyped_identifier("f2", t2, Location())
+  };
+  return be->struct_type(fields);
 }
 
 static Type *mkTwoFieldLLvmStruct(LLVMContext &context, Type *t1, Type *t2) {
@@ -144,6 +182,186 @@ TEST(BackendCoreTests, ComplexTypes) {
   Btype *c64 = be->complex_type(128);
   ASSERT_TRUE(c64 != NULL);
   ASSERT_EQ(c64->type(), mkTwoFieldLLvmStruct(C, dt, dt));
+}
+
+Backend::Btyped_identifier mkid(Btype *t)
+{
+  static unsigned ctr = 1;
+  char buf[128];
+  sprintf(buf, "id%u", ctr++);
+  return Backend::Btyped_identifier(buf, t, Location());
+}
+
+typedef enum {
+  L_END=0,   // end of list
+  L_RCV,     // receiver type follows
+  L_PARM,    // arg type follows
+  L_RES,     // res type follows
+  L_RES_ST,   // res struct type follows
+} MkfToken;
+
+static Btype *mkFuncTyp(Backend *be, ...)
+{
+  va_list ap;
+
+  va_start(ap, be);
+
+  Backend::Btyped_identifier receiver("rec", NULL, Location());
+  std::vector<Backend::Btyped_identifier> results;
+  std::vector<Backend::Btyped_identifier> params;
+  Btype *result_type = NULL;
+
+  unsigned tok = va_arg(ap, unsigned);
+  while (tok != L_END) {
+    switch(tok) {
+      case L_RCV:
+        receiver.btype = va_arg(ap, Btype *);
+        break;
+      case L_PARM:
+        params.push_back(mkid(va_arg(ap, Btype *)));
+        break;
+      case L_RES:
+        results.push_back(mkid(va_arg(ap, Btype *)));
+        break;
+      case L_RES_ST:
+        result_type = va_arg(ap, Btype *);
+        break;
+      default: {
+        assert("internal error");
+        return NULL;
+      }
+    }
+    tok = va_arg(ap, unsigned);
+  }
+  Location loc;
+  return be->function_type(receiver, params, results, result_type, loc);
+}
+
+static Type *mkLLFuncTyp(LLVMContext *context, ...)
+{
+  va_list ap;
+
+  SmallVector<Type *, 4> params(0);
+  SmallVector<Type *, 4> results(0);
+  Type *recv_typ = NULL;
+  Type *res_styp = NULL;
+
+  va_start(ap, context);
+  unsigned tok = va_arg(ap, unsigned);
+  while (tok != L_END) {
+    switch(tok) {
+      case L_RCV:
+        recv_typ = va_arg(ap, Type *);
+        break;
+      case L_PARM:
+        params.push_back(va_arg(ap, Type *));
+        break;
+      case L_RES:
+        results.push_back(va_arg(ap, Type *));
+        break;
+      case L_RES_ST:
+        res_styp = va_arg(ap, Type *);
+        break;
+      default: {
+        assert(false && "internal error");
+        return NULL;
+      }
+    }
+    tok = va_arg(ap, unsigned);
+  }
+
+  SmallVector<Type *, 4> elems(0);
+  if (recv_typ)
+    elems.push_back(recv_typ);
+  for (auto pt : params)
+    elems.push_back(pt);
+
+  Type *rtyp = NULL;
+  if (results.empty())
+    rtyp = Type::getVoidTy(*context);
+  else if (results.size() == 1)
+    rtyp = results[0];
+  else {
+    rtyp = res_styp;
+  }
+  return FunctionType::get(rtyp, elems, false);
+}
+
+TEST(BackendCoreTests, FunctionTypes) {
+  LLVMContext C;
+
+  Type *i64t = IntegerType::get(C, 64);
+  Type *i32t = IntegerType::get(C, 32);
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  // func foo() {}
+  Btype *emptyf = mkFuncTyp(be.get(), L_END);
+  Type *llemptyf = mkLLFuncTyp(&C, L_END);
+  ASSERT_TRUE(llemptyf != NULL && emptyf != NULL);
+  ASSERT_TRUE(llemptyf == emptyf->type());
+
+  {
+    // func (Blah) foo() {}
+    Btype *befn = mkFuncTyp(be.get(),
+                            L_RCV, mkBackendThreeFieldStruct(be.get()),
+                            L_END);
+    Type *llfn = mkLLFuncTyp(&C,
+                             L_RCV, mkLlvmThreeFieldStruct(C),
+                             L_END);
+    ASSERT_TRUE(befn != NULL && llfn != NULL);
+    ASSERT_TRUE(befn->type() == llfn);
+  }
+
+  {
+    // func foo(x int64) {}
+    Btype *befn = mkFuncTyp(be.get(),
+                            L_PARM, be->integer_type(false, 64),
+                            L_END);
+    Type *llfn = mkLLFuncTyp(&C,
+                             L_PARM, i64t,
+                             L_END);
+    ASSERT_TRUE(befn != NULL && llfn != NULL);
+    ASSERT_TRUE(befn->type() == llfn);
+  }
+
+  {
+    // func foo() int64 {}
+    Btype *befn = mkFuncTyp(be.get(),
+                            L_RES, be->integer_type(false, 64),
+                            L_END);
+    Type *llfn = mkLLFuncTyp(&C,
+                             L_RES, i64t,
+                             L_END);
+    ASSERT_TRUE(befn != NULL && llfn != NULL);
+    ASSERT_TRUE(befn->type() == llfn);
+  }
+
+  {
+    // func (Blah) foo(int32, int32, int32) (int64, int64) {}
+    Btype *bi64t = be->integer_type(false, 64);
+    Btype *bi32t = be->integer_type(false, 32);
+    Btype *befn = mkFuncTyp(be.get(),
+                            L_RCV, mkBackendThreeFieldStruct(be.get()),
+                            L_PARM, bi32t,
+                            L_PARM, bi32t,
+                            L_PARM, bi32t,
+                            L_RES, bi64t, // ignored
+                            L_RES, bi64t, // ignored
+                            L_RES_ST, mkTwoFieldStruct(be.get(), bi64t, bi64t),
+                            L_END);
+    Type *llfn = mkLLFuncTyp(&C,
+                             L_RCV, mkLlvmThreeFieldStruct(C),
+                             L_PARM, i32t,
+                             L_PARM, i32t,
+                             L_PARM, i32t,
+                             L_RES, i64t, // ignored
+                             L_RES, i64t, // ignored
+                             L_RES_ST, mkTwoFieldLLvmStruct(C, i64t, i64t),
+                             L_END);
+    ASSERT_TRUE(befn != NULL && llfn != NULL);
+    ASSERT_TRUE(befn->type() == llfn);
+  }
 }
 
 }
