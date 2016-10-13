@@ -306,11 +306,38 @@ private:
 
 private:
   typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
+
+  class named_llvm_type_hash {
+   public:
+    unsigned int
+    operator()(const named_llvm_type& nt) const
+    {
+      std::size_t h1 = std::hash<std::string>{}(nt.first);
+      // just hash pointer value
+      const void *vptr = static_cast<void*>(nt.second);
+      std::size_t h2 = std::hash<const void*>{}(vptr);
+      return h1 + h2;
+    }
+  };
+
+  class named_llvm_type_equal {
+   public:
+    bool
+    operator()(const named_llvm_type& nt1, const named_llvm_type& nt2) const
+    {
+      return (nt1.first == nt2.first &&
+              nt1.second == nt2.second);
+    }
+  };
+  typedef std::unordered_map<named_llvm_type, Btype *,
+                             named_llvm_type_hash,
+                             named_llvm_type_equal > named_type_maptyp;
+
   llvm::LLVMContext &context_;
   std::unique_ptr<llvm::Module> module_;
   const llvm::DataLayout &datalayout_;
   std::unordered_map<llvm::Type *, Btype *> anon_typemap_;
-  // std::unordered_map<named_llvm_type, Btype *> named_typemap_;
+  named_type_maptyp named_typemap_;
   std::unordered_set<Btype *> placeholders_;
   Btype *complex_float_type_;
   Btype *complex_double_type_;

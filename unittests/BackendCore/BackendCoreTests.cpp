@@ -364,4 +364,63 @@ TEST(BackendCoreTests, FunctionTypes) {
   }
 }
 
+TEST(BackendCoreTests, PlaceholderTypes) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  // Create a placeholder pointer type
+  Location loc;
+  Btype *phpt1 = be->placeholder_pointer_type("ph1", loc, false);
+  ASSERT_TRUE(phpt1 != NULL);
+  ASSERT_TRUE(phpt1->type()->isPointerTy());
+
+  // Placeholder pointer types should not be cached
+  Btype *phpt2 = be->placeholder_pointer_type("ph", loc, false);
+  Btype *phpt3 = be->placeholder_pointer_type("ph", loc, false);
+  ASSERT_TRUE(phpt2 != phpt3);
+  ASSERT_TRUE(phpt2->type() != phpt3->type());
+
+  // Replace placeholder pointer type
+  Btype *pst = be->pointer_type(mkBackendThreeFieldStruct(be.get()));
+  be->set_placeholder_pointer_type(phpt1, pst);
+  ASSERT_TRUE(phpt1->type()->isPointerTy());
+  PointerType *llpt = cast<PointerType>(phpt1->type());
+  ASSERT_TRUE(llpt->getElementType()->isStructTy());
+
+  // Placeholder struct type
+  Btype *phst1 = be->placeholder_struct_type("ph", loc);
+
+  // Replace placeholder struct type
+  std::vector<Backend::Btyped_identifier> fields = {
+    Backend::Btyped_identifier("f1", be->integer_type(false, 64), Location()),
+    Backend::Btyped_identifier("f2", be->integer_type(false, 64), Location())
+  };
+  be->set_placeholder_struct_type(phst1, fields);
+  Type *i64t = IntegerType::get(C, 64);
+  ASSERT_TRUE(phst1->type() == mkTwoFieldLLvmStruct(C, i64t, i64t));
+
+}
+
+TEST(BackendCoreTests, ArrayTypes) {
+  LLVMContext C;
+
+  // array types not yet implemented, since we don't have
+  // expressions yet
+
+}
+
+TEST(BackendCoreTests, NamedTypes) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+  Location loc;
+  Btype *nt = be->named_type("named_int32", be->integer_type(false, 32), loc);
+  ASSERT_TRUE(nt != NULL);
+  Btype *nt2 = be->named_type("another_int32", be->integer_type(false, 32), loc);
+  ASSERT_TRUE(nt2 != NULL);
+  ASSERT_TRUE(nt != nt2);
+}
+
+
 }

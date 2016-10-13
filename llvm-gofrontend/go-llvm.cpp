@@ -614,15 +614,23 @@ bool Llvm_backend::set_placeholder_array_type(Btype *placeholder,
 
 // Return a named version of a type.
 
-Btype *Llvm_backend::named_type(const std::string &name, Btype *btype,
-                                Location location) {
+Btype *Llvm_backend::named_type(const std::string &name,
+                                Btype *btype,
+                                Location location)
+{
+  // TODO: add support for debug metadata
+
   // In the LLVM type world, all types are nameless except for so-called
   // identified struct types. For this reason, names are stored in a side
   // data structure.
 
-  // TODO: add support for debug metadata
-
-  return btype;
+  named_llvm_type cand(name, btype->type());
+  auto it = named_typemap_.find(cand);
+  if (it != named_typemap_.end())
+    return it->second;
+  Btype *rval = new Btype(btype->type());
+  named_typemap_[cand] = rval;
+  return rval;
 }
 
 // Return a pointer type used as a marker for a circular type.
