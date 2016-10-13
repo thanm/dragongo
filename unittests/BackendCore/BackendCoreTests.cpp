@@ -124,4 +124,26 @@ TEST(BackendCoreTests, StructTypes) {
   ASSERT_EQ(llst, best->type());
 }
 
+static Type *mkTwoFieldLLvmStruct(LLVMContext &context, Type *t1, Type *t2) {
+  SmallVector<Type *, 2> smv(2);
+  smv[0] = t1;
+  smv[1] = t2;
+  return StructType::get(context, smv);
+}
+
+TEST(BackendCoreTests, ComplexTypes) {
+  LLVMContext C;
+
+  Type *ft = Type::getFloatTy(C);
+  Type *dt = Type::getDoubleTy(C);
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+  Btype *c32 = be->complex_type(64);
+  ASSERT_TRUE(c32 != NULL);
+  ASSERT_EQ(c32->type(), mkTwoFieldLLvmStruct(C, ft, ft));
+  Btype *c64 = be->complex_type(128);
+  ASSERT_TRUE(c64 != NULL);
+  ASSERT_EQ(c64->type(), mkTwoFieldLLvmStruct(C, dt, dt));
+}
+
 }
