@@ -480,15 +480,13 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
                             const std::vector<Btyped_identifier> &parameters,
                             const std::vector<Btyped_identifier> &results,
                             Btype *result_struct, Location) {
-  const size_t esz = parameters.size() + results.size() + 1;
-  llvm::SmallVector<llvm::Type *, 64> elems(esz);
-  unsigned pos = 0;
+  llvm::SmallVector<llvm::Type *, 4> elems(0);
 
   // Receiver type if applicable
   if (receiver.btype != NULL) {
     if (receiver.btype == error_type())
       return error_type();
-    elems[pos++] = receiver.btype->type();
+    elems.push_back(receiver.btype->type());
   }
 
   // Argument types
@@ -496,7 +494,7 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
        p != parameters.end(); ++p) {
     if (p->btype == error_type())
       return error_type();
-    elems[pos++] = p->btype->type();
+    elems.push_back(p->btype->type());
   }
 
   // Result types
@@ -521,7 +519,7 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
   // returns a zero-sized value as returning void.  That should do no
   // harm since there is no actual value to be returned.
   //
-  if (datalayout_.getTypeSizeInBits(rtyp) == 0)
+  if (rtyp->isSized() && datalayout_.getTypeSizeInBits(rtyp) == 0)
     rtyp = llvm::Type::getVoidTy(context_);
 
   // from LLVM's perspective, no functions have varargs (all that
