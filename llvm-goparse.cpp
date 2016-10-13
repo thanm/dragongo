@@ -128,7 +128,7 @@ int main(int argc, char **argv)
   Triple TheTriple;
 
   InitializeAllTargets();
-  InitializeAllTargetsMCs();
+  InitializeAllTargetMCs();
 
   cl::ParseCommandLineOptions(argc, argv, "llvm go parser driver\n");
 
