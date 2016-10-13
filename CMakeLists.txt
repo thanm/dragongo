@@ -4,6 +4,7 @@ include(ProcessorCount)
 include(LLVMExternalProjectUtils)
 
 add_subdirectory(llvm-gofrontend)
+add_subdirectory(unittests)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/gofrontend/go)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/llvm-gofrontend)
@@ -57,5 +58,4 @@ add_llvm_tool(llvm-goparse
   )
 
 target_link_libraries(llvm-goparse libmpc.a libmpfr.a libgmp.a)
-
 
