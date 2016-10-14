@@ -11,6 +11,7 @@ set(LLVM_LINK_COMPONENTS
 
 set(BackendCoreSources
   BackendCoreTests.cpp
+  BackendFcnTests.cpp
   )
 
 add_gobackend_unittest(GoBackendCoreTests
