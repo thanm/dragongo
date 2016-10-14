@@ -20,10 +20,13 @@
 
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 
 // Return whether the character c is OK to use in the assembler.
+
+#if 0
 
 // TODO: move to common location
 static bool char_needs_encoding(char c) {
@@ -160,12 +163,14 @@ static std::string encode_id(const std::string id) {
   return ret;
 }
 
+#endif
+
 // Define the built-in functions that are exposed to GCCGo.
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     : context_(context), module_(new llvm::Module("gomodule", context)),
-      datalayout_(module_->getDataLayout()), complex_float_type_(NULL),
-      complex_double_type_(NULL), error_type_(NULL), llvm_ptr_type_(NULL),
+      datalayout_(module_->getDataLayout()), complex_float_type_(nullptr),
+      complex_double_type_(nullptr), error_type_(nullptr), llvm_ptr_type_(NULL),
       address_space_(0) {
   // LLVM doesn't have anything that corresponds directly to the
   // gofrontend notion of an error type. For now we create a so-called
@@ -364,6 +369,20 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 #endif
 }
 
+Llvm_backend::~Llvm_backend()
+{
+  for (auto pht : placeholders_)
+    delete pht;
+  for (auto pht : updated_placeholders_)
+    delete pht;
+  for (auto &kv : anon_typemap_)
+    delete kv.second;
+  for (auto &kv : named_typemap_)
+    delete kv.second;
+  for (auto &kv : builtin_functions_)
+    delete kv.second;
+}
+
 Btype *Llvm_backend::make_anon_type(llvm::Type *lt) {
   assert(lt);
 
@@ -379,7 +398,7 @@ Btype *Llvm_backend::make_anon_type(llvm::Type *lt) {
 }
 
 Btype *Llvm_backend::make_placeholder_type(llvm::Type *pht) {
-  Btype *bplace = make_anon_type(pht);
+  Btype *bplace = new Btype(pht);
   assert(placeholders_.find(bplace) == placeholders_.end());
   placeholders_.insert(bplace);
   return bplace;
@@ -389,6 +408,7 @@ void Llvm_backend::update_placeholder_underlying_type(Btype *pht,
                                                       llvm::Type *newtyp) {
   assert(placeholders_.find(pht) != placeholders_.end());
   placeholders_.erase(pht);
+  updated_placeholders_.insert(pht);
   pht->type_ = newtyp;
 }
 
@@ -541,7 +561,7 @@ Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
 // out the name/location information passed into the placeholder type
 // creation routines.
 
-llvm::Type *Llvm_backend::make_opaque_type() {
+llvm::Type *Llvm_backend::make_opaque_llvm_type() {
   return llvm::StructType::create(context_);
 }
 
@@ -549,7 +569,7 @@ llvm::Type *Llvm_backend::make_opaque_type() {
 
 Btype *Llvm_backend::placeholder_pointer_type(const std::string &name,
                                               Location location, bool) {
-  llvm::Type *opaque = make_opaque_type();
+  llvm::Type *opaque = make_opaque_llvm_type();
   llvm::Type *ph_ptr_typ = llvm::PointerType::get(opaque, address_space_);
   return make_placeholder_type(ph_ptr_typ);
 }
@@ -578,7 +598,7 @@ bool Llvm_backend::set_placeholder_function_type(Btype *placeholder,
 
 Btype *Llvm_backend::placeholder_struct_type(const std::string &name,
                                              Location location) {
-  return make_placeholder_type(make_opaque_type());
+  return make_placeholder_type(make_opaque_llvm_type());
 }
 
 // Fill in the fields of a placeholder struct type.
@@ -664,14 +684,32 @@ int64_t Llvm_backend::type_alignment(Btype *btype) {
 }
 
 // Return the alignment of a struct field of type BTYPE.
+//
+// One case where type_field_align(X) != type_align(X) is
+// for type 'double' on x86 32-bit, where for compatibility
+// a double field is 4-byte aligned but will be 8-byte aligned
+// otherwise.
 
-int64_t Llvm_backend::type_field_alignment(Btype *btype) {
-  // pseudocode: create a new anon struct with two fields, first a single
-  // byte field and then a field of type btype. Then use getElementOffset to
-  // find out where the second one has been placed. Finally, return min
-  // of alignof(btype) and that value.
-  assert(false && "LLvm_backend::type_field_alignment not yet implemented");
-  return NULL;
+int64_t Llvm_backend::type_field_alignment(Btype *btype)
+{
+  // Corner cases.
+  if (! btype->type()->isSized() || btype == error_type_)
+    return -1;
+
+  // Create a new anonymous struct with two fields: first field is a
+  // single byte, second field is of type btype. Then use
+  // getElementOffset to find out where the second one has been
+  // placed. Finally, return min of alignof(btype) and that value.
+
+  llvm::SmallVector<llvm::Type *, 2> elems(2);
+  elems[0] = llvm::Type::getInt1Ty(context_);
+  elems[1] = btype->type();
+  llvm::StructType *dummyst = llvm::StructType::get(context_, elems);
+  const llvm::StructLayout *sl = datalayout_.getStructLayout(dummyst);
+  uint64_t uoff = sl->getElementOffset(1);
+  unsigned talign = datalayout_.getPrefTypeAlignment(btype->type());
+  int64_t rval = (uoff < talign ? uoff : talign);
+  return rval;
 }
 
 // Return the offset of a field in a struct.
@@ -1267,9 +1305,34 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
                                   const std::string &asm_name, bool is_visible,
                                   bool is_declaration, bool is_inlinable,
                                   bool disable_split_stack,
-                                  bool in_unique_section, Location location) {
-  assert(false && "Llvm_backend::function not yet impl");
-  return NULL;
+                                  bool in_unique_section, Location location)
+{
+  llvm::Twine fn(name);
+  llvm::FunctionType *fty = llvm::cast<llvm::FunctionType>(fntype->type());
+  llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
+  if (!is_visible)
+    linkage = llvm::GlobalValue::InternalLinkage;
+
+  llvm::Function *fcn = llvm::Function::Create(fty, linkage, fn, module_.get());
+
+  // visibility
+  fcn->setVisibility(llvm::GlobalValue::HiddenVisibility);
+
+  // inline/noinline
+  if (!is_inlinable)
+    fcn->addFnAttr(llvm::Attribute::NoInline);
+
+  Bfunction *bfunc = new Bfunction(fcn);
+
+  // TODO: unique section support. llvm::GlobalObject has support for
+  // setting COMDAT groups and section names, but nothing to manage how
+  // section names are created or doled out as far as I can tell
+  assert(!in_unique_section);
+
+  if (disable_split_stack)
+    bfunc->setSplitStack(Bfunction::NoSplit);
+
+  return bfunc;
 }
 
 // Create a statement that runs all deferred calls for FUNCTION.  This should

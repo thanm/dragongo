@@ -443,6 +443,9 @@ TEST(BackendCoreTests, TypeUtils) {
   ASSERT_EQ(be->type_size(st), int64_t(128));
   ASSERT_EQ(be->type_alignment(st), 8);
 
+  // type field alignment
+  Btype *u32 = be->integer_type(true, 32);
+  ASSERT_EQ(be->type_field_alignment(u32), 4);
 }
 
 }

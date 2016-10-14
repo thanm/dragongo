@@ -38,9 +38,31 @@ private:
   friend class Llvm_backend;
 };
 
+// Class Bfunction wraps llvm::Function
+
+class Bfunction
+{
+ public:
+  Bfunction(llvm::Function *f)
+      : function_(f), splitstack_(YesSplit)
+  { }
+
+  llvm::Function *function() const { return function_; }
+
+  enum SplitStackDisposition { YesSplit, NoSplit };
+  void setSplitStack(SplitStackDisposition disp) { splitstack_ = disp; }
+  SplitStackDisposition splitStack() const { return splitstack_; }
+
+ private:
+  llvm::Function *function_;
+  SplitStackDisposition splitstack_;
+};
+
+
 class Llvm_backend : public Backend {
 public:
   Llvm_backend(llvm::LLVMContext &context);
+  ~Llvm_backend();
 
   // Types.
 
@@ -295,7 +317,7 @@ private:
   void update_placeholder_underlying_type(Btype *plt, llvm::Type *newtyp);
 
   // Create an opaque type for use as part of a placeholder type.
-  llvm::Type *make_opaque_type();
+  llvm::Type *make_opaque_llvm_type();
 
 #if 0
 private:
@@ -339,6 +361,7 @@ private:
   std::unordered_map<llvm::Type *, Btype *> anon_typemap_;
   named_type_maptyp named_typemap_;
   std::unordered_set<Btype *> placeholders_;
+  std::unordered_set<Btype *> updated_placeholders_;
   Btype *complex_float_type_;
   Btype *complex_double_type_;
   Btype *error_type_;
