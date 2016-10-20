@@ -79,7 +79,44 @@ Here are instructions on building and running the unit tests for the middle laye
 [ RUN      ] BackendCoreTests.MakeBackend
 [       OK ] BackendCoreTests.MakeBackend (1 ms)
 [ RUN      ] BackendCoreTests.ScalarTypes
+[       OK ] BackendCoreTests.ScalarTypes (0 ms)
+[ RUN      ] BackendCoreTests.StructTypes
+[       OK ] BackendCoreTests.StructTypes (1 ms)
+[ RUN      ] BackendCoreTests.ComplexTypes
+[       OK ] BackendCoreTests.ComplexTypes (0 ms)
+[ RUN      ] BackendCoreTests.FunctionTypes
+[       OK ] BackendCoreTests.FunctionTypes (0 ms)
+[ RUN      ] BackendCoreTests.PlaceholderTypes
+[       OK ] BackendCoreTests.PlaceholderTypes (0 ms)
+[ RUN      ] BackendCoreTests.ArrayTypes
+[       OK ] BackendCoreTests.ArrayTypes (0 ms)
+[ RUN      ] BackendCoreTests.NamedTypes
+[       OK ] BackendCoreTests.NamedTypes (0 ms)
+[ RUN      ] BackendCoreTests.TypeUtils
+
 ...
+
 [  PASSED  ] 10 tests.
 ```
+
+The unit tests currently work by instantiating an LLVM Backend instance and making backend method calls (to mimic what the frontend would do), then inspects the results to make sure they are as expected. Here is an example:
+
+```
+TEST(BackendCoreTests, ComplexTypes) {
+  LLVMContext C;
+
+  Type *ft = Type::getFloatTy(C);
+  Type *dt = Type::getDoubleTy(C);
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+  Btype *c32 = be->complex_type(64);
+  ASSERT_TRUE(c32 != NULL);
+  ASSERT_EQ(c32->type(), mkTwoFieldLLvmStruct(C, ft, ft));
+  Btype *c64 = be->complex_type(128);
+  ASSERT_TRUE(c64 != NULL);
+  ASSERT_EQ(c64->type(), mkTwoFieldLLvmStruct(C, dt, dt));
+}
+```
+
+The test above makes sure that the LLVM type we get as a result of claling Backend::complex_type() is kosher and matches up to expectations.
 
