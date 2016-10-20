@@ -25,6 +25,8 @@ go-location.cpp
 go-sha1.cpp
   )
 
+include_directories(${CMAKE_BINARY_DIR}/external/mpc)
+include_directories(${CMAKE_BINARY_DIR}/external/mpfr)
 include_directories(${CMAKE_BINARY_DIR}/external/gmp)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/gofrontend/go)
 
