@@ -1,3 +1,10 @@
+# This directory is where cmake will drop downloaded tar files
+# for the gofrontend deps (GMP, MPCR, etc)
+external/
+
+# This is a separate git repo and is tracked independently
+llvm-gofrontend/gofrontend/
+
 # Compiled Object files
 *.slo
 *.lo

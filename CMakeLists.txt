@@ -29,7 +29,7 @@ processorcount(PROCESSOR_COUNT)
 
 set(MPCINSTALL ${CMAKE_CURRENT_BINARY_DIR}/external/build-mpc)
 externalproject_add(libmpc
-  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/mpc
+  URL ftp://gcc.gnu.org/pub/gcc/infrastructure/mpc-1.0.3.tar.gz
   DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/mpc
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${MPCINSTALL} 
@@ -42,7 +42,7 @@ externalproject_add(libmpc
 
 set(MPFRINSTALL ${CMAKE_CURRENT_BINARY_DIR}/external/build-mpfr)
 externalproject_add(libmpfr
-  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/mpfr
+  URL ftp://gcc.gnu.org/pub/gcc/infrastructure/mpfr-3.1.4.tar.bz2
   DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/mpfr
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${MPFRINSTALL} 
@@ -55,7 +55,7 @@ externalproject_add(libmpfr
 
 set(GMPINSTALL ${CMAKE_CURRENT_BINARY_DIR}/external/build-gmp)
 externalproject_add(libgmp
-  SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external/gmp
+  URL ftp://ftp.gnu.org/gnu/gmp/gmp-6.1.0.tar.bz2
   DOWNLOAD_DIR ${CMAKE_CURRENT_SOURCE_DIR}/external
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/gmp
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${GMPINSTALL} 
