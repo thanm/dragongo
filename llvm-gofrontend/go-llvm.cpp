@@ -1310,13 +1310,11 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   llvm::Twine fn(name);
   llvm::FunctionType *fty = llvm::cast<llvm::FunctionType>(fntype->type());
   llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
-  if (!is_visible)
-    linkage = llvm::GlobalValue::InternalLinkage;
-
   llvm::Function *fcn = llvm::Function::Create(fty, linkage, fn, module_.get());
 
   // visibility
-  fcn->setVisibility(llvm::GlobalValue::HiddenVisibility);
+  if (!is_visible)
+    fcn->setVisibility(llvm::GlobalValue::HiddenVisibility);
 
   // inline/noinline
   if (!is_inlinable)

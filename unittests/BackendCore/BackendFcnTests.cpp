@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestUtils.h"
+#include "llvm/IR/Function.h"
 #include "gtest/gtest.h"
 #include "go-llvm-backend.h"
 
@@ -30,16 +31,32 @@ TEST(BackendFcnTests, MakeFunction) {
                             L_RES, bi64t,
                             L_END);
 
-  const bool is_visible = true;
   const bool is_declaration = true;
-  const bool is_inlinable = false;
-  bool disable_split_stack = true;
+  const bool is_visible[2] = { true, false };
+  const bool is_inlinable[2] = { true, false };
+  bool split_stack[2] = { true, false };
   bool in_unique_section = false;
   Location loc;
-  Bfunction *befcn = be->function(befty, "foo", "foo", is_visible,
-                                  is_declaration, is_inlinable,
-                                  disable_split_stack, in_unique_section, loc);
-  ASSERT_TRUE(befcn != NULL);
+  bool first = true;
+  for (auto vis : is_visible) {
+    for (auto inl : is_inlinable) {
+      for (auto split : split_stack) {
+        Bfunction *befcn =
+            be->function(befty, "foo", "foo", vis,
+                         is_declaration, inl, split, in_unique_section, loc);
+        llvm::Function *llfunc = befcn->function();
+        ASSERT_TRUE(llfunc != NULL);
+        if (first) {
+          ASSERT_EQ(llfunc->getName(), "foo");
+          first = false;
+        }
+        ASSERT_FALSE(llfunc->isVarArg());
+        ASSERT_EQ(llfunc->hasFnAttribute(Attribute::NoInline), !inl);
+        ASSERT_EQ(llfunc->hasHiddenVisibility(), !vis);
+        ASSERT_EQ(befcn->splitStack() == Bfunction::YesSplit, !split);
+      }
+    }
+  }
 }
 
 }
