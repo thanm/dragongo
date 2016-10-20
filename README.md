@@ -49,10 +49,6 @@ Within <workarea>/llvm/tools/dragongo, the following directories are of interest
 
  * source code for the unit tests
  
-<workarea>/llvm/tools/dragongo/external:
-
- * cmake and ninja will drop copies of the tar files and source code for the exyternal dependencies here (e.g. GMP, MPC, MPFR)
- 
 ## Building and running llvm-goparse
 
 The executable llvm-goparse is a driver program that will (at some point) kick off the go parser on a specified go program. At the moment llvm-goparse doesn't do anything, only creates an instance of the back end and then exits. 

@@ -1,6 +1,5 @@
 
 set(LLVM_LINK_COMPONENTS
-  CppGoFrontEnd
   CodeGen
   Core
   Support
