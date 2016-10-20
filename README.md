@@ -37,15 +37,15 @@ ninja <dragongo target(s)>
 
 Within <workarea>/llvm/tools/dragongo, the following directories are of interest:
 
-<workarea>/llvm/tools/dragongo:
+.../llvm/tools/dragongo:
 
  * contains build rules and source code for llvm-goparse
  
-<workarea>/llvm/tools/dragongo/llvm-gofrontend:
+.../llvm/tools/dragongo/llvm-gofrontend:
 
  * contains build rules for the libLLVMCppGoFrontEnd.a, a library that contains both the gofrontend code and the LLVM-specific middle layer (for example, the definition of the class Llvm_backend, which inherits from Backend).
  
-<workarea>/llvm/tools/dragongo/unittests:
+.../llvm/tools/dragongo/unittests:
 
  * source code for the unit tests
  
