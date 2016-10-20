@@ -60,15 +60,13 @@ externalproject_add(libgmp
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/gmp
   CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${GMPINSTALL} 
   BUILD_COMMAND make -j${PROCESSOR_COUNT}
-  INSTALL_COMMAND make -j${PROCESSOR_COUNT}
+  INSTALL_COMMAND make -j${PROCESSOR_COUNT} install
   LOG_CONFIGURE 1
   LOG_BUILD 1
   LOG_INSTALL 1
   )
 
-
 # Things we need to link into llvm-goparse
-
 set(LLVM_LINK_COMPONENTS
   ${LLVM_TARGETS_TO_BUILD}
   CppGoFrontEnd
@@ -83,22 +81,18 @@ set(LLVM_LINK_COMPONENTS
   )
 
 # Include directories needed by llvm-goparse
-
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/gofrontend/go)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/llvm-gofrontend)
 
 # The llvm-goparse executable itself
-
 add_llvm_tool(llvm-goparse
   llvm-goparse.cpp
   )
 
 # Record the fact that llvm-goparse depends on these libs
-
 add_dependencies(llvm-goparse libmpfr libmpc libgmp)
 
-# Add in the archives for the llvm-goparse dependencies
-
+# Add in the archives for the llvm-goparse dependencies.
 target_link_libraries(llvm-goparse
   ${MPCINSTALL}/lib/libmpc.a
   ${MPFRINSTALL}/lib/libmpfr.a
