@@ -4,6 +4,8 @@ LLVM IR generation "middle end" for LLVM-based go compiler. This is currently ve
 
 Dragongo (name still not finalized) is layered on top of LLVM, much in the same way that things work for "clang" or "compiler-rt": you check out a copy of the LLVM source tree and then within that tree you check out additional git repos. 
 
+You'll need to have an up-to-date copy of cmake on your system (3.6 vintage).
+
 ## Setting up a dragongo work area:
 
 ```
@@ -33,7 +35,7 @@ ninja <dragongo target(s)>
 
 ## Source code structure
 
-Within <workarea>/llvm/tools/dragongo, the following dirs are of interest:
+Within <workarea>/llvm/tools/dragongo, the following directories are of interest:
 
 <workarea>/llvm/tools/dragongo:
 
