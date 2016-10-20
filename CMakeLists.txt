@@ -100,7 +100,7 @@ add_dependencies(llvm-goparse libmpfr libmpc libgmp)
 # Add in the archives for the llvm-goparse dependencies
 
 target_link_libraries(llvm-goparse
-  ${GMPINSTALL}/lib/libgmp.a
+  ${MPCINSTALL}/lib/libmpc.a
   ${MPFRINSTALL}/lib/libmpfr.a
   ${GMPINSTALL}/lib/libgmp.a
   )
