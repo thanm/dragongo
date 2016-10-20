@@ -1,4 +1,11 @@
 
+set(LLVM_LINK_COMPONENTS
+  CppGoFrontEnd
+  CodeGen
+  Core
+  Support
+  )
+
 add_llvm_library(LLVMCppGoFrontEnd
 gofrontend/go/ast-dump.cc
 gofrontend/go/escape.cc
@@ -23,7 +30,9 @@ go-llvm-diagnostics.cpp
 go-llvm.cpp
 go-location.cpp
 go-sha1.cpp
-  )
+)
+
+add_dependencies(LLVMCppGoFrontEnd intrinsics_gen)
 
 include_directories(${CMAKE_BINARY_DIR}/external/mpc)
 include_directories(${CMAKE_BINARY_DIR}/external/mpfr)
