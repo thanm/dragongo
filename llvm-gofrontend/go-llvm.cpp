@@ -168,10 +168,16 @@ static std::string encode_id(const std::string id) {
 // Define the built-in functions that are exposed to GCCGo.
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
-    : context_(context), module_(new llvm::Module("gomodule", context)),
-      datalayout_(module_->getDataLayout()), error_function_(nullptr),
-      complex_float_type_(nullptr), complex_double_type_(nullptr),
-      error_type_(nullptr), llvm_ptr_type_(NULL), address_space_(0) {
+    : context_(context)
+    , module_(new llvm::Module("gomodule", context))
+    , datalayout_(module_->getDataLayout())
+    , address_space_(0)
+    , complex_float_type_(nullptr)
+    , complex_double_type_(nullptr)
+    , error_type_(nullptr)
+    , llvm_ptr_type_(NULL)
+    , error_function_(nullptr)
+{
   // LLVM doesn't have anything that corresponds directly to the
   // gofrontend notion of an error type. For now we create a so-called
   // 'identified' anonymous struct type and have that act as a
@@ -390,8 +396,6 @@ Llvm_backend::~Llvm_backend() {
   for (auto &kv : anon_typemap_)
     delete kv.second;
   for (auto &kv : named_typemap_)
-    delete kv.second;
-  for (auto &kv : builtin_functions_)
     delete kv.second;
 }
 

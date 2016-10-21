@@ -58,6 +58,12 @@ class Bfunction
   SplitStackDisposition splitstack_;
 };
 
+//
+// LLVM-specific implementation of the Backend class; the code in
+// gofrontend instantiates an object of this class and then invokes
+// the various methods to convert its IR into LLVM IR. Nearly all of
+// the interesting methods below are virtual.
+//
 
 class Llvm_backend : public Backend {
 public:
@@ -319,13 +325,6 @@ private:
   // Create an opaque type for use as part of a placeholder type.
   llvm::Type *make_opaque_llvm_type();
 
-#if 0
-private:
-  void
-  define_builtin(built_in_function bcode, const char* name, const char* libname,
-                 tree fntype, bool const_p, bool noreturn_p);
-#endif
-
 private:
   typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
 
@@ -355,20 +354,31 @@ private:
                              named_llvm_type_hash,
                              named_llvm_type_equal > named_type_maptyp;
 
+  // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
   std::unique_ptr<llvm::Module> module_;
   const llvm::DataLayout &datalayout_;
+  unsigned address_space_;
+
+  // Data structures to record types that are being manfactured.
+
+  // Anonymous typed are hashed and commoned via this map.
   std::unordered_map<llvm::Type *, Btype *> anon_typemap_;
+
+  // LLVM types have no notion of names, hence this map is used
+  // to keep track of named types (for symbol and debug info emit).
   named_type_maptyp named_typemap_;
+
+  // Placeholder types
   std::unordered_set<Btype *> placeholders_;
   std::unordered_set<Btype *> updated_placeholders_;
-  std::unique_ptr<Bfunction> error_function_;
+
+  // Various predefined or pre-computed types that we cache away
   Btype *complex_float_type_;
   Btype *complex_double_type_;
   Btype *error_type_;
   llvm::Type *llvm_ptr_type_;
-  unsigned address_space_;
 
-  // A mapping of the LLVM built-ins exposed to Go
-  std::map<std::string, Bfunction *> builtin_functions_;
+  // Error function
+  std::unique_ptr<Bfunction> error_function_;
 };
