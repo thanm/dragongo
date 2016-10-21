@@ -12,11 +12,11 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "go-system.h"
-#include "go-c.h"
-#include "gogo.h"
-#include "backend.h"
 #include "go-llvm.h"
+#include "backend.h"
+#include "go-c.h"
+#include "go-system.h"
+#include "gogo.h"
 
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -169,9 +169,9 @@ static std::string encode_id(const std::string id) {
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     : context_(context), module_(new llvm::Module("gomodule", context)),
-      datalayout_(module_->getDataLayout()), complex_float_type_(nullptr),
-      complex_double_type_(nullptr), error_type_(nullptr), llvm_ptr_type_(NULL),
-      address_space_(0) {
+      datalayout_(module_->getDataLayout()), error_function_(nullptr),
+      complex_float_type_(nullptr), complex_double_type_(nullptr),
+      error_type_(nullptr), llvm_ptr_type_(NULL), address_space_(0) {
   // LLVM doesn't have anything that corresponds directly to the
   // gofrontend notion of an error type. For now we create a so-called
   // 'identified' anonymous struct type and have that act as a
@@ -181,6 +181,19 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   // For use handling circular types
   llvm_ptr_type_ =
       llvm::PointerType::get(llvm::StructType::create(context), address_space_);
+
+  // Create and record an error function. By marking it as varargs this will
+  // avoid any collisions with things that the front end might create, since
+  // Go varargs is handled/lowered entirely by the front end.
+  llvm::SmallVector<llvm::Type *, 1> elems(0);
+  elems.push_back(error_type_->type());
+  const bool isVarargs = true;
+  llvm::FunctionType *eft = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(context_), elems, isVarargs);
+  llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::PrivateLinkage;
+
+  error_function_.reset(
+      new Bfunction(llvm::Function::Create(eft, linkage, "", module_.get())));
 
 #if 0
   /* We need to define the fetch_and_add functions, since we use them
@@ -369,8 +382,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 #endif
 }
 
-Llvm_backend::~Llvm_backend()
-{
+Llvm_backend::~Llvm_backend() {
   for (auto pht : placeholders_)
     delete pht;
   for (auto pht : updated_placeholders_)
@@ -412,13 +424,11 @@ void Llvm_backend::update_placeholder_underlying_type(Btype *pht,
   pht->type_ = newtyp;
 }
 
-Btype *Llvm_backend::void_type()
-{
+Btype *Llvm_backend::void_type() {
   return make_anon_type(llvm::Type::getVoidTy(context_));
 }
 
-Btype *Llvm_backend::bool_type()
-{
+Btype *Llvm_backend::bool_type() {
   // LLVM has no predefined boolean type. Use int8 for now
   return make_anon_type(llvm::Type::getInt1Ty(context_));
 }
@@ -634,10 +644,8 @@ bool Llvm_backend::set_placeholder_array_type(Btype *placeholder,
 
 // Return a named version of a type.
 
-Btype *Llvm_backend::named_type(const std::string &name,
-                                Btype *btype,
-                                Location location)
-{
+Btype *Llvm_backend::named_type(const std::string &name, Btype *btype,
+                                Location location) {
   // TODO: add support for debug metadata
 
   // In the LLVM type world, all types are nameless except for so-called
@@ -690,10 +698,9 @@ int64_t Llvm_backend::type_alignment(Btype *btype) {
 // a double field is 4-byte aligned but will be 8-byte aligned
 // otherwise.
 
-int64_t Llvm_backend::type_field_alignment(Btype *btype)
-{
+int64_t Llvm_backend::type_field_alignment(Btype *btype) {
   // Corner cases.
-  if (! btype->type()->isSized() || btype == error_type_)
+  if (!btype->type()->isSized() || btype == error_type_)
     return -1;
 
   // Create a new anonymous struct with two fields: first field is a
@@ -1292,12 +1299,7 @@ Bexpression *Llvm_backend::label_address(Blabel *label, Location location) {
   return NULL;
 }
 
-Bfunction*
-Llvm_backend::error_function()
-{
-  assert(false && "Llvm_backend::error_function not yet impl");
-  return NULL;
-}
+Bfunction *Llvm_backend::error_function() { return error_function_.get(); }
 
 // Declare or define a new function.
 
@@ -1305,8 +1307,9 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
                                   const std::string &asm_name, bool is_visible,
                                   bool is_declaration, bool is_inlinable,
                                   bool disable_split_stack,
-                                  bool in_unique_section, Location location)
-{
+                                  bool in_unique_section, Location location) {
+  if (fntype == error_type_)
+    return error_function_.get();
   llvm::Twine fn(name);
   llvm::FunctionType *fty = llvm::cast<llvm::FunctionType>(fntype->type());
   llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;

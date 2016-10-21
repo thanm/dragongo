@@ -362,6 +362,7 @@ private:
   named_type_maptyp named_typemap_;
   std::unordered_set<Btype *> placeholders_;
   std::unordered_set<Btype *> updated_placeholders_;
+  std::unique_ptr<Bfunction> error_function_;
   Btype *complex_float_type_;
   Btype *complex_double_type_;
   Btype *error_type_;

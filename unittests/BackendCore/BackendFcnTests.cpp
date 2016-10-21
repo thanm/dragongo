@@ -26,16 +26,18 @@ TEST(BackendFcnTests, MakeFunction) {
 
   // func foo(i1, i2 int32) int64 { }
   Btype *befty = mkFuncTyp(be.get(),
-                            L_PARM, bi32t,
-                            L_PARM, bi32t,
-                            L_RES, bi64t,
-                            L_END);
+                           L_PARM, bi32t,
+                           L_PARM, bi32t,
+                           L_RES, bi64t,
+                           L_END);
+
+  // FIXME: this is not supported yet.
+  bool in_unique_section = false;
 
   const bool is_declaration = true;
   const bool is_visible[2] = { true, false };
   const bool is_inlinable[2] = { true, false };
   bool split_stack[2] = { true, false };
-  bool in_unique_section = false;
   Location loc;
   bool first = true;
   for (auto vis : is_visible) {
@@ -57,6 +59,17 @@ TEST(BackendFcnTests, MakeFunction) {
       }
     }
   }
+
+  // Error function
+  Bfunction *be_error_fcn = be->error_function();
+  ASSERT_TRUE(be_error_fcn != NULL);
+
+  // Try to create a function with an error type -- we should
+  // get back error_function
+  Bfunction *mistake =
+      be->function(be->error_type(), "bad", "bad", true, true,
+                   false, false, false, loc);
+  ASSERT_EQ(mistake, be_error_fcn);
 }
 
 }
