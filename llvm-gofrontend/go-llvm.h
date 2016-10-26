@@ -325,6 +325,29 @@ private:
   // Create an opaque type for use as part of a placeholder type.
   llvm::Type *make_opaque_llvm_type();
 
+  // add a builtin function definition
+  void define_builtin_fcn(const char* name, const char* libname,
+                          llvm::Function *fcn);
+
+  // varargs convenience wrapper for define_builtin_fcn.
+  // creates a libcall builtin; first argument is return type, next
+  // arguments are parameter types, followed by NULL type indicating
+  // end of params.
+  void define_libcall_builtin(const char* name, const char* libname, ...);
+
+  // varargs convenience wrapper for define_builtin_fcn;
+  // creates in intrinsic builtin by looking up intrinsic
+  // 'intrinsicID'; variable arguments the overloaded types required
+  // by llvm::Intrinsic::getDeclaration (see the comments on that
+  // function for more info) terminated by NULL.
+  void define_intrinsic_builtin(const char* name, const char* libname,
+                                unsigned intrinsicID, ...);
+
+  // more helpers for builtin creation
+  void define_all_builtins();
+  void define_sync_fetch_and_add_builtins();
+  void define_intrinsic_builtins();
+
 private:
   typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
 
@@ -378,6 +401,13 @@ private:
   Btype *complex_double_type_;
   Btype *error_type_;
   llvm::Type *llvm_ptr_type_;
+  llvm::Type *llvm_size_type_;
+  llvm::Type *llvm_integer_type_;
+  llvm::Type *llvm_int32_type_;
+  llvm::Type *llvm_int64_type_;
+
+  // maps name to builtin function
+  std::unordered_map<std::string, Bfunction *> builtin_map_;
 
   // Error function
   std::unique_ptr<Bfunction> error_function_;

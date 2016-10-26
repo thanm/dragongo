@@ -23,6 +23,7 @@
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/Intrinsics.h"
 
 // Return whether the character c is OK to use in the assembler.
 
@@ -176,6 +177,10 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     , complex_double_type_(nullptr)
     , error_type_(nullptr)
     , llvm_ptr_type_(NULL)
+    , llvm_size_type_(NULL)
+    , llvm_integer_type_(NULL)
+    , llvm_int32_type_(NULL)
+    , llvm_int64_type_(NULL)
     , error_function_(nullptr)
 {
   // LLVM doesn't have anything that corresponds directly to the
@@ -184,9 +189,16 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   // stand-in. See http://llvm.org/docs/LangRef.html#structure-type
   error_type_ = make_anon_type(llvm::StructType::create(context_));
 
-  // For use handling circular types
+  // For use handling circular types and for builtin creation
   llvm_ptr_type_ =
       llvm::PointerType::get(llvm::StructType::create(context), address_space_);
+
+  // For use in builtin creation
+  llvm_integer_type_ =
+      llvm::IntegerType::get(context_, datalayout_.getPointerSizeInBits());
+  llvm_size_type_ = llvm_integer_type_;
+  llvm_int32_type_ = llvm::IntegerType::get(context_, 32);
+  llvm_int64_type_ = llvm::IntegerType::get(context_, 64);
 
   // Create and record an error function. By marking it as varargs this will
   // avoid any collisions with things that the front end might create, since
@@ -196,37 +208,13 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   const bool isVarargs = true;
   llvm::FunctionType *eft = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context_), elems, isVarargs);
-  llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::PrivateLinkage;
-
+  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::PrivateLinkage;
   error_function_.reset(
-      new Bfunction(llvm::Function::Create(eft, linkage, "", module_.get())));
+      new Bfunction(llvm::Function::Create(eft, plinkage, "", module_.get())));
+
+  define_all_builtins();
 
 #if 0
-  /* We need to define the fetch_and_add functions, since we use them
-     for ++ and --.  */
-  tree t = this->integer_type(true, BITS_PER_UNIT)->get_tree();
-  tree p = build_pointer_type(build_qualified_type(t, TYPE_QUAL_VOLATILE));
-  this->define_builtin(BUILT_IN_SYNC_ADD_AND_FETCH_1, "__sync_fetch_and_add_1",
-                       NULL, build_function_type_list(t, p, t, NULL_TREE),
-                       false, false);
-
-  t = this->integer_type(true, BITS_PER_UNIT * 2)->get_tree();
-  p = build_pointer_type(build_qualified_type(t, TYPE_QUAL_VOLATILE));
-  this->define_builtin(BUILT_IN_SYNC_ADD_AND_FETCH_2, "__sync_fetch_and_add_2",
-                       NULL, build_function_type_list(t, p, t, NULL_TREE),
-                       false, false);
-
-  t = this->integer_type(true, BITS_PER_UNIT * 4)->get_tree();
-  p = build_pointer_type(build_qualified_type(t, TYPE_QUAL_VOLATILE));
-  this->define_builtin(BUILT_IN_SYNC_ADD_AND_FETCH_4, "__sync_fetch_and_add_4",
-                       NULL, build_function_type_list(t, p, t, NULL_TREE),
-                       false, false);
-
-  t = this->integer_type(true, BITS_PER_UNIT * 8)->get_tree();
-  p = build_pointer_type(build_qualified_type(t, TYPE_QUAL_VOLATILE));
-  this->define_builtin(BUILT_IN_SYNC_ADD_AND_FETCH_8, "__sync_fetch_and_add_8",
-                       NULL, build_function_type_list(t, p, t, NULL_TREE),
-                       false, false);
 
   // We use __builtin_expect for magic import functions.
   this->define_builtin(BUILT_IN_EXPECT, "__builtin_expect", NULL,
@@ -396,6 +384,8 @@ Llvm_backend::~Llvm_backend() {
   for (auto &kv : anon_typemap_)
     delete kv.second;
   for (auto &kv : named_typemap_)
+    delete kv.second;
+  for (auto &kv : builtin_map_)
     delete kv.second;
 }
 
@@ -733,6 +723,141 @@ int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index) {
   const llvm::StructLayout *sl = datalayout_.getStructLayout(llvm_st);
   uint64_t uoff = sl->getElementOffset(index);
   return static_cast<int64_t>(uoff);
+}
+
+void Llvm_backend::define_libcall_builtin(const char *name,
+                                          const char *libname,
+                                          ...)
+{
+  va_list ap;
+  llvm::SmallVector<llvm::Type *, 16> ptypes;
+  va_start(ap, libname);
+  llvm::Type *resultType = va_arg(ap, llvm::Type *);
+  llvm::Type *parmType = va_arg(ap, llvm::Type *);
+  while (parmType) {
+    ptypes.push_back(parmType);
+    parmType = va_arg(ap, llvm::Type *);
+  }
+  const bool isVarargs = false;
+  llvm::FunctionType *ft =
+      llvm::FunctionType::get(resultType, ptypes, isVarargs);
+  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::PrivateLinkage;
+  llvm::Function *fcn = llvm::Function::Create(ft, plinkage,
+                                               name, module_.get());
+  define_builtin_fcn(name, libname, fcn);
+}
+
+void Llvm_backend::define_intrinsic_builtin(const char *name,
+                                            const char *libname,
+                                            unsigned intrinsicID,
+                                            ...)
+{
+  va_list ap;
+  llvm::SmallVector<llvm::Type *, 16> overloadTypes;
+  va_start(ap, intrinsicID);
+  llvm::Type *oType = va_arg(ap, llvm::Type *);
+  while (oType) {
+    overloadTypes.push_back(oType);
+    oType = va_arg(ap, llvm::Type *);
+  }
+  llvm::Intrinsic::ID iid = static_cast<llvm::Intrinsic::ID>(intrinsicID);
+  llvm::Function *fcn =
+      llvm::Intrinsic::getDeclaration(module_.get(), iid, overloadTypes);
+  assert(fcn != nullptr);
+  define_builtin_fcn(name, libname, fcn);
+}
+
+// Define name -> fcn mapping for a builtin.
+// Notes:
+// - LLVM makes a distinction between libcalls (such as
+//   "__sync_fetch_and_add_1") and intrinsics (such as
+//   "__builtin_expect" or "__builtin_trap"); the former
+//   are target-independent and the latter are target-dependent
+// - intrinsics with the no-return property (such as
+//   "__builtin_trap" will already be set up this way
+
+void Llvm_backend::define_builtin_fcn(const char *name,
+                                      const char *libname,
+                                      llvm::Function *fcn)
+{
+  Bfunction *bfunc = new Bfunction(fcn);
+  assert(builtin_map_.find(name) == builtin_map_.end());
+  builtin_map_[name] = bfunc;
+  if (libname) {
+    Bfunction *bfunc = new Bfunction(fcn);
+    assert(builtin_map_.find(libname) == builtin_map_.end());
+    builtin_map_[libname] = bfunc;
+  }
+}
+
+// Look up a named built-in function in the current backend implementation.
+// Returns NULL if no built-in function by that name exists.
+
+Bfunction *Llvm_backend::lookup_builtin(const std::string &name)
+{
+  auto it = builtin_map_.find(name);
+  if (it == builtin_map_.end())
+    return nullptr;
+  return it->second;
+}
+
+void Llvm_backend::define_all_builtins()
+{
+  define_sync_fetch_and_add_builtins();
+  define_intrinsic_builtins();
+}
+
+void Llvm_backend::define_intrinsic_builtins()
+{
+
+  define_intrinsic_builtin("__builtin_trap", nullptr, llvm::Intrinsic::trap,
+                           nullptr);
+
+  define_intrinsic_builtin("__builtin_expect", nullptr,
+                           llvm::Intrinsic::expect,
+                           llvm_integer_type_, nullptr);
+
+  define_libcall_builtin("__builtin_memcmp", "memcmp",
+                         llvm_integer_type_,
+                         llvm_ptr_type_,
+                         llvm_ptr_type_,
+                         llvm_size_type_, nullptr);
+
+  // go runtime refers to this intrinsic as "ctz", however the LLVM
+  // equivalent is named "cttz".
+  define_intrinsic_builtin("__builtin_ctz", "ctz",
+                           llvm::Intrinsic::cttz,
+                           llvm_integer_type_, nullptr);
+
+  // go runtime refers to this intrinsic as "ctzll", however the LLVM
+  // equivalent is named "cttz".
+  define_intrinsic_builtin("__builtin_ctzll", "ctzll",
+                           llvm::Intrinsic::cttz,
+                           llvm_int64_type_, nullptr);
+
+  // go runtime refers to this intrinsic as "bswap32", however the LLVM
+  // equivalent is named just "bswap"
+  define_intrinsic_builtin("__builtin_bswap32", "bswap32",
+                           llvm::Intrinsic::bswap,
+                           llvm_int32_type_, nullptr);
+
+  // go runtime refers to this intrinsic as "bswap64", however the LLVM
+  // equivalent is named just "bswap"
+  define_intrinsic_builtin("__builtin_bswap64", "bswap64",
+                           llvm::Intrinsic::bswap,
+                           llvm_int64_type_, nullptr);
+}
+
+void Llvm_backend::define_sync_fetch_and_add_builtins()
+{
+  std::vector<unsigned> sizes = {1, 2, 4, 8};
+  for (auto sz : sizes) {
+    char nbuf[64];
+    sprintf(nbuf, "__sync_fetch_and_add_%u", sz);
+    llvm::Type *it = llvm::IntegerType::get(context_, sz << 3);
+    llvm::PointerType *pit = llvm::PointerType::get(it, address_space_);
+    define_libcall_builtin(nbuf, nullptr, pit, it, nullptr);
+  }
 }
 
 // Return the zero value for a type.
@@ -1331,8 +1456,10 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
 
   // TODO: unique section support. llvm::GlobalObject has support for
   // setting COMDAT groups and section names, but nothing to manage how
-  // section names are created or doled out as far as I can tell
-  assert(!in_unique_section);
+  // section names are created or doled out as far as I can tell, need
+  // to look a little more closely at how -ffunction-sections is implemented
+  // for clang/LLVM.
+  assert(!in_unique_section || is_declaration);
 
   if (disable_split_stack)
     bfunc->setSplitStack(Bfunction::NoSplit);
@@ -1370,14 +1497,6 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   return false;
 }
 
-// Look up a named built-in function in the current backend implementation.
-// Returns NULL if no built-in function by that name exists.
-
-Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
-  assert(false && "Llvm_backend::lookup_builtin not yet impl");
-  return NULL;
-}
-
 // Write the definitions for all TYPE_DECLS, CONSTANT_DECLS,
 // FUNCTION_DECLS, and VARIABLE_DECLS declared globally, as well as
 // emit early debugging information.
@@ -1389,23 +1508,6 @@ void Llvm_backend::write_global_definitions(
     const std::vector<Bvariable *> &variable_decls) {
   assert(false && "Llvm_backend::write_global_definitions not yet impl");
 }
-
-#if 0
-// Define a builtin function.  BCODE is the builtin function code
-// defined by builtins.def.  NAME is the name of the builtin function.
-// LIBNAME is the name of the corresponding library function, and is
-// NULL if there isn't one.  FNTYPE is the type of the function.
-// CONST_P is true if the function has the const attribute.
-// NORETURN_P is true if the function has the noreturn attribute.
-
-void
-Llvm_backend::define_builtin(built_in_function bcode, const char* name,
-                            const char* libname, tree fntype, bool const_p,
-                            bool noreturn_p)
-{
-  assert(false && "Llvm_backend::define_builtin not yet impl");
-}
-#endif
 
 // Convert an identifier for use in an error message.
 // TODO(tham): scan the identifier to determine if contains

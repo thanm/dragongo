@@ -72,4 +72,32 @@ TEST(BackendFcnTests, MakeFunction) {
   ASSERT_EQ(mistake, be_error_fcn);
 }
 
+TEST(BackendFcnTests, BuiltinFunctions) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  std::unordered_set<Bfunction *> results;
+  std::vector<std::string> tocheck = {
+    "__sync_fetch_and_add_1",
+    "__sync_fetch_and_add_2",
+    "__sync_fetch_and_add_4",
+    "__sync_fetch_and_add_8",
+    "__builtin_trap",
+    "__builtin_expect",
+    "__builtin_memcmp",
+    "__builtin_ctz",
+    "__builtin_ctzll",
+    "__builtin_bswap32",
+    "__builtin_bswap64",
+  };
+  for (auto fname : tocheck) {
+    Bfunction *bfcn = be->lookup_builtin(fname);
+    ASSERT_TRUE(bfcn != NULL);
+    ASSERT_TRUE(results.find(bfcn) == results.end());
+    results.insert(bfcn);
+  }
+  ASSERT_TRUE(results.size() == tocheck.size());
+}
+
 }
