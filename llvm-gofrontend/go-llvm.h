@@ -404,6 +404,12 @@ private:
   // to keep track of named types (for symbol and debug info emit).
   named_type_maptyp named_typemap_;
 
+  // Within the LLVM world there is no notion of an unsigned (vs signed)
+  // type, there are only signed/unsigned operations on vanilla integer
+  // types. This set keeps track of types that the frontend has told
+  // us are unsigned; see Llvm_backend::integer_type for more.
+  std::unordered_set<Btype *> unsigned_integer_types_;
+
   // Placeholder types
   std::unordered_set<Btype *> placeholders_;
   std::unordered_set<Btype *> updated_placeholders_;

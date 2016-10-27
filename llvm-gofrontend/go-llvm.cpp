@@ -26,8 +26,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
-static const unsigned NotInTargetLib = llvm::LibFunc::NumLibFuncs;
-
+static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
 // Return whether the character c is OK to use in the assembler.
 
@@ -277,13 +276,42 @@ Btype *Llvm_backend::bool_type() {
   return make_anon_type(llvm::Type::getInt1Ty(context_));
 }
 
-// Get an unnamed integer type. Note that in the LLVM world, we don't
-// have signed/unsigned on types, we only have signed/unsigned on operations
-// over types (e.g. signed addition of two integers).
+// Get an unnamed integer type.
+//
+// Note that in the LLVM world, we don't have signed/unsigned types,
+// we only have signed/unsigned operations (e.g. signed addition of
+// two integers).
+//
+// Many language frontends for C-like languages have squishyness
+// when it comes to signed/unsigned arithmetic. Example: for the C code
+//
+//       double abc(unsigned x, int y) { return (double) x + y; }
+//
+// What typically happens under the hood is that the compiler constructs
+// a parse tree that looks like
+//
+//                  op: ADDITION
+//                 /          \.
+//                /            \.
+//            var_ref(x)      var_ref(y)
+//            typ: unsigned   type: signed
+//
+// where the ADD op is generic/polymorphic, and the real nature of the
+// add (signed/unsigned) only becomes apparent during lowering, when
+// the C rules about type conversions are enforced.
+//
+// To account for any potential hazards here, we record whether the
+// frontend has announced that a specific type is unsigned in a side table.
+// We can then use that table later on to enforce the rules (for example,
+// to insure that we didn't forget to insert a type conversion, or to
+// derive the correct flavor of an integer ADD based on its arguments).
 
-Btype *Llvm_backend::integer_type(bool /*is_unsigned*/, int bits) {
-  return make_anon_type(llvm::IntegerType::get(context_, bits));
 
+Btype *Llvm_backend::integer_type(bool is_unsigned, int bits) {
+  Btype *it = make_anon_type(llvm::IntegerType::get(context_, bits));
+  if (is_unsigned)
+    unsigned_integer_types_.insert(it);
+  return it;
 }
 
 // Get an unnamed float type.
