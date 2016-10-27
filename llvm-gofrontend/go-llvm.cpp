@@ -24,6 +24,10 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+
+static const unsigned NotInTargetLib = llvm::LibFunc::NumLibFuncs;
+
 
 // Return whether the character c is OK to use in the assembler.
 
@@ -176,11 +180,15 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     , complex_float_type_(nullptr)
     , complex_double_type_(nullptr)
     , error_type_(nullptr)
-    , llvm_ptr_type_(NULL)
-    , llvm_size_type_(NULL)
-    , llvm_integer_type_(NULL)
-    , llvm_int32_type_(NULL)
-    , llvm_int64_type_(NULL)
+    , llvm_void_type_(nullptr)
+    , llvm_ptr_type_(nullptr)
+    , llvm_size_type_(nullptr)
+    , llvm_integer_type_(nullptr)
+    , llvm_int32_type_(nullptr)
+    , llvm_int64_type_(nullptr)
+    , llvm_double_type_(nullptr)
+    , llvm_long_double_type_(nullptr)
+    , TLI_(nullptr)
     , error_function_(nullptr)
 {
   // LLVM doesn't have anything that corresponds directly to the
@@ -193,12 +201,15 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   llvm_ptr_type_ =
       llvm::PointerType::get(llvm::StructType::create(context), address_space_);
 
-  // For use in builtin creation
+  // Assorted pre-computer types for use in builtin function creation
+  llvm_void_type_ = llvm::Type::getVoidTy(context_);
   llvm_integer_type_ =
       llvm::IntegerType::get(context_, datalayout_.getPointerSizeInBits());
   llvm_size_type_ = llvm_integer_type_;
   llvm_int32_type_ = llvm::IntegerType::get(context_, 32);
   llvm_int64_type_ = llvm::IntegerType::get(context_, 64);
+  llvm_double_type_ = llvm::Type::getDoubleTy(context_);
+  llvm_long_double_type_ = llvm::Type::getFP128Ty(context_);
 
   // Create and record an error function. By marking it as varargs this will
   // avoid any collisions with things that the front end might create, since
@@ -213,167 +224,6 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
       new Bfunction(llvm::Function::Create(eft, plinkage, "", module_.get())));
 
   define_all_builtins();
-
-#if 0
-
-  // We use __builtin_expect for magic import functions.
-  this->define_builtin(BUILT_IN_EXPECT, "__builtin_expect", NULL,
-                       build_function_type_list(long_integer_type_node,
-                                                long_integer_type_node,
-                                                long_integer_type_node,
-                                                NULL_TREE),
-                       true, false);
-
-  // We use __builtin_memcmp for struct comparisons.
-  this->define_builtin(BUILT_IN_MEMCMP, "__builtin_memcmp", "memcmp",
-                       build_function_type_list(integer_type_node,
-                                                const_ptr_type_node,
-                                                const_ptr_type_node,
-                                                size_type_node,
-                                                NULL_TREE),
-                       false, false);
-
-  // Used by runtime/internal/sys.
-  this->define_builtin(BUILT_IN_CTZ, "__builtin_ctz", "ctz",
-                       build_function_type_list(integer_type_node,
-                                                unsigned_type_node,
-                                                NULL_TREE),
-                       true, false);
-  this->define_builtin(BUILT_IN_CTZLL, "__builtin_ctzll", "ctzll",
-                       build_function_type_list(integer_type_node,
-                                                long_long_unsigned_type_node,
-                                                NULL_TREE),
-                       true, false);
-  this->define_builtin(BUILT_IN_BSWAP32, "__builtin_bswap32", "bswap32",
-                       build_function_type_list(uint32_type_node,
-                                                uint32_type_node,
-                                                NULL_TREE),
-                       true, false);
-  this->define_builtin(BUILT_IN_BSWAP64, "__builtin_bswap64", "bswap64",
-                       build_function_type_list(uint64_type_node,
-                                                uint64_type_node,
-                                                NULL_TREE),
-                       true, false);
-
-  // We provide some functions for the math library.
-  tree math_function_type = build_function_type_list(double_type_node,
-                                                     double_type_node,
-                                                     NULL_TREE);
-  tree math_function_type_long =
-    build_function_type_list(long_double_type_node, long_double_type_node,
-                             long_double_type_node, NULL_TREE);
-  tree math_function_type_two = build_function_type_list(double_type_node,
-                                                         double_type_node,
-                                                         double_type_node,
-                                                         NULL_TREE);
-  tree math_function_type_long_two =
-    build_function_type_list(long_double_type_node, long_double_type_node,
-                             long_double_type_node, NULL_TREE);
-  this->define_builtin(BUILT_IN_ACOS, "__builtin_acos", "acos",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_ACOSL, "__builtin_acosl", "acosl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_ASIN, "__builtin_asin", "asin",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_ASINL, "__builtin_asinl", "asinl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_ATAN, "__builtin_atan", "atan",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_ATANL, "__builtin_atanl", "atanl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_ATAN2, "__builtin_atan2", "atan2",
-                       math_function_type_two, true, false);
-  this->define_builtin(BUILT_IN_ATAN2L, "__builtin_atan2l", "atan2l",
-                       math_function_type_long_two, true, false);
-  this->define_builtin(BUILT_IN_CEIL, "__builtin_ceil", "ceil",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_CEILL, "__builtin_ceill", "ceill",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_COS, "__builtin_cos", "cos",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_COSL, "__builtin_cosl", "cosl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_EXP, "__builtin_exp", "exp",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_EXPL, "__builtin_expl", "expl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_EXPM1, "__builtin_expm1", "expm1",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_EXPM1L, "__builtin_expm1l", "expm1l",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_FABS, "__builtin_fabs", "fabs",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_FABSL, "__builtin_fabsl", "fabsl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_FLOOR, "__builtin_floor", "floor",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_FLOORL, "__builtin_floorl", "floorl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_FMOD, "__builtin_fmod", "fmod",
-                       math_function_type_two, true, false);
-  this->define_builtin(BUILT_IN_FMODL, "__builtin_fmodl", "fmodl",
-                       math_function_type_long_two, true, false);
-  this->define_builtin(BUILT_IN_LDEXP, "__builtin_ldexp", "ldexp",
-                       build_function_type_list(double_type_node,
-                                                double_type_node,
-                                                integer_type_node,
-                                                NULL_TREE),
-                       true, false);
-  this->define_builtin(BUILT_IN_LDEXPL, "__builtin_ldexpl", "ldexpl",
-                       build_function_type_list(long_double_type_node,
-                                                long_double_type_node,
-                                                integer_type_node,
-                                                NULL_TREE),
-                       true, false);
-  this->define_builtin(BUILT_IN_LOG, "__builtin_log", "log",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_LOGL, "__builtin_logl", "logl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_LOG1P, "__builtin_log1p", "log1p",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_LOG1PL, "__builtin_log1pl", "log1pl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_LOG10, "__builtin_log10", "log10",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_LOG10L, "__builtin_log10l", "log10l",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_LOG2, "__builtin_log2", "log2",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_LOG2L, "__builtin_log2l", "log2l",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_SIN, "__builtin_sin", "sin",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_SINL, "__builtin_sinl", "sinl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_SQRT, "__builtin_sqrt", "sqrt",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_SQRTL, "__builtin_sqrtl", "sqrtl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_TAN, "__builtin_tan", "tan",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_TANL, "__builtin_tanl", "tanl",
-                       math_function_type_long, true, false);
-  this->define_builtin(BUILT_IN_TRUNC, "__builtin_trunc", "trunc",
-                       math_function_type, true, false);
-  this->define_builtin(BUILT_IN_TRUNCL, "__builtin_truncl", "truncl",
-                       math_function_type_long, true, false);
-
-  // We use __builtin_return_address in the thunk we build for
-  // functions which call recover, and for runtime.getcallerpc.
-  t = build_function_type_list(ptr_type_node, unsigned_type_node, NULL_TREE);
-  this->define_builtin(BUILT_IN_RETURN_ADDRESS, "__builtin_return_address",
-                       NULL, t, false, false);
-
-  // The runtime calls __builtin_frame_address for runtime.getcallersp.
-  this->define_builtin(BUILT_IN_FRAME_ADDRESS, "__builtin_frame_address",
-                       NULL, t, false, false);
-
-  // The compiler uses __builtin_trap for some exception handling
-  // cases.
-  this->define_builtin(BUILT_IN_TRAP, "__builtin_trap", NULL,
-                       build_function_type(void_type_node, void_list_node),
-                       false, true);
-#endif
 }
 
 Llvm_backend::~Llvm_backend() {
@@ -419,7 +269,7 @@ void Llvm_backend::update_placeholder_underlying_type(Btype *pht,
 }
 
 Btype *Llvm_backend::void_type() {
-  return make_anon_type(llvm::Type::getVoidTy(context_));
+  return make_anon_type(llvm_void_type_);
 }
 
 Btype *Llvm_backend::bool_type() {
@@ -433,6 +283,7 @@ Btype *Llvm_backend::bool_type() {
 
 Btype *Llvm_backend::integer_type(bool /*is_unsigned*/, int bits) {
   return make_anon_type(llvm::IntegerType::get(context_, bits));
+
 }
 
 // Get an unnamed float type.
@@ -445,7 +296,7 @@ Btype *Llvm_backend::float_type(int bits) {
   else if (bits == 128)
     return make_anon_type(llvm::Type::getFP128Ty(context_));
   assert(false && "unsupported float width");
-  return NULL;
+  return nullptr;
 }
 
 // Make a struct type.
@@ -507,7 +358,7 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
   llvm::SmallVector<llvm::Type *, 4> elems(0);
 
   // Receiver type if applicable
-  if (receiver.btype != NULL) {
+  if (receiver.btype != nullptr) {
     if (receiver.btype == error_type())
       return error_type();
     elems.push_back(receiver.btype->type());
@@ -522,7 +373,7 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
   }
 
   // Result types
-  llvm::Type *rtyp = NULL;
+  llvm::Type *rtyp = nullptr;
   if (results.empty())
     rtyp = llvm::Type::getVoidTy(context_);
   else if (results.size() == 1) {
@@ -530,10 +381,10 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
       return error_type();
     rtyp = results.front().btype->type();
   } else {
-    assert(result_struct != NULL);
+    assert(result_struct != nullptr);
     rtyp = result_struct->type();
   }
-  assert(rtyp != NULL);
+  assert(rtyp != nullptr);
 
   // https://gcc.gnu.org/PR72814 handling. From the go-gcc.cc
   // equivalent, here is an explanatory comment:
@@ -554,7 +405,7 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
 
 Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
   assert(false && "LLvm_backend::array_type not yet implemented");
-  return NULL;
+  return nullptr;
 }
 
 // LLVM doesn't directly support placeholder types other than opaque
@@ -621,7 +472,7 @@ bool Llvm_backend::set_placeholder_struct_type(
 Btype *Llvm_backend::placeholder_array_type(const std::string &name,
                                             Location location) {
   assert(false && "LLvm_backend::placeholder_array_type not yet implemented");
-  return NULL;
+  return nullptr;
 }
 
 // Fill in the components of a placeholder array type.
@@ -727,23 +578,55 @@ int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index) {
 
 void Llvm_backend::define_libcall_builtin(const char *name,
                                           const char *libname,
+                                          unsigned libfunc,
                                           ...)
 {
   va_list ap;
-  llvm::SmallVector<llvm::Type *, 16> ptypes;
-  va_start(ap, libname);
+  std::vector<llvm::Type *> types;
+  va_start(ap, libfunc);
   llvm::Type *resultType = va_arg(ap, llvm::Type *);
+  types.push_back(resultType);
   llvm::Type *parmType = va_arg(ap, llvm::Type *);
   while (parmType) {
-    ptypes.push_back(parmType);
+    types.push_back(parmType);
     parmType = va_arg(ap, llvm::Type *);
   }
+  define_libcall_builtin(name, libname, types, libfunc);
+}
+
+void Llvm_backend::define_libcall_builtin(const char *name,
+                                          const char *libname,
+                                          const std::vector<llvm::Type*> &types,
+                                          unsigned libfunc)
+{
+  llvm::Type *resultType = types[0];
+  llvm::SmallVector<llvm::Type *, 16> ptypes(0);
+  for (unsigned idx = 1; idx < types.size(); ++idx)
+    ptypes.push_back(types[idx]);
   const bool isVarargs = false;
   llvm::FunctionType *ft =
       llvm::FunctionType::get(resultType, ptypes, isVarargs);
+  llvm::LibFunc::Func lf = static_cast<llvm::LibFunc::Func>(libfunc);
   llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::PrivateLinkage;
   llvm::Function *fcn = llvm::Function::Create(ft, plinkage,
                                                name, module_.get());
+
+  // FIXME: once we have a pass manager set up for the back end, we'll
+  // want to turn on this code, since it will be helpful to catch
+  // errors/mistakes. For the time being it can't be turned on (not
+  // pass manager is set up).
+  if (TLI_ && lf != llvm::LibFunc::NumLibFuncs) {
+
+    // Verify that the function is available on this target.
+    assert(TLI_->has(lf));
+
+    // Verify that the name and type we've computer so far matches up
+    // with how LLVM views the routine. For example, if we are trying
+    // to create a version of memcmp() that takes a single boolean as
+    // an argument, that's going to be a show-stopper type problem.
+    assert(TLI_->getLibFunc(*fcn, lf));
+  }
+
   define_builtin_fcn(name, libname, fcn);
 }
 
@@ -805,12 +688,24 @@ void Llvm_backend::define_all_builtins()
 {
   define_sync_fetch_and_add_builtins();
   define_intrinsic_builtins();
+  define_trig_builtins();
 }
 
 void Llvm_backend::define_intrinsic_builtins()
 {
-
   define_intrinsic_builtin("__builtin_trap", nullptr, llvm::Intrinsic::trap,
+                           nullptr);
+
+  define_intrinsic_builtin("__builtin_return_address", nullptr,
+                           llvm::Intrinsic::returnaddress,
+                           llvm_ptr_type_,
+                           llvm_int32_type_,
+                           nullptr);
+
+  define_intrinsic_builtin("__builtin_frame_address", nullptr,
+                           llvm::Intrinsic::frameaddress,
+                           llvm_ptr_type_,
+                           llvm_int32_type_,
                            nullptr);
 
   define_intrinsic_builtin("__builtin_expect", nullptr,
@@ -818,7 +713,8 @@ void Llvm_backend::define_intrinsic_builtins()
                            llvm_integer_type_, nullptr);
 
   define_libcall_builtin("__builtin_memcmp", "memcmp",
-                         llvm_integer_type_,
+                         llvm::LibFunc::memcmp,
+                         llvm_int32_type_,
                          llvm_ptr_type_,
                          llvm_ptr_type_,
                          llvm_size_type_, nullptr);
@@ -848,6 +744,88 @@ void Llvm_backend::define_intrinsic_builtins()
                            llvm_int64_type_, nullptr);
 }
 
+
+namespace {
+
+  typedef enum {
+    OneArg=0,  // takes form "double foo(double)"
+    TwoArgs=1, // takes form "double bar(double, double)"
+    TwoMixed=2 // takes form "double bar(double, int)"
+  } mflav;
+
+  typedef struct {
+    const char *name;
+    mflav nargs;
+    llvm::LibFunc::Func lf;
+  } mathfuncdesc;
+}
+
+void Llvm_backend::define_trig_builtins()
+{
+  const std::vector<llvm::Type *> onearg_double = {
+    llvm_double_type_, llvm_double_type_
+  };
+  const std::vector<llvm::Type *> onearg_long_double = {
+    llvm_long_double_type_, llvm_long_double_type_
+  };
+  const std::vector<llvm::Type *> twoargs_double = {
+    llvm_double_type_, llvm_double_type_, llvm_double_type_
+  };
+  const std::vector<llvm::Type *> twoargs_long_double = {
+    llvm_long_double_type_, llvm_long_double_type_, llvm_long_double_type_
+  };
+  const std::vector<llvm::Type *> mixed_double = {
+    llvm_double_type_, llvm_double_type_, llvm_integer_type_
+  };
+  const std::vector<llvm::Type *> mixed_long_double = {
+    llvm_long_double_type_, llvm_long_double_type_, llvm_integer_type_
+  };
+  const std::vector<const std::vector<llvm::Type *> *> signatures = {
+    &onearg_double, &twoargs_double, &mixed_double
+  };
+  const std::vector<const std::vector<llvm::Type *> *> lsignatures = {
+    &onearg_long_double, &twoargs_long_double, &mixed_long_double
+  };
+
+  static const mathfuncdesc funcs[] = {
+    { "acos", OneArg, llvm::LibFunc::acos },
+    { "asin", OneArg, llvm::LibFunc::asin },
+    { "atan", OneArg, llvm::LibFunc::atan },
+    { "atan2", TwoArgs, llvm::LibFunc::atan2 },
+    { "ceil", OneArg, llvm::LibFunc::ceil },
+    { "cos", OneArg, llvm::LibFunc::cos },
+    { "exp", OneArg, llvm::LibFunc::exp },
+    { "expm1", OneArg, llvm::LibFunc::expm1 },
+    { "fabs", OneArg, llvm::LibFunc::fabs },
+    { "floor", OneArg, llvm::LibFunc::floor },
+    { "fmod", TwoArgs, llvm::LibFunc::fmod },
+    { "log", OneArg, llvm::LibFunc::log },
+    { "log1p", OneArg, llvm::LibFunc::log1p },
+    { "log10", OneArg, llvm::LibFunc::log10 },
+    { "log2", OneArg, llvm::LibFunc::log2 },
+    { "sin", OneArg, llvm::LibFunc::sin },
+    { "sqrt", OneArg, llvm::LibFunc::sqrt },
+    { "tan", OneArg, llvm::LibFunc::tan },
+    { "trunc", OneArg, llvm::LibFunc::trunc },
+    { "ldexp", TwoMixed, llvm::LibFunc::trunc },
+  };
+
+  const unsigned nfuncs = sizeof(funcs) / sizeof(mathfuncdesc);
+  for (unsigned idx = 0; idx < nfuncs; ++idx) {
+    const mathfuncdesc &d = funcs[idx];
+    char bbuf[128];
+    char lbuf[128];
+
+    sprintf(bbuf, "__builtin_%s", d.name);
+    const std::vector<llvm::Type *> *sig = signatures[d.nargs];
+    define_libcall_builtin(bbuf, d.name, *sig, d.lf);
+    sprintf(lbuf, "%sl", d.name);
+    sprintf(bbuf, "__builtin_%s", lbuf);
+    const std::vector<llvm::Type *> *lsig = lsignatures[d.nargs];
+    define_libcall_builtin(bbuf, lbuf, *lsig, d.lf);
+  }
+}
+
 void Llvm_backend::define_sync_fetch_and_add_builtins()
 {
   std::vector<unsigned> sizes = {1, 2, 4, 8};
@@ -856,7 +834,11 @@ void Llvm_backend::define_sync_fetch_and_add_builtins()
     sprintf(nbuf, "__sync_fetch_and_add_%u", sz);
     llvm::Type *it = llvm::IntegerType::get(context_, sz << 3);
     llvm::PointerType *pit = llvm::PointerType::get(it, address_space_);
-    define_libcall_builtin(nbuf, nullptr, pit, it, nullptr);
+    define_libcall_builtin(nbuf, nullptr,   // name, libname
+                           NotInTargetLib,  // Libfunc ID
+                           llvm_void_type_, // result type
+                           pit, it,         // param types
+                           nullptr);
   }
 }
 
@@ -864,24 +846,24 @@ void Llvm_backend::define_sync_fetch_and_add_builtins()
 
 Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   assert(false && "LLvm_backend::zero_expression not yet implemented");
-  return NULL;
+  return nullptr;
 }
 
 Bexpression *Llvm_backend::error_expression() {
   assert(false && "LLvm_backend::error_expression not yet implemented");
-  return NULL;
+  return nullptr;
 }
 
 Bexpression *Llvm_backend::nil_pointer_expression() {
   assert(false && "LLvm_backend::nil_pointer_expression not yet implemented");
-  return NULL;
+  return nullptr;
 }
 
 // An expression that references a variable.
 
 Bexpression *Llvm_backend::var_expression(Bvariable *var, Location location) {
   assert(false && "LLvm_backend::var_expression not yet implemented");
-  return NULL;
+  return nullptr;
 }
 
 // An expression that indirectly references an expression.
@@ -890,7 +872,7 @@ Bexpression *Llvm_backend::indirect_expression(Btype *btype, Bexpression *expr,
                                                bool known_valid,
                                                Location location) {
   assert(false && "LLvm_backend::indirect_expression not yet implemented");
-  return NULL;
+  return nullptr;
 }
 
 // Return an expression that declares a constant named NAME with the
@@ -901,7 +883,7 @@ Bexpression *Llvm_backend::named_constant_expression(Btype *btype,
                                                      Bexpression *val,
                                                      Location location) {
   assert(false && "LLvm_backend::named_constant_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return a typed value as a constant integer.
@@ -909,14 +891,14 @@ Bexpression *Llvm_backend::named_constant_expression(Btype *btype,
 Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
                                                        mpz_t val) {
   assert(false && "LLvm_backend::integer_constant_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return a typed value as a constant floating-point number.
 
 Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
   assert(false && "Llvm_backend::float_constant_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return a typed real and imaginary value as a constant complex number.
@@ -924,21 +906,21 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
 Bexpression *Llvm_backend::complex_constant_expression(Btype *btype,
                                                        mpc_t val) {
   assert(false && "Llvm_backend::complex_constant_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a constant string expression.
 
 Bexpression *Llvm_backend::string_constant_expression(const std::string &val) {
   assert(false && "Llvm_backend::string_constant_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a constant boolean expression.
 
 Bexpression *Llvm_backend::boolean_constant_expression(bool val) {
   assert(false && "Llvm_backend::boolean_constant_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return the real part of a complex expression.
@@ -946,7 +928,7 @@ Bexpression *Llvm_backend::boolean_constant_expression(bool val) {
 Bexpression *Llvm_backend::real_part_expression(Bexpression *bcomplex,
                                                 Location location) {
   assert(false && "Llvm_backend::real_part_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return the imaginary part of a complex expression.
@@ -954,7 +936,7 @@ Bexpression *Llvm_backend::real_part_expression(Bexpression *bcomplex,
 Bexpression *Llvm_backend::imag_part_expression(Bexpression *bcomplex,
                                                 Location location) {
   assert(false && "Llvm_backend::imag_part_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a complex expression given its real and imaginary parts.
@@ -963,7 +945,7 @@ Bexpression *Llvm_backend::complex_expression(Bexpression *breal,
                                               Bexpression *bimag,
                                               Location location) {
   assert(false && "Llvm_backend::complex_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // An expression that converts an expression to a different type.
@@ -971,7 +953,7 @@ Bexpression *Llvm_backend::complex_expression(Bexpression *breal,
 Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
                                               Location location) {
   assert(false && "Llvm_backend::convert_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Get the address of a function.
@@ -979,7 +961,7 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
 Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
                                                     Location location) {
   assert(false && "Llvm_backend::function_code_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Get the address of an expression.
@@ -987,7 +969,7 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
 Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
                                               Location location) {
   assert(false && "Llvm_backend::address_code_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return an expression for the field at INDEX in BSTRUCT.
@@ -996,7 +978,7 @@ Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
                                                    size_t index,
                                                    Location location) {
   assert(false && "Llvm_backend::struct_field_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return an expression that executes BSTAT before BEXPR.
@@ -1005,7 +987,7 @@ Bexpression *Llvm_backend::compound_expression(Bstatement *bstat,
                                                Bexpression *bexpr,
                                                Location location) {
   assert(false && "Llvm_backend::compound_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return an expression that executes THEN_EXPR if CONDITION is true, or
@@ -1017,7 +999,7 @@ Bexpression *Llvm_backend::conditional_expression(Btype *btype,
                                                   Bexpression *else_expr,
                                                   Location location) {
   assert(false && "Llvm_backend::conditional_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return an expression for the unary operation OP EXPR.
@@ -1025,7 +1007,7 @@ Bexpression *Llvm_backend::conditional_expression(Btype *btype,
 Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
                                             Location location) {
   assert(false && "Llvm_backend::unary_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 #if 0
@@ -1113,7 +1095,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
                                              Bexpression *right,
                                              Location location) {
   assert(false && "Llvm_backend::binary_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return an expression that constructs BTYPE with VALS.
@@ -1121,14 +1103,14 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
 Bexpression *Llvm_backend::constructor_expression(
     Btype *btype, const std::vector<Bexpression *> &vals, Location location) {
   assert(false && "Llvm_backend::constructor_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 Bexpression *Llvm_backend::array_constructor_expression(
     Btype *array_btype, const std::vector<unsigned long> &indexes,
     const std::vector<Bexpression *> &vals, Location location) {
   assert(false && "Llvm_backend::array_constructor_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return an expression for the address of BASE[INDEX].
@@ -1137,7 +1119,7 @@ Bexpression *Llvm_backend::pointer_offset_expression(Bexpression *base,
                                                      Bexpression *index,
                                                      Location location) {
   assert(false && "Llvm_backend::pointer_offset_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return an expression representing ARRAY[INDEX]
@@ -1146,7 +1128,7 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *array,
                                                   Bexpression *index,
                                                   Location location) {
   assert(false && "Llvm_backend::array_index_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Create an expression for a call to FN_EXPR with FN_ARGS.
@@ -1155,7 +1137,7 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
                               const std::vector<Bexpression *> &fn_args,
                               Bexpression *chain_expr, Location location) {
   assert(false && "Llvm_backend::call_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return an expression that allocates SIZE bytes on the stack.
@@ -1163,26 +1145,26 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
 Bexpression *Llvm_backend::stack_allocation_expression(int64_t size,
                                                        Location location) {
   assert(false && "Llvm_backend::stack_allocation_expression not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 Bstatement *Llvm_backend::error_statement() {
   assert(false && "Llvm_backend::error_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // An expression as a statement.
 
 Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
   assert(false && "Llvm_backend::expression_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Variable initialization.
 
 Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
   assert(false && "Llvm_backend::init_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Assignment.
@@ -1191,7 +1173,7 @@ Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
                                                Bexpression *rhs,
                                                Location location) {
   assert(false && "Llvm_backend::assignment_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Return.
@@ -1201,7 +1183,7 @@ Llvm_backend::return_statement(Bfunction *bfunction,
                                const std::vector<Bexpression *> &vals,
                                Location location) {
   assert(false && "Llvm_backend::return_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Create a statement that attempts to execute BSTAT and calls EXCEPT_STMT if an
@@ -1215,7 +1197,7 @@ Bstatement *Llvm_backend::exception_handler_statement(Bstatement *bstat,
                                                       Bstatement *finally_stmt,
                                                       Location location) {
   assert(false && "Llvm_backend::exception_handler_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // If.
@@ -1224,7 +1206,7 @@ Bstatement *Llvm_backend::if_statement(Bexpression *condition,
                                        Bblock *then_block, Bblock *else_block,
                                        Location location) {
   assert(false && "Llvm_backend::if_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Switch.
@@ -1234,14 +1216,14 @@ Bstatement *Llvm_backend::switch_statement(
     const std::vector<std::vector<Bexpression *>> &cases,
     const std::vector<Bstatement *> &statements, Location switch_location) {
   assert(false && "Llvm_backend::switch_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Pair of statements.
 
 Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
   assert(false && "Llvm_backend::compound_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // List of statements.
@@ -1249,7 +1231,7 @@ Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
 Bstatement *
 Llvm_backend::statement_list(const std::vector<Bstatement *> &statements) {
   assert(false && "Llvm_backend::statement_list not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a block.  For some reason gcc uses a dual structure for
@@ -1261,7 +1243,7 @@ Bblock *Llvm_backend::block(Bfunction *function, Bblock *enclosing,
                             const std::vector<Bvariable *> &vars,
                             Location start_location, Location) {
   assert(false && "Llvm_backend::block not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Add statements to a block.
@@ -1275,7 +1257,7 @@ void Llvm_backend::block_add_statements(
 
 Bstatement *Llvm_backend::block_statement(Bblock *bblock) {
   assert(false && "Llvm_backend::block_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a global variable.
@@ -1288,7 +1270,7 @@ Bvariable *Llvm_backend::global_variable(const std::string &package_name,
                                          Location location) {
   // NB: add code to insure non-zero size
   assert(false && "Llvm_backend::global_variable not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Set the initial value of a global variable.
@@ -1299,7 +1281,7 @@ void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr) {
 
 Bvariable *Llvm_backend::error_variable() {
   assert(false && "Llvm_backend::error_variable not yet impl");
-  return NULL;
+  return nullptr;
 }
 // Make a local variable.
 
@@ -1308,7 +1290,7 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
                                         bool is_address_taken,
                                         Location location) {
   assert(false && "Llvm_backend::local_variable not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a function parameter variable.
@@ -1318,7 +1300,7 @@ Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
                                             Btype *btype, bool is_address_taken,
                                             Location location) {
   assert(false && "Llvm_backend::parameter_variable not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a static chain variable.
@@ -1328,7 +1310,7 @@ Bvariable *Llvm_backend::static_chain_variable(Bfunction *function,
                                                Btype *btype,
                                                Location location) {
   assert(false && "Llvm_backend::static_chain_variable not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a temporary variable.
@@ -1339,7 +1321,7 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function, Bblock *bblock,
                                             Location location,
                                             Bstatement **pstatement) {
   assert(false && "Llvm_backend::temporary_variable not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Create an implicit variable that is compiler-defined.  This is used when
@@ -1349,7 +1331,7 @@ Bvariable *Llvm_backend::implicit_variable(const std::string &name, Btype *type,
                                            bool is_hidden, bool is_constant,
                                            bool is_common, int64_t alignment) {
   assert(false && "Llvm_backend::implicit_variable not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Set the initalizer for a variable created by implicit_variable.
@@ -1367,7 +1349,7 @@ void Llvm_backend::implicit_variable_set_init(Bvariable *var,
 Bvariable *Llvm_backend::implicit_variable_reference(const std::string &name,
                                                      Btype *btype) {
   assert(false && "Llvm_backend::implicit_variable_reference not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Create a named immutable initialized data structure.
@@ -1376,7 +1358,7 @@ Bvariable *Llvm_backend::immutable_struct(const std::string &name,
                                           bool is_hidden, bool is_common,
                                           Btype *btype, Location location) {
   assert(false && "Llvm_backend::immutable_struct not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Set the initializer for a variable created by immutable_struct.
@@ -1396,7 +1378,7 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
                                                     Btype *btype,
                                                     Location location) {
   assert(false && "Llvm_backend::immutable_struct_reference not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a label.
@@ -1404,28 +1386,28 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
 Blabel *Llvm_backend::label(Bfunction *function, const std::string &name,
                             Location location) {
   assert(false && "Llvm_backend::label not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a statement which defines a label.
 
 Bstatement *Llvm_backend::label_definition_statement(Blabel *label) {
   assert(false && "Llvm_backend::label_definition_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Make a goto statement.
 
 Bstatement *Llvm_backend::goto_statement(Blabel *label, Location location) {
   assert(false && "Llvm_backend::goto_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Get the address of a label.
 
 Bexpression *Llvm_backend::label_address(Blabel *label, Location location) {
   assert(false && "Llvm_backend::label_address not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 Bfunction *Llvm_backend::error_function() { return error_function_.get(); }
@@ -1477,7 +1459,7 @@ Bstatement *Llvm_backend::function_defer_statement(Bfunction *function,
                                                    Bexpression *defer,
                                                    Location location) {
   assert(false && "Llvm_backend::function_defer_statement not yet impl");
-  return NULL;
+  return nullptr;
 }
 
 // Record PARAM_VARS as the variables to use for the parameters of FUNCTION.

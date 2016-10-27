@@ -22,6 +22,7 @@
 
 namespace llvm {
 class Type;
+class TargetLibraryInfo;
 }
 
 // Btype wraps llvm::Type
@@ -330,10 +331,20 @@ private:
                           llvm::Function *fcn);
 
   // varargs convenience wrapper for define_builtin_fcn.
-  // creates a libcall builtin; first argument is return type, next
+  // creates a libcall builtin. If the builtin being created is defined
+  // in llvm/Analysis/TargetLibraryInfo.def, then the proper enumeration
+  // should be passed in "libfuncID" (otherwise pass NumLibFuncs).
+  // varargs: first arg after libfuncID is return type, following
   // arguments are parameter types, followed by NULL type indicating
   // end of params.
-  void define_libcall_builtin(const char* name, const char* libname, ...);
+  void define_libcall_builtin(const char* name, const char* libname,
+                              unsigned libfuncID, ...);
+
+  // similar to the routine above, but takes a vector of
+  // types as opposed to an argument list.
+  void define_libcall_builtin(const char* name, const char* libname,
+                              const std::vector<llvm::Type *> &types,
+                              unsigned libfuncID);
 
   // varargs convenience wrapper for define_builtin_fcn;
   // creates in intrinsic builtin by looking up intrinsic
@@ -347,6 +358,7 @@ private:
   void define_all_builtins();
   void define_sync_fetch_and_add_builtins();
   void define_intrinsic_builtins();
+  void define_trig_builtins();
 
 private:
   typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
@@ -400,11 +412,17 @@ private:
   Btype *complex_float_type_;
   Btype *complex_double_type_;
   Btype *error_type_;
+  llvm::Type *llvm_void_type_;
   llvm::Type *llvm_ptr_type_;
   llvm::Type *llvm_size_type_;
   llvm::Type *llvm_integer_type_;
   llvm::Type *llvm_int32_type_;
   llvm::Type *llvm_int64_type_;
+  llvm::Type *llvm_double_type_;
+  llvm::Type *llvm_long_double_type_;
+
+  // Target library info oracle
+  llvm::TargetLibraryInfo *TLI_;
 
   // maps name to builtin function
   std::unordered_map<std::string, Bfunction *> builtin_map_;

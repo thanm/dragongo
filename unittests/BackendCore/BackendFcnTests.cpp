@@ -49,13 +49,13 @@ TEST(BackendFcnTests, MakeFunction) {
         llvm::Function *llfunc = befcn->function();
         ASSERT_TRUE(llfunc != NULL);
         if (first) {
-          ASSERT_EQ(llfunc->getName(), "foo");
+          EXPECT_EQ(llfunc->getName(), "foo");
           first = false;
         }
-        ASSERT_FALSE(llfunc->isVarArg());
-        ASSERT_EQ(llfunc->hasFnAttribute(Attribute::NoInline), !inl);
-        ASSERT_EQ(llfunc->hasHiddenVisibility(), !vis);
-        ASSERT_EQ(befcn->splitStack() == Bfunction::YesSplit, !split);
+        EXPECT_FALSE(llfunc->isVarArg());
+        EXPECT_EQ(llfunc->hasFnAttribute(Attribute::NoInline), !inl);
+        EXPECT_EQ(llfunc->hasHiddenVisibility(), !vis);
+        EXPECT_EQ(befcn->splitStack() == Bfunction::YesSplit, !split);
       }
     }
   }
@@ -69,10 +69,10 @@ TEST(BackendFcnTests, MakeFunction) {
   Bfunction *mistake =
       be->function(be->error_type(), "bad", "bad", true, true,
                    false, false, false, loc);
-  ASSERT_EQ(mistake, be_error_fcn);
+  EXPECT_EQ(mistake, be_error_fcn);
 }
 
-TEST(BackendFcnTests, BuiltinFunctions) {
+TEST(BackendFcnTests, BuiltinFunctionsMisc) {
   LLVMContext C;
 
   std::unique_ptr<Backend> be(go_get_backend(C));
@@ -90,14 +90,58 @@ TEST(BackendFcnTests, BuiltinFunctions) {
     "__builtin_ctzll",
     "__builtin_bswap32",
     "__builtin_bswap64",
+    "__builtin_return_address",
+    "__builtin_frame_address",
   };
   for (auto fname : tocheck) {
     Bfunction *bfcn = be->lookup_builtin(fname);
     ASSERT_TRUE(bfcn != NULL);
-    ASSERT_TRUE(results.find(bfcn) == results.end());
+    EXPECT_TRUE(results.find(bfcn) == results.end());
     results.insert(bfcn);
   }
-  ASSERT_TRUE(results.size() == tocheck.size());
+  EXPECT_TRUE(results.size() == tocheck.size());
+}
+
+TEST(BackendFcnTests, BuiltinFunctionsTrig) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  std::unordered_set<Bfunction *> results;
+  std::vector<std::string> tocheck = {
+    "acos", "asin", "atan", "atan2", "ceil", "cos",
+    "exp", "expm1", "fabs", "floor", "fmod", "log",
+    "log1p", "log10", "log2", "sin", "sqrt", "tan",
+    "trunc", "ldexp",
+  };
+  for (auto fname : tocheck) {
+
+    // function
+    Bfunction *bfcn = be->lookup_builtin(fname);
+    ASSERT_TRUE(bfcn != NULL);
+    EXPECT_TRUE(results.find(bfcn) == results.end());
+    results.insert(bfcn);
+
+    // long variant
+    char nbuf[128];
+    sprintf(nbuf, "%sl", fname.c_str());
+    Bfunction *lbfcn = be->lookup_builtin(nbuf);
+    EXPECT_TRUE(lbfcn != NULL);
+    EXPECT_TRUE(lbfcn != bfcn);
+
+    // builtin variant
+    sprintf(nbuf, "__builtin_%s", fname.c_str());
+    Bfunction *bifcn = be->lookup_builtin(nbuf);
+    EXPECT_TRUE(bifcn != NULL);
+    EXPECT_TRUE(bifcn != bfcn);
+
+    // long builtin variant
+    sprintf(nbuf, "__builtin_%sl", fname.c_str());
+    Bfunction *lbifcn = be->lookup_builtin(nbuf);
+    EXPECT_TRUE(lbifcn != NULL);
+    EXPECT_TRUE(lbifcn != bfcn);
+  }
+  EXPECT_TRUE(results.size() == tocheck.size());
 }
 
 }
