@@ -11,6 +11,9 @@
 //
 //===----------------------------------------------------------------------===//
 
+#ifndef LLVMGOFRONTEND_GO_LLVM_H
+#define LLVMGOFRONTEND_GO_LLVM_H
+
 // Currently these need to be included before backend.h
 #include "go-location.h"
 #include "go-linemap.h"
@@ -36,6 +39,20 @@ public:
 private:
   Btype() : type_(NULL) {}
   llvm::Type *type_;
+  friend class Llvm_backend;
+};
+
+// Bexpression wraps llvm::Value
+
+class Bexpression {
+public:
+  explicit Bexpression(llvm::Value *value) : value_(value) {}
+
+  llvm::Value *value() const { return value_; }
+
+private:
+  Bexpression() : value_(NULL) {}
+  llvm::Value *value_;
   friend class Llvm_backend;
 };
 
@@ -326,6 +343,11 @@ private:
   // Create an opaque type for use as part of a placeholder type.
   llvm::Type *make_opaque_llvm_type();
 
+  // Did gofrontend declare this as an unsigned integer type?
+  bool is_unsigned_integer_type(Btype *t) const {
+    return unsigned_integer_types_.find(t) != unsigned_integer_types_.end();
+  }
+
   // add a builtin function definition
   void define_builtin_fcn(const char* name, const char* libname,
                           llvm::Function *fcn);
@@ -359,6 +381,9 @@ private:
   void define_sync_fetch_and_add_builtins();
   void define_intrinsic_builtins();
   void define_trig_builtins();
+
+  // Create a Bexpression to hold an llvm::Value for a constant
+  Bexpression *make_value_expression(llvm::Value *val);
 
 private:
   typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
@@ -404,6 +429,12 @@ private:
   // to keep track of named types (for symbol and debug info emit).
   named_type_maptyp named_typemap_;
 
+  // Within the LLVM world there is no notion of an unsigned (vs signed)
+  // type, there are only signed/unsigned operations on vanilla integer
+  // types. This set keeps track of types that the frontend has told
+  // us are unsigned; see Llvm_backend::integer_type for more.
+  std::unordered_set<Btype *> unsigned_integer_types_;
+
   // Placeholder types
   std::unordered_set<Btype *> placeholders_;
   std::unordered_set<Btype *> updated_placeholders_;
@@ -418,6 +449,7 @@ private:
   llvm::Type *llvm_integer_type_;
   llvm::Type *llvm_int32_type_;
   llvm::Type *llvm_int64_type_;
+  llvm::Type *llvm_float_type_;
   llvm::Type *llvm_double_type_;
   llvm::Type *llvm_long_double_type_;
 
@@ -429,4 +461,18 @@ private:
 
   // Error function
   std::unique_ptr<Bfunction> error_function_;
+
+  // Error expression
+  std::unique_ptr<Bexpression> error_expression_;
+
+  // Map from LLVM values to Bexpression. Used for constants
+  // and other immutable values (as opposed to instructions).
+  std::unordered_map<llvm::Value *, Bexpression *> value_exprmap_;
+
+  // Currently we don't do any commoning of Bfunction objects created
+  // by the frontend, so here we keep track of all returned Bfunctions
+  // so that we can free them on exit.
+  std::vector<Bfunction *> functions_;
 };
+
+#endif

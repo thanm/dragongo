@@ -18,6 +18,7 @@
 #include "go-system.h"
 #include "gogo.h"
 
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalValue.h"
@@ -26,8 +27,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
-static const unsigned NotInTargetLib = llvm::LibFunc::NumLibFuncs;
-
+static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
 // Return whether the character c is OK to use in the assembler.
 
@@ -186,6 +186,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     , llvm_integer_type_(nullptr)
     , llvm_int32_type_(nullptr)
     , llvm_int64_type_(nullptr)
+    , llvm_float_type_(nullptr)
     , llvm_double_type_(nullptr)
     , llvm_long_double_type_(nullptr)
     , TLI_(nullptr)
@@ -208,6 +209,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   llvm_size_type_ = llvm_integer_type_;
   llvm_int32_type_ = llvm::IntegerType::get(context_, 32);
   llvm_int64_type_ = llvm::IntegerType::get(context_, 64);
+  llvm_float_type_ = llvm::Type::getFloatTy(context_);
   llvm_double_type_ = llvm::Type::getDoubleTy(context_);
   llvm_long_double_type_ = llvm::Type::getFP128Ty(context_);
 
@@ -223,6 +225,10 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   error_function_.reset(
       new Bfunction(llvm::Function::Create(eft, plinkage, "", module_.get())));
 
+  // Reuse the error function as the value for error_expression
+  error_expression_.reset(
+      new Bexpression(error_function_->function()));
+
   define_all_builtins();
 }
 
@@ -233,10 +239,14 @@ Llvm_backend::~Llvm_backend() {
     delete pht;
   for (auto &kv : anon_typemap_)
     delete kv.second;
+  for (auto &kv : value_exprmap_)
+    delete kv.second;
   for (auto &kv : named_typemap_)
     delete kv.second;
   for (auto &kv : builtin_map_)
     delete kv.second;
+  for (auto &bfcn : functions_)
+    delete bfcn;
 }
 
 Btype *Llvm_backend::make_anon_type(llvm::Type *lt) {
@@ -277,24 +287,52 @@ Btype *Llvm_backend::bool_type() {
   return make_anon_type(llvm::Type::getInt1Ty(context_));
 }
 
-// Get an unnamed integer type. Note that in the LLVM world, we don't
-// have signed/unsigned on types, we only have signed/unsigned on operations
-// over types (e.g. signed addition of two integers).
+// Get an unnamed integer type.
+//
+// Note that in the LLVM world, we don't have signed/unsigned types,
+// we only have signed/unsigned operations (e.g. signed addition of
+// two integers).
+//
+// Many frontends for C-like languages have squishyness when it comes
+// to signed/unsigned arithmetic. Example: for the C code
+//
+//       double abc(unsigned x, int y) { return (double) x + y; }
+//
+// What typically happens under the hood is that a C compiler constructs
+// a parse tree that looks like
+//
+//                  op: ADDITION
+//                 /          \.
+//                /            \.
+//            var_ref(x)      var_ref(y)
+//            typ: unsigned   type: signed
+//
+// where the ADD op is generic/polymorphic, and the real nature of the
+// add (signed/unsigned) only becomes apparent during lowering, when
+// the C rules about type conversions are enforced.
+//
+// To account for any potential hazards here, we record whether the
+// frontend has announced that a specific type is unsigned in a side table.
+// We can then use that table later on to enforce the rules (for example,
+// to insure that we didn't forget to insert a type conversion, or to
+// derive the correct flavor of an integer ADD based on its arguments).
 
-Btype *Llvm_backend::integer_type(bool /*is_unsigned*/, int bits) {
-  return make_anon_type(llvm::IntegerType::get(context_, bits));
-
+Btype *Llvm_backend::integer_type(bool is_unsigned, int bits) {
+  Btype *it = make_anon_type(llvm::IntegerType::get(context_, bits));
+  if (is_unsigned)
+    unsigned_integer_types_.insert(it);
+  return it;
 }
 
 // Get an unnamed float type.
 
 Btype *Llvm_backend::float_type(int bits) {
   if (bits == 32)
-    return make_anon_type(llvm::Type::getFloatTy(context_));
+    return make_anon_type(llvm_float_type_);
   else if (bits == 64)
-    return make_anon_type(llvm::Type::getDoubleTy(context_));
+    return make_anon_type(llvm_double_type_);
   else if (bits == 128)
-    return make_anon_type(llvm::Type::getFP128Ty(context_));
+    return make_anon_type(llvm_long_double_type_);
   assert(false && "unsupported float width");
   return nullptr;
 }
@@ -842,12 +880,29 @@ void Llvm_backend::define_sync_fetch_and_add_builtins()
   }
 }
 
+Bexpression *Llvm_backend::make_value_expression(llvm::Value *val)
+{
+  assert(val);
+
+  // only constants supported right now
+  assert(llvm::isa<llvm::Constant>(val));
+
+  auto it = value_exprmap_.find(val);
+  if (it != value_exprmap_.end())
+    return it->second;
+  Bexpression *rval = new Bexpression(val);
+  value_exprmap_[val] = rval;
+  return rval;
+}
+
 // Return the zero value for a type.
 
 Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   assert(false && "LLvm_backend::zero_expression not yet implemented");
   return nullptr;
 }
+
+//
 
 Bexpression *Llvm_backend::error_expression() {
   assert(false && "LLvm_backend::error_expression not yet implemented");
@@ -886,19 +941,84 @@ Bexpression *Llvm_backend::named_constant_expression(Btype *btype,
   return nullptr;
 }
 
+template<typename wideint_t>
+wideint_t checked_convert_mpz_to_int(mpz_t value)
+{
+  // See http://gmplib.org/manual/Integer-Import-and-Export.html for an
+  // explanation of this formula
+  size_t numbits = 8 * sizeof(wideint_t);
+  size_t count = (mpz_sizeinbase (value, 2) + numbits-1) / numbits;
+  // frontend should have insured this already
+  assert(count <= 2);
+  count = 2;
+  wideint_t receive[2];
+  receive[0] = 0;
+  receive[1] = 0;
+  mpz_export(&receive[0], &count, -1, sizeof(wideint_t), 0, 0, value);
+  // frontend should have insured this already
+  assert(receive[1] == 0);
+  wideint_t rval = receive[0];
+  if (mpz_sgn(value) < 0)
+    rval = - rval;
+  return rval;
+}
+
 // Return a typed value as a constant integer.
 
 Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
-                                                       mpz_t val) {
-  assert(false && "LLvm_backend::integer_constant_expression not yet impl");
-  return nullptr;
+                                                       mpz_t mpz_val) {
+  if (btype == error_type_)
+    return error_expression_.get();
+  assert(llvm::isa<llvm::IntegerType>(btype->type()));
+
+  // Force mpz_val into either into uint64_t or int64_t depending on
+  // whether btype was declared as signed or unsigned.
+  //
+  // Q: better to use APInt here?
+
+  Bexpression *rval;
+  if (is_unsigned_integer_type(btype)) {
+    uint64_t val = checked_convert_mpz_to_int<uint64_t>(mpz_val);
+    assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
+    llvm::Constant *lval = llvm::ConstantInt::get(btype->type(), val);
+    rval = make_value_expression(lval);
+  } else {
+    int64_t val = checked_convert_mpz_to_int<int64_t>(mpz_val);
+    assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
+    llvm::Constant *lval = llvm::ConstantInt::getSigned(btype->type(), val);
+    rval = make_value_expression(lval);
+  }
+  return rval;
 }
 
 // Return a typed value as a constant floating-point number.
 
 Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
-  assert(false && "Llvm_backend::float_constant_expression not yet impl");
-  return nullptr;
+  if (btype == error_type_)
+    return error_expression_.get();
+
+  // Force the mpfr value into float, double, or APFloat as appropriate.
+  //
+  // Note: at the moment there is no way to create an APFloat from a
+  // "long double" value, so this code takes the unpleasant step of
+  // converting a quad mfr value from text and then back into APFloat
+  // from there.
+
+  if (btype->type() == llvm_float_type_) {
+    float fval = mpfr_get_flt(val, GMP_RNDN);
+    llvm::APFloat apf(fval);
+    llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
+    return make_value_expression(fcon);
+  } else if (btype->type() == llvm_double_type_) {
+    double dval = mpfr_get_d(val, GMP_RNDN);
+    llvm::APFloat apf(dval);
+    llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
+    return make_value_expression(fcon);
+  } else if (btype->type() == llvm_long_double_type_) {
+    assert("not yet implemented" && false);
+  } else {
+    return error_expression_.get();
+  }
 }
 
 // Return a typed real and imaginary value as a constant complex number.
@@ -919,8 +1039,9 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val) {
 // Make a constant boolean expression.
 
 Bexpression *Llvm_backend::boolean_constant_expression(bool val) {
-  assert(false && "Llvm_backend::boolean_constant_expression not yet impl");
-  return nullptr;
+  return val ?
+      make_value_expression(llvm::ConstantInt::getTrue(context_)) :
+      make_value_expression(llvm::ConstantInt::getFalse(context_));
 }
 
 // Return the real part of a complex expression.
@@ -1445,6 +1566,8 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
 
   if (disable_split_stack)
     bfunc->setSplitStack(Bfunction::NoSplit);
+
+  functions_.push_back(bfunc);
 
   return bfunc;
 }

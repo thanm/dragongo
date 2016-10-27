@@ -1,6 +1,8 @@
 add_custom_target(GobackendUnitTests)
 set_target_properties(GobackendUnitTests PROPERTIES FOLDER "Tests")
 
+message("Foobity value is ${FOOBITY}")
+
 if (APPLE)
   set(CMAKE_INSTALL_RPATH "@executable_path/../../lib")
 else(UNIX)

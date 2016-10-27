@@ -9,13 +9,6 @@ include(ExternalProject)
 include(ProcessorCount)
 include(LLVMExternalProjectUtils)
 
-# Subdir for gofrontend itself and for the middle layer that translates
-# Backend method calls into LLVM IR.
-add_subdirectory(llvm-gofrontend)
-
-# Subdir for unit tests that test the go middle layer
-add_subdirectory(unittests)
-
 # So that we can issue "make -jN" cmds in externalproject_add 
 processorcount(PROCESSOR_COUNT)
 
@@ -65,6 +58,13 @@ externalproject_add(libgmp
   LOG_BUILD 1
   LOG_INSTALL 1
   )
+
+# Subdir for gofrontend itself and for the middle layer that translates
+# Backend method calls into LLVM IR.
+add_subdirectory(llvm-gofrontend)
+
+# Subdir for unit tests that test the go middle layer
+add_subdirectory(unittests)
 
 # Things we need to link into llvm-goparse
 set(LLVM_LINK_COMPONENTS
