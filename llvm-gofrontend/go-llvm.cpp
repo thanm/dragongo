@@ -282,12 +282,12 @@ Btype *Llvm_backend::bool_type() {
 // we only have signed/unsigned operations (e.g. signed addition of
 // two integers).
 //
-// Many language frontends for C-like languages have squishyness
-// when it comes to signed/unsigned arithmetic. Example: for the C code
+// Many frontends for C-like languages have squishyness when it comes
+// to signed/unsigned arithmetic. Example: for the C code
 //
 //       double abc(unsigned x, int y) { return (double) x + y; }
 //
-// What typically happens under the hood is that the compiler constructs
+// What typically happens under the hood is that a C compiler constructs
 // a parse tree that looks like
 //
 //                  op: ADDITION
@@ -305,7 +305,6 @@ Btype *Llvm_backend::bool_type() {
 // We can then use that table later on to enforce the rules (for example,
 // to insure that we didn't forget to insert a type conversion, or to
 // derive the correct flavor of an integer ADD based on its arguments).
-
 
 Btype *Llvm_backend::integer_type(bool is_unsigned, int bits) {
   Btype *it = make_anon_type(llvm::IntegerType::get(context_, bits));
