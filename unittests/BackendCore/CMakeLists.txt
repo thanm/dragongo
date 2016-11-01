@@ -26,6 +26,10 @@ add_gobackend_unittest(GoBackendCoreTests
   ${BackendCoreSources}
   )
 
+include_directories(${MPCINSTALL}/include)
+include_directories(${MPFRINSTALL}/include)
+include_directories(${GMPINSTALL}/include)
+
 # Record the fact that llvm-goparse depends on these libs
 add_dependencies(GoBackendCoreTests libmpfr libmpc libgmp)
 

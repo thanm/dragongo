@@ -12,6 +12,12 @@ include(LLVMExternalProjectUtils)
 # So that we can issue "make -jN" cmds in externalproject_add 
 processorcount(PROCESSOR_COUNT)
 
+# FIXME: something less hacky for MacOS
+if(APPLE)
+set(MCONF1 "CPPFLAGS=-I/usr/local/include")
+set(MCONF2 "LDFLAGS=-L/usr/local/lib")
+endif()
+
 # FIXME: add in URL args for the projects below.
 # URL ftp://ftp.gnu.org/gnu/gmp/gmp-6.1.0.tar.bz2
 # URL ftp://gcc.gnu.org/pub/gcc/infrastructure/mpfr-3.1.4.tar.bz2
@@ -25,7 +31,7 @@ externalproject_add(libmpc
   URL ftp://gcc.gnu.org/pub/gcc/infrastructure/mpc-1.0.3.tar.gz
   DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}/external-downloads
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/mpc
-  CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${MPCINSTALL} 
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${MPCINSTALL} ${MCONF1} ${MCONF2}
   BUILD_COMMAND make -j${PROCESSOR_COUNT}
   INSTALL_COMMAND make -j${PROCESSOR_COUNT} install
   LOG_CONFIGURE 1
@@ -38,7 +44,7 @@ externalproject_add(libmpfr
   URL ftp://gcc.gnu.org/pub/gcc/infrastructure/mpfr-3.1.4.tar.bz2
   DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}/external-downloads
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/mpfr
-  CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${MPFRINSTALL} 
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${MPFRINSTALL} ${MCONF1} ${MCONF2}
   BUILD_COMMAND make -j${PROCESSOR_COUNT}
   INSTALL_COMMAND make -j${PROCESSOR_COUNT} install
   LOG_CONFIGURE 1
@@ -51,7 +57,7 @@ externalproject_add(libgmp
   URL ftp://ftp.gnu.org/gnu/gmp/gmp-6.1.0.tar.bz2
   DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}/external-downloads
   BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/external/gmp
-  CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${GMPINSTALL} 
+  CONFIGURE_COMMAND <SOURCE_DIR>/configure --prefix=${GMPINSTALL} ${MCONF1} ${MCONF2}
   BUILD_COMMAND make -j${PROCESSOR_COUNT}
   INSTALL_COMMAND make -j${PROCESSOR_COUNT} install
   LOG_CONFIGURE 1

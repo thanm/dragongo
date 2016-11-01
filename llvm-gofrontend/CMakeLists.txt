@@ -33,8 +33,8 @@ go-sha1.cpp
 
 add_dependencies(LLVMCppGoFrontEnd intrinsics_gen)
 
-include_directories(${CMAKE_BINARY_DIR}/external/mpc)
-include_directories(${CMAKE_BINARY_DIR}/external/mpfr)
-include_directories(${CMAKE_BINARY_DIR}/external/gmp)
+include_directories(${MPCINSTALL}/include)
+include_directories(${MPFRINSTALL}/include)
+include_directories(${GMPINSTALL}/include)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/gofrontend/go)
 

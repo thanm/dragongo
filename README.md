@@ -21,6 +21,9 @@ You'll need to have an up-to-date copy of cmake on your system (3.6 vintage).
 % git clone https://go.googlesource.com/gofrontend
 % cd ../../../..
 
+// Additional steps needed for MacOS only:
+% brew install gmp mpfr mpc
+
 // Create a build directory and run cmake
 % mkdir build.opt
 % cd build.opt
