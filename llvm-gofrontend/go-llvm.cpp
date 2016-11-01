@@ -1016,6 +1016,7 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
     return make_value_expression(fcon);
   } else if (btype->type() == llvm_long_double_type_) {
     assert("not yet implemented" && false);
+    return nullptr;
   } else {
     return error_expression_.get();
   }
