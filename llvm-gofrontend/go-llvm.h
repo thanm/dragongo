@@ -465,8 +465,8 @@ private:
   // Error expression
   std::unique_ptr<Bexpression> error_expression_;
 
-  // Map from LLVM values to Bexpression. Used for constants
-  // and other immutable values (as opposed to instructions).
+  // Map from LLVM values to Bexpression. Used for constants and other
+  // immutable values (as opposed to instructions).
   std::unordered_map<llvm::Value *, Bexpression *> value_exprmap_;
 
   // Currently we don't do any commoning of Bfunction objects created
