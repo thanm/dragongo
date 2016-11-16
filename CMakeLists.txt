@@ -92,7 +92,7 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/llvm-gofrontend)
 
 # The llvm-goparse executable itself
 add_llvm_tool(llvm-goparse
-  llvm-goparse.cpp
+  goparse-llvm.cpp
   )
 
 # Record the fact that llvm-goparse depends on these libs
