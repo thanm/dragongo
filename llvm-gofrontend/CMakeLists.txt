@@ -11,6 +11,7 @@ gofrontend/go/escape.cc
 gofrontend/go/export.cc
 gofrontend/go/expressions.cc
 gofrontend/go/go-diagnostics.cc
+gofrontend/go/go-encode-id.cc
 gofrontend/go/go-dump.cc
 gofrontend/go/go-optimize.cc
 gofrontend/go/go.cc

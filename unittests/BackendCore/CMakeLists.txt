@@ -20,6 +20,7 @@ set(BackendCoreSources
   BackendCoreTests.cpp
   BackendFcnTests.cpp
   BackendExprTests.cpp
+  BackendVarTests.cpp
   )
 
 add_gobackend_unittest(GoBackendCoreTests

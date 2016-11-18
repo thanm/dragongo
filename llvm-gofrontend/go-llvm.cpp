@@ -22,155 +22,54 @@
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
-#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/Value.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
-// Return whether the character c is OK to use in the assembler.
+Bfunction::Bfunction(llvm::Function *f)
+    : function_(f)
 
-#if 0
+    , splitstack_(YesSplit)
+{
 
-// TODO: move to common location
-static bool char_needs_encoding(char c) {
-  switch (c) {
-  case 'A':
-  case 'B':
-  case 'C':
-  case 'D':
-  case 'E':
-  case 'F':
-  case 'G':
-  case 'H':
-  case 'I':
-  case 'J':
-  case 'K':
-  case 'L':
-  case 'M':
-  case 'N':
-  case 'O':
-  case 'P':
-  case 'Q':
-  case 'R':
-  case 'S':
-  case 'T':
-  case 'U':
-  case 'V':
-  case 'W':
-  case 'X':
-  case 'Y':
-  case 'Z':
-  case 'a':
-  case 'b':
-  case 'c':
-  case 'd':
-  case 'e':
-  case 'f':
-  case 'g':
-  case 'h':
-  case 'i':
-  case 'j':
-  case 'k':
-  case 'l':
-  case 'm':
-  case 'n':
-  case 'o':
-  case 'p':
-  case 'q':
-  case 'r':
-  case 's':
-  case 't':
-  case 'u':
-  case 'v':
-  case 'w':
-  case 'x':
-  case 'y':
-  case 'z':
-  case '0':
-  case '1':
-  case '2':
-  case '3':
-  case '4':
-  case '5':
-  case '6':
-  case '7':
-  case '8':
-  case '9':
-  case '_':
-  case '.':
-  case '$':
-  case '/':
-    return false;
-  default:
-    return true;
-  }
 }
 
-// Return whether the identifier needs to be translated because it
-// contains non-ASCII characters.
-
-// TODO: move to common location
-static bool needs_encoding(const std::string &str) {
-  for (std::string::const_iterator p = str.begin(); p != str.end(); ++p)
-    if (char_needs_encoding(*p))
-      return true;
-  return false;
+Bfunction::~Bfunction()
+{
+  // Needed mainly for unit testing
+  for (auto ais : allocas_)
+    delete ais;
+  for (auto &kv : argtoval_)
+    delete kv.second;
 }
 
-// Pull the next UTF-8 character out of P and store it in *PC.  Return
-// the number of bytes read.
-
-// TODO: move to common location
-static size_t fetch_utf8_char(const char *p, unsigned int *pc) {
-  unsigned char c = *p;
-  if ((c & 0x80) == 0) {
-    *pc = c;
-    return 1;
-  }
-  size_t len = 0;
-  while ((c & 0x80) != 0) {
-    ++len;
-    c <<= 1;
-  }
-  unsigned int rc = *p & ((1 << (7 - len)) - 1);
-  for (size_t i = 1; i < len; i++) {
-    unsigned int u = p[i];
-    rc <<= 6;
-    rc |= u & 0x3f;
-  }
-  *pc = rc;
-  return len;
+llvm::Argument *Bfunction::getNthArg(unsigned argIdx)
+{
+  assert(function()->getFunctionType()->getNumParams() != 0);
+  if (arguments_.empty())
+    for (auto &arg : function()->getArgumentList())
+      arguments_.push_back(&arg);
+  assert(argIdx < arguments_.size());
+  return arguments_[argIdx];
 }
 
-// Encode an identifier using ASCII characters.
-
-// TODO: move to common location
-static std::string encode_id(const std::string id) {
-  std::string ret;
-  const char *p = id.c_str();
-  const char *pend = p + id.length();
-  while (p < pend) {
-    unsigned int c;
-    size_t len = fetch_utf8_char(p, &c);
-    if (len == 1 && !char_needs_encoding(c))
-      ret += c;
-    else {
-      ret += "$U";
-      char buf[30];
-      snprintf(buf, sizeof buf, "%x", c);
-      ret += buf;
-      ret += "$";
-    }
-    p += len;
-  }
-  return ret;
+llvm::Instruction *Bfunction::argValue(llvm::Argument *arg)
+{
+  // Create alloca save area for argument, record that and return
+  // it. Store into alloca will be generated later.
+  std::string aname(arg->getName());
+  aname += ".addr";
+  llvm::Instruction *inst =
+      new llvm::AllocaInst(arg->getType(), aname);
+  assert(argtoval_.find(arg) == argtoval_.end());
+  argtoval_[arg] = inst;
+  return inst;
 }
-
-#endif
-
-// Define the built-in functions that are exposed to GCCGo.
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     : context_(context)
@@ -229,6 +128,10 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   error_expression_.reset(
       new Bexpression(error_function_->function()));
 
+  // Reuse the error function as the value for error_variable
+  error_variable_.reset(new Bvariable(error_type(), Location(), "",
+                                      ErrorVar, false, nullptr));
+
   define_all_builtins();
 }
 
@@ -240,6 +143,8 @@ Llvm_backend::~Llvm_backend() {
   for (auto &kv : anon_typemap_)
     delete kv.second;
   for (auto &kv : value_exprmap_)
+    delete kv.second;
+  for (auto &kv : value_varmap_)
     delete kv.second;
   for (auto &kv : named_typemap_)
     delete kv.second;
@@ -884,9 +789,6 @@ Bexpression *Llvm_backend::make_value_expression(llvm::Value *val)
 {
   assert(val);
 
-  // only constants supported right now
-  assert(llvm::isa<llvm::Constant>(val));
-
   auto it = value_exprmap_.find(val);
   if (it != value_exprmap_.end())
     return it->second;
@@ -902,11 +804,8 @@ Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   return nullptr;
 }
 
-//
-
 Bexpression *Llvm_backend::error_expression() {
-  assert(false && "LLvm_backend::error_expression not yet implemented");
-  return nullptr;
+  return error_expression_.get();
 }
 
 Bexpression *Llvm_backend::nil_pointer_expression() {
@@ -1384,15 +1283,40 @@ Bstatement *Llvm_backend::block_statement(Bblock *bblock) {
 
 // Make a global variable.
 
-Bvariable *Llvm_backend::global_variable(const std::string &package_name,
-                                         const std::string &pkgpath,
-                                         const std::string &name, Btype *btype,
-                                         bool is_external, bool is_hidden,
+Bvariable *Llvm_backend::global_variable(const std::string &var_name,
+                                         const std::string &asm_name,
+                                         Btype *btype,
+                                         bool is_external,
+                                         bool is_hidden,
                                          bool in_unique_section,
                                          Location location) {
-  // NB: add code to insure non-zero size
-  assert(false && "Llvm_backend::global_variable not yet impl");
-  return nullptr;
+  if (btype == error_type())
+    return error_variable();
+
+  // FIXME: add code to insure non-zero size
+  assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
+
+  // FIXME: add support for this
+  assert(in_unique_section == false);
+
+  // FIXME: add DIGlobalVariable to debug info for this variable
+
+  // FIXME: use correct ASM name
+
+  llvm::GlobalValue::LinkageTypes linkage =
+      (is_external ? llvm::GlobalValue::ExternalLinkage :
+       llvm::GlobalValue::InternalLinkage);
+
+  bool isConstant = false;
+  llvm::Constant *init = nullptr;
+  llvm::GlobalVariable *glob =
+      new llvm::GlobalVariable(*module_.get(), btype->type(), isConstant,
+                               linkage, init, var_name);
+  Bvariable *bv =
+      new Bvariable(btype, location, var_name, GlobalVar, false, glob);
+  assert(value_varmap_.find(bv->value()) == value_varmap_.end());
+  value_varmap_[bv->value()] = bv;
+  return bv;
 }
 
 // Set the initial value of a global variable.
@@ -1402,27 +1326,57 @@ void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr) {
 }
 
 Bvariable *Llvm_backend::error_variable() {
-  assert(false && "Llvm_backend::error_variable not yet impl");
-  return nullptr;
+  return error_variable_.get();
 }
+
 // Make a local variable.
 
 Bvariable *Llvm_backend::local_variable(Bfunction *function,
-                                        const std::string &name, Btype *btype,
+                                        const std::string &name,
+                                        Btype *btype,
                                         bool is_address_taken,
-                                        Location location) {
-  assert(false && "Llvm_backend::local_variable not yet impl");
-  return nullptr;
+                                        Location location)
+{
+  assert(function);
+  if (btype == error_type() || function == error_function())
+    return error_variable();
+  llvm::Instruction *inst = new llvm::AllocaInst(btype->type(), name);
+  inst->setDebugLoc(location.debug_location());
+  function->addAlloca(inst);
+  Bvariable *bv =
+      new Bvariable(btype, location, name, LocalVar, is_address_taken, inst);
+  assert(value_varmap_.find(bv->value()) == value_varmap_.end());
+  value_varmap_[bv->value()] = bv;
+  return bv;
 }
 
 // Make a function parameter variable.
 
 Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
                                             const std::string &name,
-                                            Btype *btype, bool is_address_taken,
-                                            Location location) {
-  assert(false && "Llvm_backend::parameter_variable not yet impl");
-  return nullptr;
+                                            Btype *btype,
+                                            bool is_address_taken,
+                                            Location location)
+{
+  assert(function);
+  if (btype == error_type() || function == error_function())
+    return error_variable();
+
+  // Collect argument pointer
+  unsigned argIdx = function->paramsCreated();
+  llvm::Argument *arg = function->getNthArg(argIdx);
+  assert(arg);
+
+  // Set name
+  arg->setName(name);
+
+  // Create the alloca slot where we will spill this argument
+  llvm::Instruction *inst = function->argValue(arg);
+  assert(value_varmap_.find(inst) == value_varmap_.end());
+  Bvariable *bv =
+      new Bvariable(btype, location, name, ParamVar, is_address_taken, inst);
+  value_varmap_[inst] = bv;
+  return bv;
 }
 
 // Make a static chain variable.
@@ -1449,7 +1403,9 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function, Bblock *bblock,
 // Create an implicit variable that is compiler-defined.  This is used when
 // generating GC root variables and storing the values of a slice initializer.
 
-Bvariable *Llvm_backend::implicit_variable(const std::string &name, Btype *type,
+Bvariable *Llvm_backend::implicit_variable(const std::string &name,
+                                           const std::string &asm_name,
+                                           Btype *type,
                                            bool is_hidden, bool is_constant,
                                            bool is_common, int64_t alignment) {
   assert(false && "Llvm_backend::implicit_variable not yet impl");
@@ -1469,6 +1425,7 @@ void Llvm_backend::implicit_variable_set_init(Bvariable *var,
 // Return a reference to an implicit variable defined in another package.
 
 Bvariable *Llvm_backend::implicit_variable_reference(const std::string &name,
+                                                     const std::string &asmname,
                                                      Btype *btype) {
   assert(false && "Llvm_backend::implicit_variable_reference not yet impl");
   return nullptr;
@@ -1477,6 +1434,7 @@ Bvariable *Llvm_backend::implicit_variable_reference(const std::string &name,
 // Create a named immutable initialized data structure.
 
 Bvariable *Llvm_backend::immutable_struct(const std::string &name,
+                                          const std::string &asm_name,
                                           bool is_hidden, bool is_common,
                                           Btype *btype, Location location) {
   assert(false && "Llvm_backend::immutable_struct not yet impl");
@@ -1497,6 +1455,7 @@ void Llvm_backend::immutable_struct_set_init(Bvariable *var,
 // defined in another package.
 
 Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
+                                                    const std::string &asmname,
                                                     Btype *btype,
                                                     Location location) {
   assert(false && "Llvm_backend::immutable_struct_reference not yet impl");

@@ -61,9 +61,8 @@ private:
 class Bfunction
 {
  public:
-  Bfunction(llvm::Function *f)
-      : function_(f), splitstack_(YesSplit)
-  { }
+  Bfunction(llvm::Function *f);
+  ~Bfunction();
 
   llvm::Function *function() const { return function_; }
 
@@ -71,9 +70,63 @@ class Bfunction
   void setSplitStack(SplitStackDisposition disp) { splitstack_ = disp; }
   SplitStackDisposition splitStack() const { return splitstack_; }
 
+  // Record an alloca() instruction, to be added to entry block
+  void addAlloca(llvm::Instruction *inst) {
+    allocas_.push_back(inst);
+  }
+
+  // Collect Return nth argument
+  llvm::Argument *getNthArg(unsigned argIdx);
+
+  // Record a new function argument (for which we'll also add an alloca)
+  llvm::Instruction *argValue(llvm::Argument *);
+
+  // Number of parameter vars registered so far
+  unsigned paramsCreated() { return argtoval_.size(); }
+
  private:
+  std::vector<llvm::Instruction*> allocas_;
+  std::vector<llvm::Argument *> arguments_;
+  std::unordered_map<llvm::Argument*, llvm::Instruction*> argtoval_;
   llvm::Function *function_;
   SplitStackDisposition splitstack_;
+};
+
+// Back end variable class
+
+enum WhichVar { ParamVar, GlobalVar, LocalVar, ErrorVar };
+
+class Bvariable {
+ public:
+  explicit Bvariable(Btype *type, Location location, const std::string &name,
+                     WhichVar which, bool address_taken, llvm::Value *value)
+      : name_(name)
+      , location_(location)
+      , value_(value)
+      , type_(type)
+      , which_(which)
+      , addrtaken_(address_taken)
+  {
+  }
+
+  // Common to all varieties of variables
+  Location getLocation() { return location_; }
+  Btype *getType() { return type_; }
+  const std::string &getName() { return name_; }
+  llvm::Value *value() { return value_; }
+  bool addrtaken() { return addrtaken_; }
+  WhichVar flavor() const { return which_; }
+
+ private:
+  Bvariable() = delete;
+  const std::string name_;
+  Location location_;
+  llvm::Value *value_;
+  Btype *type_;
+  WhichVar which_;
+  bool addrtaken_;
+
+  friend class Llvm_backend;
 };
 
 //
@@ -256,10 +309,9 @@ public:
 
   Bvariable *error_variable();
 
-  Bvariable *global_variable(const std::string &package_name,
-                             const std::string &pkgpath,
-                             const std::string &name, Btype *btype,
-                             bool is_external, bool is_hidden,
+  Bvariable *global_variable(const std::string &var_name,
+                             const std::string &asm_name,
+                             Btype *btype, bool is_external, bool is_hidden,
                              bool in_unique_section, Location location);
 
   void global_variable_set_init(Bvariable *, Bexpression *);
@@ -276,21 +328,23 @@ public:
   Bvariable *temporary_variable(Bfunction *, Bblock *, Btype *, Bexpression *,
                                 bool, Location, Bstatement **);
 
-  Bvariable *implicit_variable(const std::string &, Btype *, bool, bool, bool,
-                               int64_t);
+  Bvariable *implicit_variable(const std::string &, const std::string &,
+                               Btype *, bool, bool, bool, int64_t);
 
   void implicit_variable_set_init(Bvariable *, const std::string &, Btype *,
                                   bool, bool, bool, Bexpression *);
 
-  Bvariable *implicit_variable_reference(const std::string &, Btype *);
+  Bvariable *implicit_variable_reference(const std::string &,
+                                         const std::string &, Btype *);
 
-  Bvariable *immutable_struct(const std::string &, bool, bool, Btype *,
-                              Location);
+  Bvariable *immutable_struct(const std::string &, const std::string &,
+                              bool, bool, Btype *, Location);
 
   void immutable_struct_set_init(Bvariable *, const std::string &, bool, bool,
                                  Btype *, Location, Bexpression *);
 
-  Bvariable *immutable_struct_reference(const std::string &, Btype *, Location);
+  Bvariable *immutable_struct_reference(const std::string &,
+                                        const std::string &, Btype *, Location);
 
   // Labels.
 
@@ -382,7 +436,7 @@ private:
   void define_intrinsic_builtins();
   void define_trig_builtins();
 
-  // Create a Bexpression to hold an llvm::Value for a constant
+  // Create a Bexpression to hold an llvm::Value for a constant or instruction
   Bexpression *make_value_expression(llvm::Value *val);
 
 private:
@@ -465,9 +519,14 @@ private:
   // Error expression
   std::unique_ptr<Bexpression> error_expression_;
 
-  // Map from LLVM values to Bexpression. Used for constants and other
-  // immutable values (as opposed to instructions).
+  // Map from LLVM values to Bexpression.
   std::unordered_map<llvm::Value *, Bexpression *> value_exprmap_;
+
+  // Map from LLVM values to Bvariable.
+  std::unordered_map<llvm::Value *, Bvariable *> value_varmap_;
+
+  // Error variable
+  std::unique_ptr<Bvariable> error_variable_;
 
   // Currently we don't do any commoning of Bfunction objects created
   // by the frontend, so here we keep track of all returned Bfunctions

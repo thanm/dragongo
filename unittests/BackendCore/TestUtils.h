@@ -193,4 +193,24 @@ inline llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...)
   return llvm::FunctionType::get(rtyp, elems, false);
 }
 
+// Returns func:  foo(i1, i2 int32) int64 { }
+
+inline Bfunction *mkFunci32o64(Backend *be, const char *fname) {
+  Btype *bi64t = be->integer_type(false, 64);
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *befty = mkFuncTyp(be,
+                           L_PARM, bi32t,
+                           L_PARM, bi32t,
+                           L_RES, bi64t,
+                           L_END);
+  bool visible = true;
+  bool is_declaration = false;
+  bool is_inl = true;
+  bool split_stack = true;
+  bool unique_sec = false;
+  Location loc;
+  return be->function(befty, fname, fname, visible,
+                      is_declaration, is_inl, split_stack, unique_sec, loc);
+}
+
 #endif // !defined(#define DRAGONGO_UNITTESTS_BACKENDCORE_TESTUTILS_H)
