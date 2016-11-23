@@ -8,9 +8,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestUtils.h"
+#include "llvm/IR/Module.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/GlobalVariable.h"
 #include "gtest/gtest.h"
 #include "go-llvm-backend.h"
 
@@ -84,16 +86,16 @@ TEST(BackendVarTests, MakeGlobalVar) {
   std::unique_ptr<Backend> be(go_get_backend(C));
 
   Btype *bi32t = be->integer_type(false, 32);
-  Bvariable *g1 = be->global_variable("c", "cMangled", bi32t,
+  Bvariable *g1 = be->global_variable("varname", "asmname", bi32t,
                                       false, /* is_external */
                                       false, /* is_hidden */
                                       false, /* unique_section */
                                       Location());
   ASSERT_TRUE(g1 != nullptr);
-  llvm::Value *g1val = g1->value();
+  Value *g1val = g1->value();
   ASSERT_TRUE(g1val != nullptr);
-  EXPECT_TRUE(llvm::isa<GlobalVariable>(g1val));
-  EXPECT_EQ(g1val->getName(), "cMangled");
+  EXPECT_TRUE(isa<GlobalVariable>(g1val));
+  EXPECT_EQ(g1val->getName(), "asmname");
 
   // error case
   Bvariable *gerr = be->global_variable("", "",
@@ -103,6 +105,57 @@ TEST(BackendVarTests, MakeGlobalVar) {
                                       false, /* unique_section */
                                       Location());
   EXPECT_TRUE(gerr == be->error_variable());
+
+  // debugging
+  if (!gerr) {
+    GlobalVariable *gv = cast<GlobalVariable>(g1val);
+    ASSERT_TRUE(gv != nullptr);
+    Module *m = gv->getParent();
+    m->dump();
+  }
+}
+
+TEST(BackendVarTests, MakeImmutableStruct) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bst = mkTwoFieldStruct(be.get(), bi32t, bi32t);
+
+  const bool is_common[2] = { true, false };
+  const bool is_hidden[2] = { true, false };
+  Location loc;
+  GlobalVariable *gvar = nullptr;
+  bool first = true;
+  for (auto hidden : is_hidden) {
+    for (auto common : is_common) {
+      if (hidden && common)
+        continue;
+      Bvariable *ims = be->immutable_struct("name", "asmname",
+                                            hidden, common, bst, loc);
+      ASSERT_TRUE(ims != nullptr);
+      Value *ival = ims->value();
+      ASSERT_TRUE(ival != nullptr);
+      EXPECT_TRUE(isa<GlobalVariable>(ival));
+      if (first) {
+        gvar = cast<GlobalVariable>(ival);
+        EXPECT_EQ(ival->getName(), "asmname");
+        first = false;
+      }
+    }
+  }
+
+  // error case
+  Bvariable *gerr = be->immutable_struct("", "", false, false,
+                                         be->error_type(), Location());
+  EXPECT_TRUE(gerr == be->error_variable());
+
+  // debugging
+  if (!gerr) {
+    Module *m = gvar->getParent();
+    m->dump();
+  }
 }
 
 }

@@ -1311,7 +1311,7 @@ Bvariable *Llvm_backend::global_variable(const std::string &var_name,
   llvm::Constant *init = nullptr;
   llvm::GlobalVariable *glob =
       new llvm::GlobalVariable(*module_.get(), btype->type(), isConstant,
-                               linkage, init, var_name);
+                               linkage, init, asm_name);
   Bvariable *bv =
       new Bvariable(btype, location, var_name, GlobalVar, false, glob);
   assert(value_varmap_.find(bv->value()) == value_varmap_.end());
@@ -1436,9 +1436,35 @@ Bvariable *Llvm_backend::implicit_variable_reference(const std::string &name,
 Bvariable *Llvm_backend::immutable_struct(const std::string &name,
                                           const std::string &asm_name,
                                           bool is_hidden, bool is_common,
-                                          Btype *btype, Location location) {
-  assert(false && "Llvm_backend::immutable_struct not yet impl");
-  return nullptr;
+                                          Btype *btype, Location location)
+{
+  if (btype == error_type())
+    return error_variable();
+
+  // FIXME: add code to insure non-zero size
+  assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
+
+  // Common + hidden makes no sense
+  assert(!(is_hidden && is_common));
+
+  // Determine linkage
+  llvm::GlobalValue::LinkageTypes linkage =
+      (is_common ? llvm::GlobalValue::CommonLinkage :
+       (is_hidden ? llvm::GlobalValue::InternalLinkage :
+        llvm::GlobalValue::ExternalLinkage));
+
+  bool isConstant = true;
+  llvm::Constant *init = nullptr;
+  bool addressTakenDontCare = false;
+  llvm::GlobalVariable *glob =
+      new llvm::GlobalVariable(*module_.get(), btype->type(), isConstant,
+                               linkage, init, asm_name);
+  Bvariable *bv =
+      new Bvariable(btype, location, name, GlobalVar,
+                    addressTakenDontCare, glob);
+  assert(value_varmap_.find(bv->value()) == value_varmap_.end());
+  value_varmap_[bv->value()] = bv;
+  return bv;
 }
 
 // Set the initializer for a variable created by immutable_struct.
