@@ -46,6 +46,11 @@ TEST(BackendVarTests, MakeLocalVar) {
   EXPECT_TRUE(isa<AllocaInst>(loc2->value()));
   EXPECT_TRUE(loc1 != loc2 && loc1->value() != loc2->value());
 
+  // Test var_expression created from local variable
+  Bexpression* ve1 = be->var_expression(loc1, Location());
+  ASSERT_TRUE(ve1 != nullptr);
+  EXPECT_EQ(ve1->value(), loc1->value());
+
   // Make sure error detection is working
   Bvariable* loce = be->local_variable(func1, "", be->error_type(), true, loc);
   EXPECT_TRUE(loce == be->error_variable());
@@ -73,6 +78,11 @@ TEST(BackendVarTests, MakeParamVar) {
   EXPECT_TRUE(isa<AllocaInst>(p1->value()));
   EXPECT_TRUE(isa<AllocaInst>(p2->value()));
 
+  // Test var_expression created from param variable
+  Bexpression* ve1 = be->var_expression(p1, Location());
+  ASSERT_TRUE(ve1 != nullptr);
+  EXPECT_EQ(ve1->value(), p1->value());
+
   // Error handling
   Bfunction *func2 = mkFunci32o64(be.get(), "bar");
   Bvariable *p3 = be->parameter_variable(func2, "p3",
@@ -96,6 +106,11 @@ TEST(BackendVarTests, MakeGlobalVar) {
   ASSERT_TRUE(g1val != nullptr);
   EXPECT_TRUE(isa<GlobalVariable>(g1val));
   EXPECT_EQ(g1val->getName(), "asmname");
+
+  // Test var_expression created from global variable
+  Bexpression* ve1 = be->var_expression(g1, Location());
+  ASSERT_TRUE(ve1 != nullptr);
+  EXPECT_EQ(ve1->value(), g1->value());
 
   // error case
   Bvariable *gerr = be->global_variable("", "",

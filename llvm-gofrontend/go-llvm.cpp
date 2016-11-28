@@ -816,8 +816,10 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
 // An expression that references a variable.
 
 Bexpression *Llvm_backend::var_expression(Bvariable *var, Location location) {
-  assert(false && "LLvm_backend::var_expression not yet implemented");
-  return nullptr;
+
+  // FIXME: record debug location
+
+  return make_value_expression(var->value());
 }
 
 // An expression that indirectly references an expression.
