@@ -59,7 +59,7 @@ TEST(LinemapTests, BasicLinemap) {
   EXPECT_EQ(x12.handle(), f12.handle());
 
   std::string stats = lm->statistics();
-  EXPECT_EQ(stats, "accesses: 9 hits: 3 files: 3 locations: 8");
+  EXPECT_EQ(stats, "accesses: 9 hits: 3 collisions: 0 files: 3 locmem: 24");
 }
 
 }

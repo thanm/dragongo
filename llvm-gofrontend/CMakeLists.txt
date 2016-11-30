@@ -25,7 +25,7 @@ gofrontend/go/statements.cc
 gofrontend/go/types.cc
 gofrontend/go/unsafe.cc
 go-backend.cpp
-go-linemap.cpp
+go-llvm-linemap.cpp
 go-llvm-diagnostics.cpp
 go-llvm.cpp
 go-sha1.cpp

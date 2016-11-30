@@ -221,7 +221,9 @@ inline Bexpression *mkUint64Const(Backend *be, uint64_t val)
   memset(&mpz_val, '0', sizeof(mpz_val));
   mpz_init_set_ui(mpz_val, val);
   Btype *bu64t = be->integer_type(true, 64);
-  return be->integer_constant_expression(bu64t, mpz_val);
+  Bexpression *rval = be->integer_constant_expression(bu64t, mpz_val);
+  mpz_clear(mpz_val);
+  return rval;
 }
 
 // Manufacture a signed 64-bit integer constant
@@ -232,7 +234,9 @@ inline Bexpression *mkInt64Const(Backend *be, int64_t val)
   memset(&mpz_val, '0', sizeof(mpz_val));
   mpz_init_set_si(mpz_val, val);
   Btype *bi64t = be->integer_type(false, 64);
-  return be->integer_constant_expression(bi64t, mpz_val);
+  Bexpression *rval = be->integer_constant_expression(bi64t, mpz_val);
+  mpz_clear(mpz_val);
+  return rval;
 }
 
 #endif // !defined(#define DRAGONGO_UNITTESTS_BACKENDCORE_TESTUTILS_H)
