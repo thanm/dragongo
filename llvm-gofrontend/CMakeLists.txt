@@ -28,7 +28,6 @@ go-backend.cpp
 go-linemap.cpp
 go-llvm-diagnostics.cpp
 go-llvm.cpp
-go-location.cpp
 go-sha1.cpp
 )
 

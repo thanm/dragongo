@@ -12,3 +12,4 @@ function(add_gobackend_unittest test_dirname)
 endfunction()
 
 add_subdirectory(BackendCore)
+add_subdirectory(Parser)

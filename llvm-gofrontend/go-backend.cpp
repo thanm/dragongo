@@ -13,6 +13,9 @@
 
 #include "llvm-includes.h"
 #include <ctype.h>
+#include <iostream>
+
+#include "go-llvm-diagnostics.h"
 
 #ifndef GO_EXPORT_SEGMENT_NAME
 #define GO_EXPORT_SEGMENT_NAME "__GNU_GO"
@@ -29,9 +32,7 @@
 bool
 saw_errors (void)
 {
-  // FIXME
-  assert(false && "saw_errors not yet implemented");
-  return false;
+  return go_be_saw_errors();
 }
 
 // Called by the Go frontend proper if the unsafe package was imported.
@@ -50,8 +51,7 @@ go_imported_unsafe (void)
 void
 go_write_export_data (const char *bytes, unsigned int size)
 {
-  // FIXME
-  assert(false && "go_write_export_data not yet implemented");
+  std::cerr << "FIXME: go_write_export_data not yet implemented\n";
 }
 
 /* The go_read_export_data function is called by the Go frontend

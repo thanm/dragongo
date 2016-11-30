@@ -87,7 +87,7 @@ set(LLVM_LINK_COMPONENTS
   )
 
 # Include directories needed by llvm-goparse
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/gofrontend/go)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/llvm-gofrontend/gofrontend/go)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/llvm-gofrontend)
 
 # The llvm-goparse executable itself

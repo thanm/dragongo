@@ -37,6 +37,8 @@
 #include "go-llvm-linemap.h"
 #include "go-llvm-backend.h"
 
+#include "mpfr.h"
+
 using namespace llvm;
 
 static cl::opt<std::string>
@@ -89,7 +91,9 @@ EscapeDebugLevel("fgo-debug-escape",
                           "-fgo-optimize-allocs."),
                  cl::init(0));
 
-static void init_gogo(TargetMachine *Target, llvm::LLVMContext &Context)
+static void init_gogo(TargetMachine *Target,
+                      llvm::LLVMContext &Context,
+                      Linemap *linemap)
 {
   // does the comment below still apply?
 #if 0
@@ -111,16 +115,14 @@ static void init_gogo(TargetMachine *Target, llvm::LLVMContext &Context)
   args.check_divide_overflow = CheckDivideOverflow;
   args.compiling_runtime = false; // FIXME: not yet supported
   args.debug_escape_level = EscapeDebugLevel;
-  args.linemap = go_get_linemap(Context);
+  args.linemap = linemap;
   args.backend = go_get_backend(Context);
   go_create_gogo (&args);
 
-#if 0
-    /* The default precision for floating point numbers.  This is used
+  /* The default precision for floating point numbers.  This is used
      for floating point constants with abstract type.  This may
      eventually be controllable by a command line option.  */
   mpfr_set_default_prec (256);
-#endif
 }
 
 int main(int argc, char **argv)
@@ -161,15 +163,16 @@ int main(int argc, char **argv)
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
 
-  init_gogo(Target.get(), Context);
+  std::unique_ptr<Linemap> linemap(go_get_linemap());
 
-#if 0
-extern void go_parse_input_files (const char**, unsigned int,
-                                  bool only_check_syntax,
-                                  bool require_return_statement);
+  init_gogo(Target.get(), Context, linemap.get());
 
-  go_parse_input_files (in_fnames, num_in_fnames, flag_syntax_only,
-                        go_require_return_statement);
-#endif
+  unsigned nfiles = InputFilenames.size();
+  const char **filenames = new const char *[nfiles];
+  unsigned idx = 0;
+  for (auto &fn : InputFilenames)
+    filenames[idx++] = fn.c_str();
+  go_parse_input_files(filenames, nfiles, false, true);
+
   return 0;
 }

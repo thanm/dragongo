@@ -12,7 +12,6 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/raw_ostream.h"
 
-
 //
 // Notes to self:
 // - low-level diagnostics that crop up during LLVM back end
@@ -23,24 +22,31 @@
 //   many cases.
 //
 
+static unsigned error_count = 0;
+
+bool go_be_saw_errors()
+{
+  return error_count > 0;
+}
+
 void
 go_be_error(const std::string& errmsg)
 {
-  // record or report error in some way?
+  error_count += 1;
   llvm::errs() << errmsg << '\n';
 }
 
 void
 go_be_sorry(const std::string& errmsg)
 {
-  // record or report error in some way?
+  error_count += 1;
   llvm::errs() << errmsg << '\n';
 }
 
 void
 go_be_error_at(const Location location, const std::string& errmsg)
 {
-  // FIXME: unpack DebugLoc from location and report
+  error_count += 1;
   llvm::errs() << errmsg << '\n';
 }
 

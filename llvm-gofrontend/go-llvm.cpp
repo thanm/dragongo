@@ -83,6 +83,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     , llvm_ptr_type_(nullptr)
     , llvm_size_type_(nullptr)
     , llvm_integer_type_(nullptr)
+    , llvm_int8_type_(nullptr)
     , llvm_int32_type_(nullptr)
     , llvm_int64_type_(nullptr)
     , llvm_float_type_(nullptr)
@@ -106,6 +107,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   llvm_integer_type_ =
       llvm::IntegerType::get(context_, datalayout_.getPointerSizeInBits());
   llvm_size_type_ = llvm_integer_type_;
+  llvm_int8_type_ = llvm::IntegerType::get(context_, 8);
   llvm_int32_type_ = llvm::IntegerType::get(context_, 32);
   llvm_int64_type_ = llvm::IntegerType::get(context_, 64);
   llvm_float_type_ = llvm::Type::getFloatTy(context_);
@@ -287,8 +289,12 @@ Btype *Llvm_backend::complex_type(int bits) {
 Btype *Llvm_backend::pointer_type(Btype *to_type) {
   if (to_type == error_type_)
     return error_type_;
-  return make_anon_type(
-      llvm::PointerType::get(to_type->type(), address_space_));
+
+  // LLVM does not allow creation of a "pointer to void" type -- model
+  // this instead as pointer to char.
+  llvm::Type *lltot = (to_type->type() == llvm_void_type_ ?
+                    llvm_int8_type_ : to_type->type());
+  return make_anon_type(llvm::PointerType::get(lltot, address_space_));
 }
 
 // Make a function type.
@@ -1343,7 +1349,7 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
   if (btype == error_type() || function == error_function())
     return error_variable();
   llvm::Instruction *inst = new llvm::AllocaInst(btype->type(), name);
-  inst->setDebugLoc(location.debug_location());
+  //inst->setDebugLoc(location.debug_location());
   function->addAlloca(inst);
   Bvariable *bv =
       new Bvariable(btype, location, name, LocalVar, is_address_taken, inst);

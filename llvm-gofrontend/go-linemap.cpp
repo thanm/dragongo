@@ -4,70 +4,45 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-#include "go-linemap.h"
+#include "go-location.h"
+#include "go-llvm-linemap.h"
 
-// This class implements the Linemap interface defined by the
-// frontend.
-
-class Llvm_linemap : public Linemap
-{
- public:
-  Llvm_linemap()
-    : Linemap(),
-      in_file_(false)
-  { }
-
-  void
-  start_file(const char* file_name, unsigned int line_begin);
-
-  void
-  start_line(unsigned int line_number, unsigned int line_size);
-
-  Location
-  get_location(unsigned int column);
-
-  void
-  stop();
-
-  std::string
-  to_string(Location);
-
-  int
-  location_line(Location);
-
- protected:
-  Location
-  get_predeclared_location();
-
-  Location
-  get_unknown_location();
-
-  bool
-  is_predeclared(Location);
-
-  bool
-  is_unknown(Location);
-
- private:
-  // Whether we are currently reading a file.
-  bool in_file_;
-};
+#include <sstream>
 
 Linemap* Linemap::instance_ = NULL;
+
+Llvm_linemap::Llvm_linemap()
+    : Linemap()
+    , unknown_fidx_(0)
+    , current_fidx_(0xffffffff)
+    , current_line_(0xffffffff)
+    , predeclared_handle_(1)
+    , unknown_handle_(0)
+    , lookups_(0)
+    , hits_(0)
+    , in_file_(false)
+{
+  files_.push_back("");
+  locations_.push_back(FLC(unknown_fidx_, 0, 0)); // idx 0 => unknown_handle
+  locations_.push_back(FLC(unknown_fidx_, 1, 1)); // idx 1 => predeclared_handle
+}
 
 // Start getting locations from a new file.
 
 void
 Llvm_linemap::start_file(const char *file_name, unsigned line_begin)
 {
-  go_assert(false);
-  // not yet implemented
-#if 0
-  if (this->in_file_)
-    linemap_add(line_table, LC_LEAVE, 0, NULL, 0);
-  linemap_add(line_table, LC_ENTER, 0, file_name, line_begin);
-  this->in_file_ = true;
-#endif
+  auto it = fmap_.find(file_name);
+  unsigned fidx = files_.size();
+  if (it != fmap_.end())
+    fidx = it->second;
+  else {
+    files_.push_back(file_name);
+    fmap_[file_name] = fidx;
+  }
+  current_fidx_ = fidx;
+  current_line_ = line_begin;
+  in_file_ = true;
 }
 
 // Stringify a location
@@ -75,41 +50,24 @@ Llvm_linemap::start_file(const char *file_name, unsigned line_begin)
 std::string
 Llvm_linemap::to_string(Location location)
 {
-  go_assert(false);
-  // not yet implemented
-  return std::string();
-#if 0
-  const line_map_ordinary *lmo;
-  source_location resolved_location;
-
-  // Screen out unknown and predeclared locations; produce output
-  // only for simple file:line locations.
-  resolved_location =
-      linemap_resolve_location (line_table, location.gcc_location(),
-                                LRK_SPELLING_LOCATION, &lmo);
-  if (lmo == NULL || resolved_location < RESERVED_LOCATION_COUNT)
-    return "";
-  const char *path = LINEMAP_FILE (lmo);
-  if (!path)
+  if (location.handle() == predeclared_handle_ ||
+      location.handle() == unknown_handle_)
     return "";
 
-  // Strip the source file down to the base file, to reduce clutter.
+  assert(location.handle() < locations_.size());
+  FLC &flc = locations_[location.handle()];
+  const char *path = files_[flc.fidx];
   std::stringstream ss;
-  ss << lbasename(path) << ":" << SOURCE_LINE (lmo, location.gcc_location());
+  ss << lbasename(path) << ":" << flc.line;
   return ss.str();
-#endif
 }
 
 // Return the line number for a given location (for debugging dumps)
 int
 Llvm_linemap::location_line(Location loc)
 {
-  go_assert(false);
-  // not yet implemented
-  return 0;
-#if 0
-  return LOCATION_LINE(loc.gcc_location());
-#endif
+  assert(loc.handle() < locations_.size());
+  return locations_[loc.handle()].line;
 }
 
 // Stop getting locations.
@@ -117,12 +75,7 @@ Llvm_linemap::location_line(Location loc)
 void
 Llvm_linemap::stop()
 {
-  go_assert(false);
-  // not yet implemented
-#if 0
-  linemap_add(line_table, LC_LEAVE, 0, NULL, 0);
-  this->in_file_ = false;
-#endif
+  in_file_ = false;
 }
 
 // Start a new line.
@@ -130,11 +83,7 @@ Llvm_linemap::stop()
 void
 Llvm_linemap::start_line(unsigned lineno, unsigned linesize)
 {
-  go_assert(false);
-  // not yet implemented
-#if 0
-  linemap_line_start(line_table, lineno, linesize);
-#endif
+  current_line_ = lineno;
 }
 
 // Get a location.
@@ -142,12 +91,24 @@ Llvm_linemap::start_line(unsigned lineno, unsigned linesize)
 Location
 Llvm_linemap::get_location(unsigned column)
 {
-  go_assert(false);
-  // not yet implemented
-  return Location();
-#if 0
-  return Location(linemap_position_for_column(line_table, column));
-#endif
+  FLC flc(current_fidx_, current_line_, column);
+
+  // Seen before?
+  unsigned hash = flc.hash();
+  auto it = hmap_.find(hash);
+  lookups_++;
+  if (it != hmap_.end()) {
+    hits_++;
+    FLC &existing = locations_[it->second];
+    if (existing.equal(flc))
+      return Location(it->second);
+  }
+
+  // Add new entry
+  unsigned handle = locations_.size();
+  hmap_[hash] = handle;
+  locations_.push_back(flc);
+  return Location(handle);
 }
 
 // Get the unknown location.
@@ -155,8 +116,7 @@ Llvm_linemap::get_location(unsigned column)
 Location
 Llvm_linemap::get_unknown_location()
 {
-  // FIXME: check to see how clang handles this
-  return Location();
+  return Location(unknown_handle_);
 }
 
 // Get the predeclared location.
@@ -164,8 +124,7 @@ Llvm_linemap::get_unknown_location()
 Location
 Llvm_linemap::get_predeclared_location()
 {
-  // FIXME: check to see how clang handles this
-  return Location();
+  return Location(predeclared_handle_);
 }
 
 // Return whether a location is the predeclared location.
@@ -173,12 +132,7 @@ Llvm_linemap::get_predeclared_location()
 bool
 Llvm_linemap::is_predeclared(Location loc)
 {
-  go_assert(false);
-  // not yet implemented
-  return false;
-#if 0
-  return loc.gcc_location() == BUILTINS_LOCATION;
-#endif
+  return loc.handle() == predeclared_handle_;
 }
 
 // Return whether a location is the unknown location.
@@ -186,18 +140,22 @@ Llvm_linemap::is_predeclared(Location loc)
 bool
 Llvm_linemap::is_unknown(Location loc)
 {
-  go_assert(false);
-  // not yet implemented
-  return false;
-#if 0
-  return loc.gcc_location() == UNKNOWN_LOCATION;
-#endif
+  return loc.handle() == unknown_handle_;
 }
 
-// Return the Linemap to use for the gcc backend.
+std::string
+Llvm_linemap::statistics()
+{
+  std::stringstream ss;
+  ss << "accesses: " << lookups_ << " hits: " << hits_;
+  ss << " files: " << files_.size() << " locations: " << locations_.size();
+  return ss.str();
+}
+
+// Return the Linemap to use for the backend.
 
 Linemap*
-go_get_linemap(llvm::LLVMContext &context)
+go_get_linemap()
 {
   return new Llvm_linemap;
 }

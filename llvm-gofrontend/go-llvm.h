@@ -24,8 +24,16 @@
 #include <unordered_set>
 
 namespace llvm {
-class Type;
+class Argument;
+class BasicBlock;
+class DataLayout;
+class Function;
+class Instruction;
+class LLVMContext;
+class Module;
 class TargetLibraryInfo;
+class Type;
+class Value;
 }
 
 // Btype wraps llvm::Type
@@ -42,18 +50,82 @@ private:
   friend class Llvm_backend;
 };
 
-// Bexpression wraps llvm::Value
+// Mixin class for a list of instructions
 
-class Bexpression {
-public:
+class Binstructions {
+ public:
+  Binstructions() { }
+  explicit Binstructions(const std::vector<llvm::Instruction*> instructions)
+      : instructions_(new std::vector<llvm::Instruction*>(instructions)) { }
+
+  std::vector<llvm::Instruction*> &instructions() {
+    return *instructions_.get();
+  }
+  void appendInstruction(llvm::Instruction* inst) {
+    instructions_->push_back(inst);
+  }
+
+ private:
+  std::unique_ptr< std::vector<llvm::Instruction*> > instructions_;
+};
+
+// In the current gofrontend implementation, there is an extremely
+// fluzzy/fluid line between Bexpression's, Bblocks, and Bstatements.
+// For example, you can take a Bblock and turn it into a statement via
+// Backend::block_statement. You can also combine an existing
+// Bstatement with a Bexpression to form a second Bexpression via
+// Backend::compound_expression. Thus things can morph back end forth
+// between statements and expression, blocks and statements, etc.  The
+// one constant is that a given Bexpression has a consumable value of
+// some sort, Bblock's and Bstatement's do not.
+//
+// To accommodate this degree of flexibility, Bexpression is mostly a
+// wrapper around llvm::Value, however in addition to the consumable
+// value it produces, a given Bexpression may also encapsulate a
+// collection of other instructions that need to be executed prior to to
+// that value.  This is to accommodate the compound expressions
+// produced in gofrontend, which loosely correspond to the C++ comma
+// operator.  For something like E3 = E1, E2, the semantics are
+// "evaluate E1 prior to evalating E2, then assign the result to E3".
+
+class Bexpression : public Binstructions {
+ public:
   explicit Bexpression(llvm::Value *value) : value_(value) {}
+  Bexpression(llvm::Value *value,
+              const std::vector<llvm::Instruction*> &instructions)
+      : Binstructions(instructions)
+      , value_(value)
+  { }
 
   llvm::Value *value() const { return value_; }
 
-private:
+ private:
   Bexpression() : value_(NULL) {}
   llvm::Value *value_;
-  friend class Llvm_backend;
+};
+
+// Bblock wraps llvm::BasicBlock
+
+class Bblock {
+ public:
+  explicit Bblock(llvm::BasicBlock *block) : block_(block) { }
+
+  llvm::BasicBlock *basicBlock() { return block_; }
+
+ private:
+  Bblock() : block_(NULL) {}
+  llvm::BasicBlock *block_;
+};
+
+// Bstatement is collection of instructions
+
+class Bstatement : public Binstructions {
+ public:
+  Bstatement() { }
+  explicit Bstatement(const std::vector<llvm::Instruction*> instructions)
+      : Binstructions(instructions) { }
+
+ private:
 };
 
 // Class Bfunction wraps llvm::Function
@@ -501,6 +573,7 @@ private:
   llvm::Type *llvm_ptr_type_;
   llvm::Type *llvm_size_type_;
   llvm::Type *llvm_integer_type_;
+  llvm::Type *llvm_int8_type_;
   llvm::Type *llvm_int32_type_;
   llvm::Type *llvm_int64_type_;
   llvm::Type *llvm_float_type_;

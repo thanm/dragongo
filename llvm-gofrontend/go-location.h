@@ -9,14 +9,9 @@
 
 #include "go-system.h"
 
-#include "llvm/IR/DebugLoc.h"
+// Opaque tag/handle returned by the linemap
 
-//typedef int source_location;
-//typedef int location;
-
-namespace llvm {
-  class DILocation;
-}
+typedef unsigned linemap_handle;
 
 // A location in an input source file.
 
@@ -24,23 +19,32 @@ class Location
 {
  public:
   Location()
-      : debug_loc_()
+      : handle_()
   { }
 
-  explicit Location(llvm::DebugLoc loc)
-    : debug_loc_(loc)
+  explicit Location(linemap_handle handle)
+      : handle_(handle)
   { }
 
-  llvm::DebugLoc
-  debug_location() const
-  { return this->debug_loc_; }
+  linemap_handle
+  handle() const
+  { return this->handle_; }
 
  private:
-  llvm::DebugLoc debug_loc_;
+  linemap_handle handle_;
 };
 
 // The Go frontend requires the ability to compare Locations.
-extern bool operator<(Location loca, Location locb);
-extern bool operator==(Location loca, Location locb);
+inline bool
+operator<(Location loca, Location locb)
+{
+  return loca.handle() < locb.handle();
+}
+
+inline bool
+operator==(Location loca, Location locb)
+{
+  return loca.handle() == locb.handle();
+}
 
 #endif // !defined(GO_LOCATION_H)
