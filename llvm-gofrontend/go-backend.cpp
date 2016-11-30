@@ -17,6 +17,11 @@
 
 #include "go-llvm-diagnostics.h"
 
+#include "llvm/Support/MemoryBuffer.h"
+#include "llvm/Object/Binary.h"
+#include "llvm/Object/ObjectFile.h"
+
+
 #ifndef GO_EXPORT_SEGMENT_NAME
 #define GO_EXPORT_SEGMENT_NAME "__GNU_GO"
 #endif
@@ -69,9 +74,53 @@ const char *
 go_read_export_data (int fd, off_t offset, char **pbuf, size_t *plen,
                      int *perr)
 {
-  // FIXME
-  assert(false && "go_read_export_data not yet implemented");
-  return "";
+  *pbuf = NULL;
+  *plen = 0;
+
+  // Create memory buffer for this file descriptor
+  auto BuffOrErr = llvm::MemoryBuffer::getOpenFile(fd, "", -1);
+  if (! BuffOrErr)
+    return nullptr; // ignore this error
+  std::unique_ptr<llvm::MemoryBuffer> Buffer = std::move(BuffOrErr.get());
+
+  // Examine buffer as binary
+  llvm::Expected<std::unique_ptr<llvm::object::Binary>> BinOrErr =
+      llvm::object::createBinary(Buffer->getMemBufferRef());
+  if (!BinOrErr)
+    return nullptr; // also ignore here
+  std::unique_ptr<llvm::object::Binary> Binary = std::move(BinOrErr.get());
+
+  // Examine binary as object
+  if (llvm::object::ObjectFile *o = llvm::dyn_cast<llvm::object::ObjectFile>(Binary.get())) {
+    // Walk sections
+    for (llvm::object::section_iterator si = o->section_begin(),
+             se = o->section_end(); si != se; ++si) {
+      llvm::object::SectionRef sref = *si;
+      llvm::StringRef sname;
+      std::error_code error = sref.getName(sname);
+      if (error)
+        break;
+      if (sname == GO_EXPORT_SECTION_NAME) {
+        // Extract section of interest
+        llvm::StringRef bytes;
+        if (sref.getContents(bytes)) {
+          *perr = errno;
+          return "get section contents";
+        }
+        char *buf = new char[bytes.size()];
+        if (! buf) {
+          *perr = errno;
+          return "malloc";
+        }
+        memcpy(buf, bytes.data(), bytes.size());
+        *pbuf = buf;
+        *plen = bytes.size();
+        return nullptr;
+      }
+    }
+  }
+
+  return nullptr;
 }
 
 const char *lbasename(const char *path)
