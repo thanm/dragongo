@@ -53,6 +53,11 @@ static cl::opt<std::string>
 IncludeDirs("I", cl::desc("<include dirs>"));
 
 static cl::opt<bool>
+NoBackend("nobackend",
+          cl::desc("Stub out back end invocation."),
+          cl::init(false));
+
+static cl::opt<bool>
 CheckDivideZero("fgo-check-divide-zero",
                 cl::desc("Add explicit checks for divide-by-zero."),
                 cl::init(true));
@@ -188,6 +193,8 @@ int main(int argc, char **argv)
   for (auto &fn : InputFilenames)
     fns[idx++] = fn.c_str();
   go_parse_input_files(fns, nfiles, false, true);
+  if (! NoBackend)
+    go_write_globals();
 
   return 0;
 }

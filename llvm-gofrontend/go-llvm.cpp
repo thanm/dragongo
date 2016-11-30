@@ -824,8 +824,10 @@ Bexpression *Llvm_backend::make_value_expression(llvm::Value *val)
 // Return the zero value for a type.
 
 Bexpression *Llvm_backend::zero_expression(Btype *btype) {
-  assert(false && "LLvm_backend::zero_expression not yet implemented");
-  return nullptr;
+  if (btype == error_type())
+    return error_expression();
+  llvm::Value *zeroval = llvm::Constant::getNullValue(btype->type());
+  return make_value_expression(zeroval);
 }
 
 Bexpression *Llvm_backend::error_expression() {

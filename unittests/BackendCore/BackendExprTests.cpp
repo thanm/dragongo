@@ -123,4 +123,27 @@ TEST(BackendExprTests, MakeFloatConstExpr) {
 
 }
 
+TEST(BackendExprTests, MakeZeroValueExpr) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  // Zero value expressions for various types
+  Btype *bt = be->bool_type();
+  ASSERT_TRUE(bt != nullptr);
+  Bexpression *bzero = be->zero_expression(bt);
+  ASSERT_TRUE(bzero != nullptr);
+  EXPECT_EQ(llvm::ConstantInt::getFalse(C), bzero->value());
+  Btype *pbt = be->pointer_type(bt);
+  Bexpression *bpzero = be->zero_expression(pbt);
+  ASSERT_TRUE(bpzero != nullptr);
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *s2t = mkTwoFieldStruct(be.get(), pbt, bi32t);
+  Bexpression *bszero = be->zero_expression(s2t);
+  ASSERT_TRUE(bpzero != nullptr);
+
+  // Error handling
+  EXPECT_EQ(be->zero_expression(be->error_type()), be->error_expression());
+}
+
 }
