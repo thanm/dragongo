@@ -293,7 +293,8 @@ Btype *Llvm_backend::pointer_type(Btype *to_type) {
   // LLVM does not allow creation of a "pointer to void" type -- model
   // this instead as pointer to char.
   llvm::Type *lltot = (to_type->type() == llvm_void_type_ ?
-                    llvm_int8_type_ : to_type->type());
+                       llvm_int8_type_ : to_type->type());
+
   return make_anon_type(llvm::PointerType::get(lltot, address_space_));
 }
 
@@ -353,8 +354,16 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
 }
 
 Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
-  assert(false && "LLvm_backend::array_type not yet implemented");
-  return nullptr;
+  if (length == error_expression() || element_btype == error_type())
+    return error_type();
+
+  llvm::ConstantInt *lc =
+      llvm::dyn_cast<llvm::ConstantInt>(length->value());
+  assert(lc);
+  uint64_t asize = lc->getValue().getZExtValue();
+
+  llvm::Type *llat = llvm::ArrayType::get(element_btype->type(), asize);
+  return make_anon_type(llat);
 }
 
 // LLVM doesn't directly support placeholder types other than opaque

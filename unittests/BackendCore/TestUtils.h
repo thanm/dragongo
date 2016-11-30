@@ -213,4 +213,26 @@ inline Bfunction *mkFunci32o64(Backend *be, const char *fname) {
                       is_declaration, is_inl, split_stack, unique_sec, loc);
 }
 
+// Manufacture an unsigned 64-bit integer constant
+
+inline Bexpression *mkUint64Const(Backend *be, uint64_t val)
+{
+  mpz_t mpz_val;
+  memset(&mpz_val, '0', sizeof(mpz_val));
+  mpz_init_set_ui(mpz_val, val);
+  Btype *bu64t = be->integer_type(true, 64);
+  return be->integer_constant_expression(bu64t, mpz_val);
+}
+
+// Manufacture a signed 64-bit integer constant
+
+inline Bexpression *mkInt64Const(Backend *be, int64_t val)
+{
+  mpz_t mpz_val;
+  memset(&mpz_val, '0', sizeof(mpz_val));
+  mpz_init_set_si(mpz_val, val);
+  Btype *bi64t = be->integer_type(false, 64);
+  return be->integer_constant_expression(bi64t, mpz_val);
+}
+
 #endif // !defined(#define DRAGONGO_UNITTESTS_BACKENDCORE_TESTUTILS_H)

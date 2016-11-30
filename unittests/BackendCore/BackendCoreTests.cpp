@@ -230,9 +230,36 @@ TEST(BackendCoreTests, PlaceholderTypes) {
 TEST(BackendCoreTests, ArrayTypes) {
   LLVMContext C;
 
-  // array types not yet implemented, since we don't have
-  // expressions yet
+  std::unique_ptr<Backend> be(go_get_backend(C));
+  Location loc;
 
+  // Very basic tests of array type creation: array of integers
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bi64t = be->integer_type(false, 64);
+  Bexpression *val10 = mkInt64Const(be.get(), int64_t(10));
+  Btype *at10 = be->array_type(bi64t, val10);
+  ASSERT_TRUE(at10 != nullptr);
+  EXPECT_EQ(at10->type(), llvm::ArrayType::get(bi64t->type(), 10));
+
+  // Array of structs
+  Bexpression *val1023 = mkUint64Const(be.get(), uint64_t(1023));
+  Btype *st = mkTwoFieldStruct(be.get(), bi32t, bi64t);
+  Btype *at1023 = be->array_type(st, val1023);
+  ASSERT_TRUE(at1023 != nullptr);
+  llvm::Type *lst = mkTwoFieldLLvmStruct(C, bi32t->type(), bi64t->type());
+  EXPECT_EQ(at1023->type(), llvm::ArrayType::get(lst, 1023));
+
+  // Zero sized array
+  Bexpression *val0 = mkInt64Const(be.get(), 0);
+  Btype *at0 = be->array_type(bi64t, val0);
+  ASSERT_TRUE(at0 != nullptr);
+
+  // Error cases
+  Bexpression *badval = be->error_expression();
+  Btype *badt1 = be->array_type(bi64t, badval);
+  EXPECT_EQ(badt1, be->error_type());
+  Btype *badt2 = be->array_type(be->error_type(), val10);
+  EXPECT_EQ(badt2, be->error_type());
 }
 
 TEST(BackendCoreTests, NamedTypes) {
