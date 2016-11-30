@@ -49,6 +49,9 @@ InputFilenames(cl::Positional,
                cl::desc("<input go source files>"),
                cl::OneOrMore);
 
+static cl::opt<std::string>
+IncludeDirs("I", cl::desc("<include dirs>"));
+
 static cl::opt<bool>
 CheckDivideZero("fgo-check-divide-zero",
                 cl::desc("Add explicit checks for divide-by-zero."),
@@ -167,12 +170,24 @@ int main(int argc, char **argv)
 
   init_gogo(Target.get(), Context, linemap.get());
 
+  // Include dirs
+  if (! IncludeDirs.empty()) {
+    std::stringstream ss(IncludeDirs);
+    std::string dir;
+    while(std::getline(ss, dir, ':')) {
+      std::cerr << "adding search path " << dir.c_str()
+                << "\n";
+      go_add_search_path(dir.c_str());
+    }
+  }
+
   unsigned nfiles = InputFilenames.size();
-  const char **filenames = new const char *[nfiles];
+  std::unique_ptr<const char *> filenames(new const char *[nfiles]);
+  const char **fns = filenames.get();
   unsigned idx = 0;
   for (auto &fn : InputFilenames)
-    filenames[idx++] = fn.c_str();
-  go_parse_input_files(filenames, nfiles, false, true);
+    fns[idx++] = fn.c_str();
+  go_parse_input_files(fns, nfiles, false, true);
 
   return 0;
 }

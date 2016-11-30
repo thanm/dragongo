@@ -32,7 +32,6 @@ Llvm_linemap::Llvm_linemap()
 
 Llvm_linemap::~Llvm_linemap()
 {
-  std::cerr << "Stats: " << statistics() << "\n";
 }
 
 unsigned Llvm_linemap::add_encoded_location(const FLC &flc)

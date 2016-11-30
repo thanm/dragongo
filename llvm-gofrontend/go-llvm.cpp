@@ -179,6 +179,7 @@ Btype *Llvm_backend::make_placeholder_type(llvm::Type *pht) {
 
 void Llvm_backend::update_placeholder_underlying_type(Btype *pht,
                                                       llvm::Type *newtyp) {
+
   assert(placeholders_.find(pht) != placeholders_.end());
   placeholders_.erase(pht);
   updated_placeholders_.insert(pht);
@@ -388,6 +389,10 @@ Btype *Llvm_backend::placeholder_pointer_type(const std::string &name,
 }
 
 // Set the real target type for a placeholder pointer type.
+//
+// NB: front end seems to occasionally call this method on
+// types that were not created via make_placeholder_type(),
+// so handle this conservatively if the case comes up.
 
 bool Llvm_backend::set_placeholder_pointer_type(Btype *placeholder,
                                                 Btype *to_type) {
@@ -396,7 +401,11 @@ bool Llvm_backend::set_placeholder_pointer_type(Btype *placeholder,
   if (placeholder == error_type_ || to_type == error_type_)
     return false;
   assert(to_type->type()->isPointerTy());
-  update_placeholder_underlying_type(placeholder, to_type->type());
+  if (placeholders_.find(placeholder) == placeholders_.end()) {
+    assert(placeholder->type() == to_type->type());
+  } else {
+    update_placeholder_underlying_type(placeholder, to_type->type());
+  }
   return true;
 }
 
