@@ -12,7 +12,9 @@
 
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Instruction.h"
 #include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
 #include "llvm/Support/raw_ostream.h"
 
 // Currently these need to be included before backend.h
@@ -24,15 +26,35 @@
 
 #include <stdarg.h>
 
+inline std::string trimsp(const std::string &s)
+{
+  size_t firstsp = s.find_first_not_of(' ');
+  if (firstsp == std::string::npos)
+    return s;
+  size_t lastsp = s.find_last_not_of(' ');
+  return s.substr(firstsp, (lastsp - firstsp + 1));
+}
+
+inline std::string repr(llvm::Value *val)
+{
+  std::string res;
+  llvm::raw_string_ostream os(res);
+  if (!val)
+    os << "<null_value>";
+  else
+    val->print(os);
+  return trimsp(os.str());
+}
+
 inline std::string repr(llvm::Type *t) {
   std::string res;
-  llvm::raw_string_ostream OS(res);
+  llvm::raw_string_ostream os(res);
   if (t == NULL) {
-    OS << "<null>";
+    os << "<null_type>";
   } else {
-    t->print(OS);
+    t->print(os);
   }
-  return OS.str();
+  return trimsp(os.str());
 }
 
 //
@@ -238,5 +260,62 @@ inline Bexpression *mkInt64Const(Backend *be, int64_t val)
   mpz_clear(mpz_val);
   return rval;
 }
+
+// Works only for InstList stmts
+
+inline std::string repr(Bstatement *statement)
+{
+  if (!statement)
+    return "<null Bstatement>";
+  InstListStatement *ilst = statement->castToInstListStatement();
+  if (!ilst)
+    return "<not an InstListStatement>";
+  std::stringstream ss;
+  for (auto inst : ilst->instructions())
+    ss << repr(inst);
+  return ss.str();
+}
+
+// Cleanup of statements created during unit testing.
+
+class StmtCleanup {
+ public:
+  StmtCleanup(Backend *be) : be_(be) { }
+  ~StmtCleanup() {
+    for (auto s : statements_)
+      del(s);
+  }
+
+  void add(Bstatement *s) { statements_.push_back(s); }
+
+ protected:
+  void del(Bstatement *s) {
+    if (s == be_->error_statement())
+      return;
+    switch(s->flavor()) {
+      case Bstatement::ST_Compound: {
+        CompoundStatement *cst = s->castToCompoundStatement();
+        for (auto st : cst->stlist())
+          del(st);
+        break;
+      }
+      case Bstatement::ST_InstList: {
+        InstListStatement *ilst = s->castToInstListStatement();
+        for (auto inst : ilst->instructions()) {
+          delete inst;
+        }
+        break;
+      }
+      default:
+        assert(false && "Not yet implemented");
+    }
+    delete s;
+  }
+
+ private:
+  std::vector<Bstatement *> statements_;
+  Backend *be_;
+};
+
 
 #endif // !defined(#define DRAGONGO_UNITTESTS_BACKENDCORE_TESTUTILS_H)

@@ -144,4 +144,14 @@ TEST(BackendFcnTests, BuiltinFunctionsTrig) {
   EXPECT_TRUE(results.size() == tocheck.size());
 }
 
+TEST(BackendFcnTests, MakeBlocks) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+  Bfunction *bfcn = mkFunci32o64(be.get(), "foo");
+  const std::vector<Bvariable *> vars;
+  Bblock *bb = be->block(bfcn, nullptr, vars, Location(), Location());
+  ASSERT_TRUE(bb != nullptr);
+}
+
 }

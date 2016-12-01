@@ -62,6 +62,8 @@ class Binstructions {
     return *instructions_.get();
   }
   void appendInstruction(llvm::Instruction* inst) {
+    if (! instructions_.get())
+      instructions_.reset(new std::vector<llvm::Instruction*>());
     instructions_->push_back(inst);
   }
 
@@ -69,24 +71,14 @@ class Binstructions {
   std::unique_ptr< std::vector<llvm::Instruction*> > instructions_;
 };
 
-// In the current gofrontend implementation, there is an extremely
-// fluzzy/fluid line between Bexpression's, Bblocks, and Bstatements.
-// For example, you can take a Bblock and turn it into a statement via
-// Backend::block_statement. You can also combine an existing
-// Bstatement with a Bexpression to form a second Bexpression via
-// Backend::compound_expression. Thus things can morph back end forth
-// between statements and expression, blocks and statements, etc.  The
-// one constant is that a given Bexpression has a consumable value of
-// some sort, Bblock's and Bstatement's do not.
-//
-// To accommodate this degree of flexibility, Bexpression is mostly a
-// wrapper around llvm::Value, however in addition to the consumable
-// value it produces, a given Bexpression may also encapsulate a
-// collection of other instructions that need to be executed prior to to
-// that value.  This is to accommodate the compound expressions
-// produced in gofrontend, which loosely correspond to the C++ comma
-// operator.  For something like E3 = E1, E2, the semantics are
-// "evaluate E1 prior to evalating E2, then assign the result to E3".
+// Class Bexpression, which is mostly a wrapper around llvm::Value,
+// however in addition to the consumable value it produces, a given
+// Bexpression may also encapsulate a collection of other instructions
+// that need to be executed prior to to that value.  This is to
+// accommodate the compound expressions produced in gofrontend, which
+// loosely correspond to the C++ comma operator.  For something like
+// E3 = E1, E2, the semantics are "evaluate E1 prior to evalating E2,
+// then assign the result to E3".
 
 class Bexpression : public Binstructions {
  public:
@@ -104,28 +96,233 @@ class Bexpression : public Binstructions {
   llvm::Value *value_;
 };
 
-// Bblock wraps llvm::BasicBlock
+// In the current gofrontend implementation, there is an extremely
+// fluzzy/fluid line between Bexpression's, Bblocks, and Bstatements.
+// For example, you can take a Bblock and turn it into a statement via
+// Backend::block_statement. You can also combine an existing
+// Bstatement with a Bexpression to form a second Bexpression via
+// Backend::compound_expression. This is most likely due to the fact
+// that the first backend target (gcc) for gofrontend uses a tree
+// intermediate representation, where blocks, expressions, and
+// statements are all simply tree fragments. With LLVM on the other
+// hand, it is not so straightforward to have chunks of IR morphing
+// back end forth between statements, expressions, and blocks.
+//
+// What this means from a practical point of view is that we delay
+// creation of control flow (creating llvm::BasicBlock objects and
+// assigning instructions to blocks) until the front end is
+// essentially done with creating all instructions and
+// statements. Prior to this point when the front end creates a
+// statement that creates control flow (for example an "if"
+// statement), we create placeholders to record what has to be done,
+// then come along later and stitch things together at the end.
 
-class Bblock {
+class InstListStatement;
+class CompoundStatement;
+class IfPHStatement;
+class SwitchPHStatement;
+//class VarsStatement;
+class GotoStatement;
+class LabelStatement;
+
+// Abstract base statement class, just used to distinguish between
+// the various derived statement types.
+
+class Bstatement {
  public:
-  explicit Bblock(llvm::BasicBlock *block) : block_(block) { }
+  enum StFlavor {
+    ST_Compound,
+    ST_InstList,
+    ST_IfPlaceholder,
+    ST_SwitchPlaceholder,
+    ST_Goto,
+    ST_Label
+  };
 
-  llvm::BasicBlock *basicBlock() { return block_; }
+  Bstatement(StFlavor flavor) : flavor_(flavor) { }
+  virtual ~Bstatement() { }
+  StFlavor flavor() const { return flavor_; }
+
+  inline CompoundStatement *castToCompoundStatement();
+  inline InstListStatement *castToInstListStatement();
+  inline IfPHStatement *castToIfPHStatement();
+  inline SwitchPHStatement *castToSwitchPHStatement();
+  // inline VarsStatement *castToVarsStatement();
+  inline GotoStatement *castToGotoStatement();
+  inline LabelStatement *castToLabelStatement();
+
+  // Helper to creat a new Bstatement from an inst
+  static Bstatement *stmtFromInst(llvm::Instruction *inst);
+
+  // Delete the tree of Bstatements rooted at stmt. This
+  // leaves any instructions contained intact, just free's
+  // the Bstatements/Bexpressions used to hold them.
+  static void destroy(Bstatement *subtree);
+
+  // debugging
+  void dump(unsigned ident = 0);
 
  private:
-  Bblock() : block_(NULL) {}
-  llvm::BasicBlock *block_;
+  void indent(unsigned ilevel);
+  StFlavor flavor_;
 };
 
-// Bstatement is collection of instructions
+// Compound statement is simply a list of other statements.
 
-class Bstatement : public Binstructions {
+class CompoundStatement : public Bstatement {
  public:
-  Bstatement() { }
-  explicit Bstatement(const std::vector<llvm::Instruction*> instructions)
-      : Binstructions(instructions) { }
+  CompoundStatement() : Bstatement(ST_Compound) { }
+  std::vector<Bstatement *> &stlist() { return stlist_; }
 
  private:
+  std::vector<Bstatement *> stlist_;
+};
+
+inline CompoundStatement *Bstatement::castToCompoundStatement()
+{
+  return (flavor_ == ST_Compound ?
+          static_cast<CompoundStatement*>(this) : nullptr);
+}
+
+// InstList statement contains a list of LLVM instructions.
+
+class InstListStatement : public Bstatement, public Binstructions {
+ public:
+  InstListStatement() : Bstatement(ST_InstList) { }
+  InstListStatement(llvm::Instruction *inst)
+      : Bstatement(ST_InstList)
+  { appendInstruction(inst); }
+};
+
+inline InstListStatement *Bstatement::castToInstListStatement()
+{
+  return (flavor_ == ST_InstList ?
+          static_cast<InstListStatement*>(this) : nullptr);
+}
+
+// "If" placeholder statement.
+
+class IfPHStatement : public Bstatement {
+ public:
+  IfPHStatement(Bexpression *cond, Bstatement *ifTrue, Bstatement *ifFalse)
+      : Bstatement(ST_IfPlaceholder)
+      , cond_(cond)
+      , iftrue_(ifTrue)
+      , iffalse_(ifTrue)
+  { }
+  Bexpression *cond() { return cond_; }
+  Bstatement *trueStmt() { return iftrue_; }
+  Bstatement *falseStmt() { return iffalse_; }
+
+ private:
+  Bexpression *cond_;
+  Bstatement *iftrue_;
+  Bstatement *iffalse_;
+};
+
+inline IfPHStatement *Bstatement::castToIfPHStatement()
+{
+  return (flavor_ == ST_IfPlaceholder ?
+          static_cast<IfPHStatement*>(this) : nullptr);
+}
+
+// "Switch" placeholder statement.
+
+class SwitchPHStatement : public Bstatement {
+ public:
+  SwitchPHStatement(Bexpression *value,
+                    const std::vector<std::vector<Bexpression*> >& cases,
+                    const std::vector<Bstatement*>& statements)
+      : Bstatement(ST_SwitchPlaceholder)
+      , value_(value)
+      , cases_(cases)
+      , statements_(statements)
+  { }
+  Bexpression *switchValue() { return value_; }
+  std::vector<std::vector<Bexpression*> > &cases() { return cases_; }
+  std::vector<Bstatement*> &statements() { return statements_; }
+
+ private:
+  Bexpression *value_;
+  std::vector<std::vector<Bexpression*> > cases_;
+  std::vector<Bstatement*> statements_;
+};
+
+inline SwitchPHStatement *Bstatement::castToSwitchPHStatement()
+{
+  return (flavor_ == ST_SwitchPlaceholder ?
+          static_cast<SwitchPHStatement*>(this) : nullptr);
+}
+
+#if 0
+// This corresponds to a list of variables whose lifetime
+// begins at this statement.
+//
+// NB: need to think about insertion of llvm.lifetime.end instrinsics--
+// which means that maybe this should be split into beginvars/endvars?
+
+class VarsStatement : public Bstatement {
+ public:
+  VarsStatement(const std::vector<Bvariable*>& vars)
+      : Bstatement(ST_Variables)
+      , vars_(vars) { }
+ private:
+  std::vector<Bvariable*> vars_;
+};
+
+inline VarsStatement *Bstatement::castToVarsStatement()
+{
+  return (flavor_ == ST_Variables ?
+          static_cast<VarsStatement*>(this) : nullptr);
+}
+#endif
+
+// Opaque labelID handle.
+typedef unsigned LabelId;
+
+// A goto statement, representing an unconditional jump to
+// some other labeled statement.
+
+class GotoStatement : public Bstatement {
+ public:
+  GotoStatement(LabelId label)
+      : Bstatement(ST_Goto)
+      , label_(label) { }
+  LabelId targetLabel() const { return label_; }
+ private:
+  LabelId label_;
+};
+
+inline GotoStatement *Bstatement::castToGotoStatement()
+{
+  return (flavor_ == ST_Goto ?
+          static_cast<GotoStatement*>(this) : nullptr);
+}
+
+// A label statement, representing the target of some jump (conditional
+// or unconditional).
+
+class LabelStatement : public Bstatement {
+ public:
+  LabelStatement(LabelId label)
+      : Bstatement(ST_Label)
+      , label_(label) { }
+  LabelId targetLabel() const { return label_; }
+ private:
+  LabelId label_;
+};
+
+inline LabelStatement *Bstatement::castToLabelStatement()
+{
+  return (flavor_ == ST_Label ?
+          static_cast<LabelStatement*>(this) : nullptr);
+}
+
+// A Bblock , which wraps statement list. Ssee the comment
+// above on why we need to make it easy to convert between
+// blocks and statements.
+
+class Bblock : public CompoundStatement {
 };
 
 // Class Bfunction wraps llvm::Function
@@ -147,6 +344,11 @@ class Bfunction
     allocas_.push_back(inst);
   }
 
+  // Record a new Bblock for this function (do we need this?)
+  void addBlock(Bblock *block) {
+    blocks_.push_back(block);
+  }
+
   // Collect Return nth argument
   llvm::Argument *getNthArg(unsigned argIdx);
 
@@ -156,9 +358,13 @@ class Bfunction
   // Number of parameter vars registered so far
   unsigned paramsCreated() { return argtoval_.size(); }
 
+  // Alloca instructions created to instantiate local and temp vars
+  std::vector<llvm::Instruction*> &allocas() { return allocas_; }
+
  private:
   std::vector<llvm::Instruction*> allocas_;
   std::vector<llvm::Argument *> arguments_;
+  std::vector<Bblock *> blocks_;
   std::unordered_map<llvm::Argument*, llvm::Instruction*> argtoval_;
   llvm::Function *function_;
   SplitStackDisposition splitstack_;
@@ -511,6 +717,12 @@ private:
   // Create a Bexpression to hold an llvm::Value for a constant or instruction
   Bexpression *make_value_expression(llvm::Value *val);
 
+  // Assignment helper
+  Bstatement *do_assignment(llvm::Value *lhs, Bexpression *rhs, Location);
+
+  // Helper to set up entry block for function
+  llvm::BasicBlock *genEntryBlock(Bfunction *bfunction);
+
 private:
   typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
 
@@ -580,6 +792,9 @@ private:
   llvm::Type *llvm_double_type_;
   llvm::Type *llvm_long_double_type_;
 
+  // Lifetime start intrinsic function (created lazily)
+  // llvm::Function *llvm_lifetime_start_;
+
   // Target library info oracle
   llvm::TargetLibraryInfo *TLI_;
 
@@ -591,6 +806,9 @@ private:
 
   // Error expression
   std::unique_ptr<Bexpression> error_expression_;
+
+  // Error statement
+  std::unique_ptr<Bstatement> error_statement_;
 
   // Map from LLVM values to Bexpression.
   std::unordered_map<llvm::Value *, Bexpression *> value_exprmap_;

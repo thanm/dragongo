@@ -31,12 +31,71 @@
 
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
+Bstatement *Bstatement::stmtFromInst(llvm::Instruction *inst)
+{
+  return new InstListStatement(inst);
+}
+
+void Bstatement::indent(unsigned ilevel)
+{
+  for (unsigned i = 0; i < ilevel; ++i)
+    std::cerr << " ";
+}
+
+void Bstatement::dump(unsigned ilevel)
+{
+  switch(flavor()) {
+    case ST_Compound: {
+      CompoundStatement *cst = castToCompoundStatement();
+      indent(ilevel); std::cerr << "{\n";
+      for (auto st : cst->stlist())
+        st->dump(ilevel+2);
+      indent(ilevel); std::cerr << "}\n";
+      break;
+    }
+    case ST_InstList: {
+      InstListStatement *ilst = castToInstListStatement();
+      for (auto inst : ilst->instructions()) {
+        indent(ilevel);
+        inst->dump();
+      }
+      break;
+    }
+    case ST_IfPlaceholder:
+    case ST_SwitchPlaceholder:
+    case ST_Goto:
+    case ST_Label:
+      std::cerr << "not yet implemented\n";
+      break;
+  }
+}
+
+void Bstatement::destroy(Bstatement *stmt)
+{
+  assert(stmt);
+  switch(stmt->flavor()) {
+    case ST_Compound: {
+      CompoundStatement *cst = stmt->castToCompoundStatement();
+      for (auto st : cst->stlist())
+        destroy(st);
+      break;
+    }
+    case ST_Goto:
+    case ST_Label:
+    case ST_InstList:
+      break; // no extra work needed here
+    case ST_IfPlaceholder:
+    case ST_SwitchPlaceholder:
+      assert(false && "not yet implemented");
+      break;
+  }
+  delete stmt;
+}
+
 Bfunction::Bfunction(llvm::Function *f)
     : function_(f)
-
     , splitstack_(YesSplit)
 {
-
 }
 
 Bfunction::~Bfunction()
@@ -89,6 +148,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     , llvm_float_type_(nullptr)
     , llvm_double_type_(nullptr)
     , llvm_long_double_type_(nullptr)
+      //, llvm_lifetime_start_(nullptr)
     , TLI_(nullptr)
     , error_function_(nullptr)
 {
@@ -129,6 +189,10 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   // Reuse the error function as the value for error_expression
   error_expression_.reset(
       new Bexpression(error_function_->function()));
+
+  // Error statement
+  llvm::Instruction *ei = new llvm::UnreachableInst(context_);
+  error_statement_.reset(Bstatement::stmtFromInst(ei));
 
   // Reuse the error function as the value for error_variable
   error_variable_.reset(new Bvariable(error_type(), Location(), "",
@@ -895,7 +959,7 @@ wideint_t checked_convert_mpz_to_int(mpz_t value)
 Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
                                                        mpz_t mpz_val) {
   if (btype == error_type_)
-    return error_expression_.get();
+    return error_expression();
   assert(llvm::isa<llvm::IntegerType>(btype->type()));
 
   // Force mpz_val into either into uint64_t or int64_t depending on
@@ -922,7 +986,7 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
 
 Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
   if (btype == error_type_)
-    return error_expression_.get();
+    return error_expression();
 
   // Force the mpfr value into float, double, or APFloat as appropriate.
   //
@@ -945,7 +1009,7 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
     assert("not yet implemented" && false);
     return nullptr;
   } else {
-    return error_expression_.get();
+    return error_expression();
   }
 }
 
@@ -1001,8 +1065,11 @@ Bexpression *Llvm_backend::complex_expression(Bexpression *breal,
 
 Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
                                               Location location) {
-  assert(false && "Llvm_backend::convert_expression not yet impl");
-  return nullptr;
+  if (type == error_type() || expr == error_expression())
+    return error_expression();
+  // no real implementation yet
+  assert(type->type() == expr->value()->getType());
+  return expr;
 }
 
 // Get the address of a function.
@@ -1198,8 +1265,7 @@ Bexpression *Llvm_backend::stack_allocation_expression(int64_t size,
 }
 
 Bstatement *Llvm_backend::error_statement() {
-  assert(false && "Llvm_backend::error_statement not yet impl");
-  return nullptr;
+  return error_statement_.get();
 }
 
 // An expression as a statement.
@@ -1212,8 +1278,22 @@ Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
 // Variable initialization.
 
 Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
-  assert(false && "Llvm_backend::init_statement not yet impl");
-  return nullptr;
+  if (init == error_expression())
+    return error_statement();
+  return do_assignment(var->value(), init, Location());
+}
+
+Bstatement *Llvm_backend::do_assignment(llvm::Value *lval,
+                                        Bexpression *rhs,
+                                        Location location)
+{
+  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(lval->getType());
+  assert(pt);
+  llvm::Value *rval = rhs->value();
+  assert(rval->getType() == pt->getElementType());
+  // FIXME: alignment?
+  llvm::Instruction *si = new llvm::StoreInst(rval, lval);
+  return Bstatement::stmtFromInst(si);
 }
 
 // Assignment.
@@ -1221,18 +1301,27 @@ Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
 Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
                                                Bexpression *rhs,
                                                Location location) {
-  assert(false && "Llvm_backend::assignment_statement not yet impl");
-  return nullptr;
+  if (lhs == error_expression() || rhs == error_expression())
+    return error_statement();
+  return do_assignment(lhs->value(), rhs, location);
 }
-
-// Return.
 
 Bstatement *
 Llvm_backend::return_statement(Bfunction *bfunction,
                                const std::vector<Bexpression *> &vals,
                                Location location) {
-  assert(false && "Llvm_backend::return_statement not yet impl");
-  return nullptr;
+  if (bfunction == error_function())
+    return error_statement();
+  for (auto v : vals)
+    if (v == error_expression())
+      return error_statement();
+
+  // Temporary
+  assert(vals.size() == 1);
+
+  llvm::Value *val = vals[0]->value();
+  llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, val);
+  return Bstatement::stmtFromInst(ri);
 }
 
 // Create a statement that attempts to execute BSTAT and calls EXCEPT_STMT if an
@@ -1271,42 +1360,63 @@ Bstatement *Llvm_backend::switch_statement(
 // Pair of statements.
 
 Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
-  assert(false && "Llvm_backend::compound_statement not yet impl");
-  return nullptr;
+  CompoundStatement *st = new CompoundStatement();
+  std::vector<Bstatement *> &stlist = st->stlist();
+  stlist.push_back(s1);
+  stlist.push_back(s2);
+  return st;
 }
 
 // List of statements.
 
 Bstatement *
 Llvm_backend::statement_list(const std::vector<Bstatement *> &statements) {
-  assert(false && "Llvm_backend::statement_list not yet impl");
-  return nullptr;
+  CompoundStatement *st = new CompoundStatement();
+  std::vector<Bstatement *> &stlist = st->stlist();
+  for (auto st : statements)
+    stlist.push_back(st);
+  return st;
 }
 
-// Make a block.  For some reason gcc uses a dual structure for
-// blocks: BLOCK tree nodes and BIND_EXPR tree nodes.  Since the
-// BIND_EXPR node points to the BLOCK node, we store the BIND_EXPR in
-// the Bblock.
-
-Bblock *Llvm_backend::block(Bfunction *function, Bblock *enclosing,
+Bblock *Llvm_backend::block(Bfunction *function,
+                            Bblock *enclosing,
                             const std::vector<Bvariable *> &vars,
                             Location start_location, Location) {
-  assert(false && "Llvm_backend::block not yet impl");
-  return nullptr;
+  assert(function);
+
+  // FIXME: record debug location
+
+  // Create new Bblock
+  Bblock *bb = new Bblock();
+  function->addBlock(bb);
+
+  // Mark start of lifetime for each variable
+  // for (auto var : vars) {
+    // Not yet implemented
+  // }
+
+  return bb;
 }
 
 // Add statements to a block.
 
 void Llvm_backend::block_add_statements(
     Bblock *bblock, const std::vector<Bstatement *> &statements) {
-  assert(false && "Llvm_backend::block_add_statements not yet impl");
+  for (auto st : statements)
+    if (st == error_statement())
+      return;
+  assert(bblock);
+  for (auto st : statements)
+    bblock->stlist().push_back(st);
 }
 
 // Return a block as a statement.
 
 Bstatement *Llvm_backend::block_statement(Bblock *bblock) {
-  assert(false && "Llvm_backend::block_statement not yet impl");
-  return nullptr;
+
+  // class Bblock inherits from CompoundStatement
+  return bblock;
+
 }
 
 // Make a global variable.
@@ -1604,16 +1714,86 @@ Bstatement *Llvm_backend::function_defer_statement(Bfunction *function,
 
 bool Llvm_backend::function_set_parameters(
     Bfunction *function, const std::vector<Bvariable *> &param_vars) {
-  assert(false && "Llvm_backend::function_set_parameters not yet impl");
-  return false;
+  // At the moment this is a no-op.
+  return true;
+}
+
+class GenBlocks {
+ public:
+  GenBlocks(Bfunction *function, llvm::BasicBlock *entry)
+      : function_(function)
+      , block_(entry)
+  { }
+
+  void walk(Bstatement *stmt) {
+    switch(stmt->flavor()) {
+      case Bstatement::ST_Compound: {
+        CompoundStatement *cst = stmt->castToCompoundStatement();
+        for (auto st : cst->stlist())
+          walk(st);
+        break;
+      }
+      case Bstatement::ST_InstList: {
+        InstListStatement *ilst = stmt->castToInstListStatement();
+        for (auto inst : ilst->instructions())
+          block_->getInstList().push_back(inst);
+        break;
+      }
+      default:
+        assert(false && "not yet handled");
+    }
+  }
+  Bfunction *function() { return function_; }
+
+ private:
+  Bfunction *function_;
+  llvm::BasicBlock *block_;
+};
+
+llvm::BasicBlock *Llvm_backend::genEntryBlock(Bfunction *bfunction)
+{
+  llvm::Function *func = bfunction->function();
+  llvm::BasicBlock *entry = llvm::BasicBlock::Create(context_, "entry", func);
+
+  // Spill parameters
+  unsigned nParms = func->getFunctionType()->getNumParams();
+  for (unsigned idx = 0; idx < nParms; ++idx) {
+    llvm::Argument *arg = bfunction->getNthArg(idx);
+    llvm::Instruction *inst = bfunction->argValue(arg);
+    entry->getInstList().push_back(inst);
+  }
+
+  // Append allocas for local variables
+  for (auto aa : bfunction->allocas())
+    entry->getInstList().push_back(aa);
+  bfunction->allocas().clear();
+
+  return entry;
 }
 
 // Set the function body for FUNCTION using the code in CODE_BLOCK.
 
 bool Llvm_backend::function_set_body(Bfunction *function,
                                      Bstatement *code_stmt) {
-  assert(false && "Llvm_backend::function_set_body not yet impl");
-  return false;
+
+  // debugging
+  std::cerr << "Statement tree dump:\n";
+  code_stmt->dump();
+
+  // Create and populate entry block
+  llvm::BasicBlock *entryBlock = genEntryBlock(function);
+
+  // Walk the code statements
+  GenBlocks gb(function, entryBlock);
+  gb.walk(code_stmt);
+
+  // debugging
+  function->function()->dump();
+
+  // At this point we can delete the Bstatement tree, we're done with it
+  Bstatement::destroy(code_stmt);
+
+  return true;
 }
 
 // Write the definitions for all TYPE_DECLS, CONSTANT_DECLS,
@@ -1625,7 +1805,7 @@ void Llvm_backend::write_global_definitions(
     const std::vector<Bexpression *> &constant_decls,
     const std::vector<Bfunction *> &function_decls,
     const std::vector<Bvariable *> &variable_decls) {
-  assert(false && "Llvm_backend::write_global_definitions not yet impl");
+  std::cerr << "Llvm_backend::write_global_definitions not yet implemented.\n";
 }
 
 // Convert an identifier for use in an error message.

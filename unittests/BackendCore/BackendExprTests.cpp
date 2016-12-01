@@ -140,10 +140,31 @@ TEST(BackendExprTests, MakeZeroValueExpr) {
   Btype *bi32t = be->integer_type(false, 32);
   Btype *s2t = mkTwoFieldStruct(be.get(), pbt, bi32t);
   Bexpression *bszero = be->zero_expression(s2t);
-  ASSERT_TRUE(bpzero != nullptr);
+  ASSERT_TRUE(bszero != nullptr);
 
   // Error handling
   EXPECT_EQ(be->zero_expression(be->error_type()), be->error_expression());
+}
+
+TEST(BackendExprTests, TestConversionExpressions) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  // We need way more test cases than this...
+  // ... however at the moment only trivial converts are supported
+
+  Btype *bt = be->bool_type();
+  ASSERT_TRUE(bt != nullptr);
+  Bexpression *bzero = be->zero_expression(bt);
+  Bexpression *bcon = be->convert_expression(bt, bzero, Location());
+  ASSERT_TRUE(bcon != nullptr);
+  EXPECT_EQ(bzero->value(), bcon->value());
+
+  // Error handling
+  Bexpression *econ = be->convert_expression(be->error_type(),
+                                              bzero, Location());
+  EXPECT_EQ(econ, be->error_expression());
 }
 
 }
