@@ -283,7 +283,8 @@ class StmtCleanup {
   StmtCleanup(Backend *be) : be_(be) { }
   ~StmtCleanup() {
     for (auto s : statements_)
-      del(s);
+      if (s != be_->error_statement())
+        Bstatement::destroy(s, Bstatement::DelBoth);
   }
 
   void add(Bstatement *s) { statements_.push_back(s); }

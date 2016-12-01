@@ -70,26 +70,32 @@ void Bstatement::dump(unsigned ilevel)
   }
 }
 
-void Bstatement::destroy(Bstatement *stmt)
+void Bstatement::destroy(Bstatement *stmt, WhichDel which)
 {
   assert(stmt);
   switch(stmt->flavor()) {
     case ST_Compound: {
       CompoundStatement *cst = stmt->castToCompoundStatement();
       for (auto st : cst->stlist())
-        destroy(st);
+        destroy(st, which);
       break;
     }
     case ST_Goto:
     case ST_Label:
     case ST_InstList:
-      break; // no extra work needed here
+      if (which != DelWrappers) {
+        InstListStatement *ilst = stmt->castToInstListStatement();
+        for (auto inst : ilst->instructions())
+          delete inst;
+      }
+      break;
     case ST_IfPlaceholder:
     case ST_SwitchPlaceholder:
       assert(false && "not yet implemented");
       break;
   }
-  delete stmt;
+  if (which != DelInstructions)
+    delete stmt;
 }
 
 Bfunction::Bfunction(llvm::Function *f)
@@ -202,6 +208,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 }
 
 Llvm_backend::~Llvm_backend() {
+  Bstatement::destroy(error_statement_.get(), Bstatement::DelInstructions);
   for (auto pht : placeholders_)
     delete pht;
   for (auto pht : updated_placeholders_)
@@ -1791,7 +1798,7 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   function->function()->dump();
 
   // At this point we can delete the Bstatement tree, we're done with it
-  Bstatement::destroy(code_stmt);
+  Bstatement::destroy(code_stmt, Bstatement::DelWrappers);
 
   return true;
 }

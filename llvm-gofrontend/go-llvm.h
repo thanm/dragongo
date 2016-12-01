@@ -154,10 +154,16 @@ class Bstatement {
   // Helper to creat a new Bstatement from an inst
   static Bstatement *stmtFromInst(llvm::Instruction *inst);
 
-  // Delete the tree of Bstatements rooted at stmt. This
-  // leaves any instructions contained intact, just free's
-  // the Bstatements/Bexpressions used to hold them.
-  static void destroy(Bstatement *subtree);
+  enum WhichDel {
+    DelInstructions, // delete only instructions
+    DelWrappers,     // delete only wrappers
+    DelBoth          // delete wrappers and instructions
+  };
+
+  // Perform deletions on the tree of Bstatements rooted at stmt.
+  // Delete wrappers, instructions, or both (depending on setting of
+  // 'which')
+  static void destroy(Bstatement *subtree, WhichDel which = DelWrappers);
 
   // debugging
   void dump(unsigned ident = 0);
