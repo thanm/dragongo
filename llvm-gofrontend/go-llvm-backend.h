@@ -14,6 +14,8 @@
 #ifndef GO_LLVM_BACKEND_H
 #define GO_LLVM_BACKEND_H
 
+#include "go-llvm.h"
+
 #include "llvm/IR/LLVMContext.h"
 
 class Backend;

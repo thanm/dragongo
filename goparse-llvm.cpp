@@ -14,8 +14,9 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Triple.h"
-#include "llvm/IR/LLVMContext.h"
 #include "llvm/CodeGen/CommandFlags.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
@@ -24,10 +25,11 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Signals.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
+
 #include <algorithm>
 #include <cstring>
 #include <string>
@@ -35,7 +37,7 @@
 
 #include "go-c.h"
 #include "go-llvm-linemap.h"
-#include "go-llvm-backend.h"
+#include "go-llvm.h"
 
 #include "mpfr.h"
 
@@ -55,6 +57,11 @@ IncludeDirs("I", cl::desc("<include dirs>"));
 static cl::opt<bool>
 NoBackend("nobackend",
           cl::desc("Stub out back end invocation."),
+          cl::init(false));
+
+static cl::opt<bool>
+NoVerify("noverify",
+          cl::desc("Stub out module verifier invocation."),
           cl::init(false));
 
 static cl::opt<bool>
@@ -99,9 +106,9 @@ EscapeDebugLevel("fgo-debug-escape",
                           "-fgo-optimize-allocs."),
                  cl::init(0));
 
-static void init_gogo(TargetMachine *Target,
-                      llvm::LLVMContext &Context,
-                      Linemap *linemap)
+static Llvm_backend *init_gogo(TargetMachine *Target,
+                               llvm::LLVMContext &Context,
+                               Linemap *linemap)
 {
   // does the comment below still apply?
 #if 0
@@ -124,13 +131,16 @@ static void init_gogo(TargetMachine *Target,
   args.compiling_runtime = false; // FIXME: not yet supported
   args.debug_escape_level = EscapeDebugLevel;
   args.linemap = linemap;
-  args.backend = go_get_backend(Context);
+  Llvm_backend *backend = new Llvm_backend(Context);
+  args.backend = backend;
   go_create_gogo (&args);
 
   /* The default precision for floating point numbers.  This is used
      for floating point constants with abstract type.  This may
      eventually be controllable by a command line option.  */
   mpfr_set_default_prec (256);
+
+  return backend;
 }
 
 int main(int argc, char **argv)
@@ -173,7 +183,7 @@ int main(int argc, char **argv)
 
   std::unique_ptr<Linemap> linemap(go_get_linemap());
 
-  init_gogo(Target.get(), Context, linemap.get());
+  Llvm_backend *backend = init_gogo(Target.get(), Context, linemap.get());
 
   // Include dirs
   if (! IncludeDirs.empty()) {
@@ -195,6 +205,10 @@ int main(int argc, char **argv)
   go_parse_input_files(fns, nfiles, false, true);
   if (! NoBackend)
     go_write_globals();
+  if (! NoVerify) {
+    bool broken = llvm::verifyModule(backend->module(), &llvm::dbgs());
+    assert(!broken && "Module not well-formed.");
+  }
 
   return 0;
 }

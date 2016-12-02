@@ -56,19 +56,25 @@ class Binstructions {
  public:
   Binstructions() { }
   explicit Binstructions(const std::vector<llvm::Instruction*> instructions)
-      : instructions_(new std::vector<llvm::Instruction*>(instructions)) { }
+      : instructions_(instructions) { }
 
-  std::vector<llvm::Instruction*> &instructions() {
-    return *instructions_.get();
-  }
+  std::vector<llvm::Instruction*> &instructions() { return instructions_; }
   void appendInstruction(llvm::Instruction* inst) {
-    if (! instructions_.get())
-      instructions_.reset(new std::vector<llvm::Instruction*>());
-    instructions_->push_back(inst);
+    instructions_.push_back(inst);
   }
 
  private:
-  std::unique_ptr< std::vector<llvm::Instruction*> > instructions_;
+  std::vector<llvm::Instruction*> instructions_;
+};
+
+// Use when deleting a Bstatement or Bexpression subtree. Controls
+// whether to delete just the Bstatement/Bexpression objects, just
+// the LLVM instructions they contain, or both.
+//
+enum WhichDel {
+  DelInstructions, // delete only instructions
+  DelWrappers,     // delete only wrappers
+  DelBoth          // delete wrappers and instructions
 };
 
 // Class Bexpression, which is mostly a wrapper around llvm::Value,
@@ -90,6 +96,14 @@ class Bexpression : public Binstructions {
   { }
 
   llvm::Value *value() const { return value_; }
+
+  // Delete some or all or this Bexpression. Deallocates just the
+  // Bexpression, its contained instructions, or both (depending
+  // on setting of 'which')
+  static void destroy(Bexpression *expr, WhichDel which = DelWrappers);
+
+  // debugging
+  void dump(unsigned ilevel);
 
  private:
   Bexpression() : value_(NULL) {}
@@ -139,45 +153,41 @@ class Bstatement {
     ST_Label
   };
 
-  Bstatement(StFlavor flavor) : flavor_(flavor) { }
+  Bstatement(StFlavor flavor, Location location)
+      : flavor_(flavor)
+      , location_(location) { }
   virtual ~Bstatement() { }
   StFlavor flavor() const { return flavor_; }
+  Location location() const { return location_; }
 
   inline CompoundStatement *castToCompoundStatement();
   inline InstListStatement *castToInstListStatement();
   inline IfPHStatement *castToIfPHStatement();
   inline SwitchPHStatement *castToSwitchPHStatement();
-  // inline VarsStatement *castToVarsStatement();
   inline GotoStatement *castToGotoStatement();
   inline LabelStatement *castToLabelStatement();
 
   // Helper to creat a new Bstatement from an inst
   static Bstatement *stmtFromInst(llvm::Instruction *inst);
 
-  enum WhichDel {
-    DelInstructions, // delete only instructions
-    DelWrappers,     // delete only wrappers
-    DelBoth          // delete wrappers and instructions
-  };
-
   // Perform deletions on the tree of Bstatements rooted at stmt.
-  // Delete wrappers, instructions, or both (depending on setting of
-  // 'which')
+  // Delete Bstatements/Bexpressions, instructions, or both (depending
+  // on setting of 'which')
   static void destroy(Bstatement *subtree, WhichDel which = DelWrappers);
 
   // debugging
   void dump(unsigned ident = 0);
 
  private:
-  void indent(unsigned ilevel);
   StFlavor flavor_;
+  Location location_;
 };
 
 // Compound statement is simply a list of other statements.
 
 class CompoundStatement : public Bstatement {
  public:
-  CompoundStatement() : Bstatement(ST_Compound) { }
+  CompoundStatement() : Bstatement(ST_Compound, Location()) { }
   std::vector<Bstatement *> &stlist() { return stlist_; }
 
  private:
@@ -194,9 +204,9 @@ inline CompoundStatement *Bstatement::castToCompoundStatement()
 
 class InstListStatement : public Bstatement, public Binstructions {
  public:
-  InstListStatement() : Bstatement(ST_InstList) { }
+  InstListStatement() : Bstatement(ST_InstList, Location()) { }
   InstListStatement(llvm::Instruction *inst)
-      : Bstatement(ST_InstList)
+      : Bstatement(ST_InstList, Location())
   { appendInstruction(inst); }
 };
 
@@ -210,11 +220,12 @@ inline InstListStatement *Bstatement::castToInstListStatement()
 
 class IfPHStatement : public Bstatement {
  public:
-  IfPHStatement(Bexpression *cond, Bstatement *ifTrue, Bstatement *ifFalse)
-      : Bstatement(ST_IfPlaceholder)
+  IfPHStatement(Bexpression *cond, Bstatement *ifTrue, Bstatement *ifFalse,
+                Location location)
+      : Bstatement(ST_IfPlaceholder, location)
       , cond_(cond)
       , iftrue_(ifTrue)
-      , iffalse_(ifTrue)
+      , iffalse_(ifFalse)
   { }
   Bexpression *cond() { return cond_; }
   Bstatement *trueStmt() { return iftrue_; }
@@ -238,8 +249,9 @@ class SwitchPHStatement : public Bstatement {
  public:
   SwitchPHStatement(Bexpression *value,
                     const std::vector<std::vector<Bexpression*> >& cases,
-                    const std::vector<Bstatement*>& statements)
-      : Bstatement(ST_SwitchPlaceholder)
+                    const std::vector<Bstatement*>& statements,
+                    Location location)
+      : Bstatement(ST_SwitchPlaceholder, location)
       , value_(value)
       , cases_(cases)
       , statements_(statements)
@@ -260,39 +272,28 @@ inline SwitchPHStatement *Bstatement::castToSwitchPHStatement()
           static_cast<SwitchPHStatement*>(this) : nullptr);
 }
 
-#if 0
-// This corresponds to a list of variables whose lifetime
-// begins at this statement.
-//
-// NB: need to think about insertion of llvm.lifetime.end instrinsics--
-// which means that maybe this should be split into beginvars/endvars?
-
-class VarsStatement : public Bstatement {
- public:
-  VarsStatement(const std::vector<Bvariable*>& vars)
-      : Bstatement(ST_Variables)
-      , vars_(vars) { }
- private:
-  std::vector<Bvariable*> vars_;
-};
-
-inline VarsStatement *Bstatement::castToVarsStatement()
-{
-  return (flavor_ == ST_Variables ?
-          static_cast<VarsStatement*>(this) : nullptr);
-}
-#endif
-
 // Opaque labelID handle.
 typedef unsigned LabelId;
+
+class Blabel  {
+ public:
+  Blabel(const Bfunction *function, LabelId lab)
+      : function_(const_cast<Bfunction*>(function))
+      , lab_(lab) { }
+  LabelId label() const { return lab_; }
+  Bfunction *function() { return function_; }
+ private:
+  Bfunction *function_;
+  LabelId lab_;
+};
 
 // A goto statement, representing an unconditional jump to
 // some other labeled statement.
 
 class GotoStatement : public Bstatement {
  public:
-  GotoStatement(LabelId label)
-      : Bstatement(ST_Goto)
+  GotoStatement(LabelId label, Location location)
+      : Bstatement(ST_Goto, location)
       , label_(label) { }
   LabelId targetLabel() const { return label_; }
  private:
@@ -311,7 +312,7 @@ inline GotoStatement *Bstatement::castToGotoStatement()
 class LabelStatement : public Bstatement {
  public:
   LabelStatement(LabelId label)
-      : Bstatement(ST_Label)
+      : Bstatement(ST_Label, Location())
       , label_(label) { }
   LabelId targetLabel() const { return label_; }
  private:
@@ -364,15 +365,28 @@ class Bfunction
   // Number of parameter vars registered so far
   unsigned paramsCreated() { return argtoval_.size(); }
 
-  // Alloca instructions created to instantiate local and temp vars
-  std::vector<llvm::Instruction*> &allocas() { return allocas_; }
+  // Create a new label
+  Blabel *newLabel();
+
+  // Create a new label definition statement
+  Bstatement *newLabelDefStatement(Blabel *label);
+
+  // Create a new goto statement
+  Bstatement *newGotoStatement(Blabel *label, Location location);
+
+  // Create code to spill function arguments to entry block, insert
+  // allocas for local variables.
+  void genProlog(llvm::BasicBlock *entry);
 
  private:
   std::vector<llvm::Instruction*> allocas_;
   std::vector<llvm::Argument *> arguments_;
   std::vector<Bblock *> blocks_;
   std::unordered_map<llvm::Argument*, llvm::Instruction*> argtoval_;
+  std::vector<Bstatement*> labelmap_;
+  std::vector<Blabel*> labels_;
   llvm::Function *function_;
+  unsigned labelcount_;
   SplitStackDisposition splitstack_;
 };
 
@@ -666,6 +680,8 @@ public:
                                 const std::vector<Bfunction *> &,
                                 const std::vector<Bvariable *> &);
 
+  llvm::Module &module() { return *module_.get(); }
+
 private:
   // Make an anonymous Btype from an llvm::Type
   Btype *make_anon_type(llvm::Type *lt);
@@ -816,14 +832,17 @@ private:
   // Error statement
   std::unique_ptr<Bstatement> error_statement_;
 
+  // Error variable
+  std::unique_ptr<Bvariable> error_variable_;
+
   // Map from LLVM values to Bexpression.
   std::unordered_map<llvm::Value *, Bexpression *> value_exprmap_;
 
   // Map from LLVM values to Bvariable.
   std::unordered_map<llvm::Value *, Bvariable *> value_varmap_;
 
-  // Error variable
-  std::unique_ptr<Bvariable> error_variable_;
+  // Label management
+
 
   // Currently we don't do any commoning of Bfunction objects created
   // by the frontend, so here we keep track of all returned Bfunctions

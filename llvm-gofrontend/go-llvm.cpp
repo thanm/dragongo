@@ -31,15 +31,42 @@
 
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
-Bstatement *Bstatement::stmtFromInst(llvm::Instruction *inst)
+void Bexpression::destroy(Bexpression *expr, WhichDel which)
 {
-  return new InstListStatement(inst);
+  if (which != DelWrappers)
+    for (auto inst : expr->instructions())
+      delete inst;
+  if (which != DelInstructions)
+    delete expr;
 }
 
-void Bstatement::indent(unsigned ilevel)
+static void indent(unsigned ilevel)
 {
   for (unsigned i = 0; i < ilevel; ++i)
     std::cerr << " ";
+}
+
+void Bexpression::dump(unsigned ilevel)
+{
+  indent(ilevel);
+  bool hitValue = false;
+  for (auto inst : instructions()) {
+    indent(ilevel);
+    if (inst == value()) {
+      std::cerr << "*";
+      hitValue = true;
+    }
+    inst->dump();
+  }
+  if (! hitValue) {
+    indent(ilevel);
+    value()->dump();
+  }
+}
+
+Bstatement *Bstatement::stmtFromInst(llvm::Instruction *inst)
+{
+  return new InstListStatement(inst);
 }
 
 void Bstatement::dump(unsigned ilevel)
@@ -61,7 +88,22 @@ void Bstatement::dump(unsigned ilevel)
       }
       break;
     }
-    case ST_IfPlaceholder:
+    case ST_IfPlaceholder: {
+      IfPHStatement *ifst = castToIfPHStatement();
+      indent(ilevel); std::cerr << "if:\n";
+      indent(ilevel+2); std::cerr << "cond:\n";
+      ifst->cond()->dump(ilevel+2);
+      if (ifst->trueStmt()) {
+        indent(ilevel+2); std::cerr << "then:\n";
+        ifst->trueStmt()->dump(ilevel+2);
+      }
+      if (ifst->falseStmt()) {
+        indent(ilevel+2); std::cerr << "else:\n";
+        ifst->falseStmt()->dump(ilevel+2);
+      }
+      break;
+    }
+
     case ST_SwitchPlaceholder:
     case ST_Goto:
     case ST_Label:
@@ -80,8 +122,7 @@ void Bstatement::destroy(Bstatement *stmt, WhichDel which)
         destroy(st, which);
       break;
     }
-    case ST_Goto:
-    case ST_Label:
+
     case ST_InstList:
       if (which != DelWrappers) {
         InstListStatement *ilst = stmt->castToInstListStatement();
@@ -89,7 +130,22 @@ void Bstatement::destroy(Bstatement *stmt, WhichDel which)
           delete inst;
       }
       break;
-    case ST_IfPlaceholder:
+    case ST_IfPlaceholder: {
+      IfPHStatement *ifst = stmt->castToIfPHStatement();
+      if (which != DelWrappers)
+        Bexpression::destroy(ifst->cond(), which);
+      if (ifst->trueStmt())
+        Bstatement::destroy(ifst->trueStmt(), which);
+      if (ifst->falseStmt())
+        Bstatement::destroy(ifst->falseStmt(), which);
+      break;
+    }
+    case ST_Goto:
+    case ST_Label: {
+      // nothing to do here at the moment
+      break;
+    }
+
     case ST_SwitchPlaceholder:
       assert(false && "not yet implemented");
       break;
@@ -100,6 +156,7 @@ void Bstatement::destroy(Bstatement *stmt, WhichDel which)
 
 Bfunction::Bfunction(llvm::Function *f)
     : function_(f)
+    , labelcount_(0)
     , splitstack_(YesSplit)
 {
 }
@@ -125,6 +182,10 @@ llvm::Argument *Bfunction::getNthArg(unsigned argIdx)
 
 llvm::Instruction *Bfunction::argValue(llvm::Argument *arg)
 {
+  auto it = argtoval_.find(arg);
+  if (it != argtoval_.end())
+    return it->second;
+
   // Create alloca save area for argument, record that and return
   // it. Store into alloca will be generated later.
   std::string aname(arg->getName());
@@ -134,6 +195,45 @@ llvm::Instruction *Bfunction::argValue(llvm::Argument *arg)
   assert(argtoval_.find(arg) == argtoval_.end());
   argtoval_[arg] = inst;
   return inst;
+}
+
+void Bfunction::genProlog(llvm::BasicBlock *entry)
+{
+  llvm::Function *func = function();
+
+  unsigned nParms = func->getFunctionType()->getNumParams();
+  for (unsigned idx = 0; idx < nParms; ++idx) {
+    llvm::Argument *arg = getNthArg(idx);
+    llvm::Instruction *inst = argValue(arg);
+    entry->getInstList().push_back(inst);
+  }
+  argtoval_.clear();
+
+  // Append allocas for local variables
+  for (auto aa : allocas_)
+    entry->getInstList().push_back(aa);
+  allocas_.clear();
+}
+
+Blabel *Bfunction::newLabel()
+{
+  Blabel *lb = new Blabel(this, labelcount_++);
+  labelmap_.push_back(nullptr);
+  return lb;
+}
+
+Bstatement *Bfunction::newLabelDefStatement(Blabel *label)
+{
+  LabelStatement *st = new LabelStatement(label->label());
+  assert(labelmap_[label->label()] == nullptr);
+  labelmap_[label->label()] = st;
+  return st;
+}
+
+Bstatement *Bfunction::newGotoStatement(Blabel *label, Location location)
+{
+  GotoStatement *st = new GotoStatement(label->label(), location);
+  return st;
 }
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
@@ -188,7 +288,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   const bool isVarargs = true;
   llvm::FunctionType *eft = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context_), elems, isVarargs);
-  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::PrivateLinkage;
+  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
   error_function_.reset(
       new Bfunction(llvm::Function::Create(eft, plinkage, "", module_.get())));
 
@@ -208,7 +308,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 }
 
 Llvm_backend::~Llvm_backend() {
-  Bstatement::destroy(error_statement_.get(), Bstatement::DelInstructions);
+  Bstatement::destroy(error_statement_.get(), DelInstructions);
   for (auto pht : placeholders_)
     delete pht;
   for (auto pht : updated_placeholders_)
@@ -645,7 +745,7 @@ void Llvm_backend::define_libcall_builtin(const char *name,
   llvm::FunctionType *ft =
       llvm::FunctionType::get(resultType, ptypes, isVarargs);
   llvm::LibFunc::Func lf = static_cast<llvm::LibFunc::Func>(libfunc);
-  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::PrivateLinkage;
+  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
   llvm::Function *fcn = llvm::Function::Create(ft, plinkage,
                                                name, module_.get());
 
@@ -1350,8 +1450,12 @@ Bstatement *Llvm_backend::exception_handler_statement(Bstatement *bstat,
 Bstatement *Llvm_backend::if_statement(Bexpression *condition,
                                        Bblock *then_block, Bblock *else_block,
                                        Location location) {
-  assert(false && "Llvm_backend::if_statement not yet impl");
-  return nullptr;
+  if (condition == error_expression())
+    return error_statement();
+  assert(then_block);
+  IfPHStatement *ifst =
+      new IfPHStatement(condition, then_block, else_block, location);
+  return ifst;
 }
 
 // Switch.
@@ -1635,31 +1739,30 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
 
 // Make a label.
 
-Blabel *Llvm_backend::label(Bfunction *function, const std::string &name,
+Blabel *Llvm_backend::label(Bfunction *function,
+                            const std::string &name,
                             Location location) {
-  assert(false && "Llvm_backend::label not yet impl");
-  return nullptr;
+  return function->newLabel();
 }
 
 // Make a statement which defines a label.
 
 Bstatement *Llvm_backend::label_definition_statement(Blabel *label) {
-  assert(false && "Llvm_backend::label_definition_statement not yet impl");
-  return nullptr;
+  Bfunction *function = label->function();
+  return function->newLabelDefStatement(label);
 }
 
 // Make a goto statement.
 
 Bstatement *Llvm_backend::goto_statement(Blabel *label, Location location) {
-  assert(false && "Llvm_backend::goto_statement not yet impl");
-  return nullptr;
+  Bfunction *function = label->function();
+  return function->newGotoStatement(label, location);
 }
 
 // Get the address of a label.
 
 Bexpression *Llvm_backend::label_address(Blabel *label, Location location) {
-  assert(false && "Llvm_backend::label_address not yet impl");
-  return nullptr;
+  assert(false);
 }
 
 Bfunction *Llvm_backend::error_function() { return error_function_.get(); }
@@ -1727,53 +1830,109 @@ bool Llvm_backend::function_set_parameters(
 
 class GenBlocks {
  public:
-  GenBlocks(Bfunction *function, llvm::BasicBlock *entry)
-      : function_(function)
-      , block_(entry)
+  GenBlocks(llvm::LLVMContext &context,
+            Bfunction *function)
+      : context_(context)
+      , function_(function)
+      , ifcount_(0)
   { }
 
-  void walk(Bstatement *stmt) {
-    switch(stmt->flavor()) {
-      case Bstatement::ST_Compound: {
-        CompoundStatement *cst = stmt->castToCompoundStatement();
-        for (auto st : cst->stlist())
-          walk(st);
-        break;
-      }
-      case Bstatement::ST_InstList: {
-        InstListStatement *ilst = stmt->castToInstListStatement();
-        for (auto inst : ilst->instructions())
-          block_->getInstList().push_back(inst);
-        break;
-      }
-      default:
-        assert(false && "not yet handled");
-    }
-  }
+  llvm::BasicBlock *walk(Bstatement *stmt, llvm::BasicBlock *curblock);
   Bfunction *function() { return function_; }
+  llvm::BasicBlock *genIf(IfPHStatement *ifst, llvm::BasicBlock *curblock);
 
  private:
+
+  std::string blockname(const char *tag, unsigned count) {
+    std::stringstream ss;
+    ss << tag << "." << count;
+    return ss.str();
+  }
+
+ private:
+  llvm::LLVMContext &context_;
   Bfunction *function_;
-  llvm::BasicBlock *block_;
+  std::vector<llvm::BasicBlock *> fallthrough_;
+  unsigned ifcount_;
 };
+
+llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
+                                   llvm::BasicBlock *curblock)
+{
+  ifcount_++;
+
+  // Append the condition instructions to the current block
+  for (auto inst : ifst->cond()->instructions())
+    curblock->getInstList().push_back(inst);
+
+  // Create true block
+  std::string tname = blockname("then", ifcount_);
+  llvm::Function *func = function()->function();
+  llvm::BasicBlock *tblock = llvm::BasicBlock::Create(context_, tname, func);
+
+  // Push fallthrough block
+  std::string ftname = blockname("fallthrough", ifcount_);
+  llvm::BasicBlock *ft = llvm::BasicBlock::Create(context_, ftname, func);
+  fallthrough_.push_back(ft);
+
+  // Create false block if present
+  llvm::BasicBlock *fblock = ft;
+  if (ifst->falseStmt()) {
+    std::string fname = blockname("else", ifcount_);
+    fblock = llvm::BasicBlock::Create(context_, fname, func);
+  }
+
+  // Insert conditional branch into current block
+  llvm::Value *cval = ifst->cond()->value();
+  llvm::BranchInst::Create(tblock, fblock, cval, curblock);
+
+  // Visit true block
+  llvm::BasicBlock *tsucc = walk(ifst->trueStmt(), tblock);
+  llvm::BranchInst::Create(ft, tsucc);
+
+  // Walk false block if present
+  if (ifst->falseStmt()) {
+    llvm::BasicBlock *fsucc = fsucc = walk(ifst->falseStmt(), fblock);
+    llvm::BranchInst::Create(ft, fsucc);
+  }
+
+  return ft;
+}
+
+llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
+                                  llvm::BasicBlock *curblock)
+{
+  switch(stmt->flavor()) {
+    case Bstatement::ST_Compound: {
+      CompoundStatement *cst = stmt->castToCompoundStatement();
+      for (auto st : cst->stlist())
+        curblock = walk(st, curblock);
+      break;
+    }
+    case Bstatement::ST_InstList: {
+      InstListStatement *ilst = stmt->castToInstListStatement();
+      for (auto inst : ilst->instructions())
+        curblock->getInstList().push_back(inst);
+      break;
+    }
+    case Bstatement::ST_IfPlaceholder: {
+      IfPHStatement *ifst = stmt->castToIfPHStatement();
+      curblock = genIf(ifst, curblock);
+      break;
+    }
+    default:
+        assert(false && "not yet handled");
+  }
+  return curblock;
+}
 
 llvm::BasicBlock *Llvm_backend::genEntryBlock(Bfunction *bfunction)
 {
   llvm::Function *func = bfunction->function();
   llvm::BasicBlock *entry = llvm::BasicBlock::Create(context_, "entry", func);
 
-  // Spill parameters
-  unsigned nParms = func->getFunctionType()->getNumParams();
-  for (unsigned idx = 0; idx < nParms; ++idx) {
-    llvm::Argument *arg = bfunction->getNthArg(idx);
-    llvm::Instruction *inst = bfunction->argValue(arg);
-    entry->getInstList().push_back(inst);
-  }
-
-  // Append allocas for local variables
-  for (auto aa : bfunction->allocas())
-    entry->getInstList().push_back(aa);
-  bfunction->allocas().clear();
+  // Spill parameters/arguments, insert allocas for local vars
+  bfunction->genProlog(entry);
 
   return entry;
 }
@@ -1791,14 +1950,14 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   llvm::BasicBlock *entryBlock = genEntryBlock(function);
 
   // Walk the code statements
-  GenBlocks gb(function, entryBlock);
-  gb.walk(code_stmt);
+  GenBlocks gb(context_, function);
+  gb.walk(code_stmt, entryBlock);
 
   // debugging
   function->function()->dump();
 
   // At this point we can delete the Bstatement tree, we're done with it
-  Bstatement::destroy(code_stmt, Bstatement::DelWrappers);
+  Bstatement::destroy(code_stmt, DelWrappers);
 
   return true;
 }
@@ -1822,7 +1981,7 @@ void Llvm_backend::write_global_definitions(
 
 const char *go_localize_identifier(const char *ident) { return ident; }
 
-// Return the backend generator.
+// Return a new backend generator.
 
 Backend *go_get_backend(llvm::LLVMContext &context) {
   return new Llvm_backend(context);

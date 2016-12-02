@@ -88,4 +88,65 @@ TEST(BackendStmtTests, TestReturnStmt) {
   EXPECT_EQ(bret, be->error_statement());
 }
 
+TEST(BackendStmtTests, TestLabelGotoStmts) {
+  LLVMContext C;
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  Blabel *lab1 = be->label(func, "foolab", Location());
+  StmtCleanup cl(be.get());
+  Bstatement *ldef = be->label_definition_statement(lab1);
+  cl.add(ldef);
+  Bstatement *gots = be->goto_statement(lab1, Location());
+  cl.add(gots);
+  ASSERT_NE(lab1, nullptr);
+  ASSERT_NE(ldef, nullptr);
+  ASSERT_NE(gots, nullptr);
+  delete lab1;
+}
+
+static Bstatement
+
+TEST(BackendStmtTests, TestIfStmt) {
+  LLVMContext C;
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  Location loc;
+  Btype *bi64t = be->integer_type(false, 64);
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
+
+  // loc1 = 123
+  Bexpression *ve1 = be->var_expression(loc1, loc);
+  Bexpression *c123 = mkInt64Const(be.get(), 123);
+  Bstatement *as1 = be->assignment_statement(ve1, c123, loc);
+  Bblock *b1 = mkBlockFromStmt(be.get(), func, as1);
+
+  // loc1 = 987
+  Bexpression *ve2 = be->var_expression(loc1, loc);
+  Bexpression *c987 = mkInt64Const(be.get(), 987);
+  Bstatement *as2 = be->assignment_statement(ve2, c987, loc);
+  Bblock *b2 = mkBlockFromStmt(be.get(), func, as2);
+
+  // loc1 = 456
+  Bexpression *ve3 = be->var_expression(loc1, loc);
+  Bexpression *c456 = mkInt64Const(be.get(), 456);
+  Bstatement *as3 = be->assignment_statement(ve2, c456, loc);
+  Bblock *b3 = mkBlockFromStmt(be.get(), func, as3);
+
+  // if true b1 else b2
+  Bexpression *trueval = be->boolean_constant_expression(true);
+  Bstatement *ifst = be->if_statement(trueval, b1, b2, Location());
+  Bblock *ib = mkBlockFromStmt(be.get(), func, ifst);
+
+  // if true if
+  Bexpression *tv2 = be->boolean_constant_expression(true);
+  Bstatement *ifst2 = be->if_statement(tv2, ib, b3, Location());
+  Bblock *eb = mkBlockFromStmt(be.get(), func, ifst2);
+
+  // set function body
+  bool ok = be->function_set_body(func, eb);
+  EXPECT_TRUE(ok);
+}
+
 }

@@ -261,6 +261,18 @@ inline Bexpression *mkInt64Const(Backend *be, int64_t val)
   return rval;
 }
 
+// Create a basic block from a single statement
+
+inline Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st)
+{
+  const std::vector<Bvariable*> empty;
+  Bblock *b = be->block(func, nullptr, empty, Location(), Location());
+  std::vector<Bstatement*> stlist;
+  stlist.push_back(st);
+  be->block_add_statements(b, stlist);
+  return b;
+}
+
 // Works only for InstList stmts
 
 inline std::string repr(Bstatement *statement)
@@ -284,7 +296,7 @@ class StmtCleanup {
   ~StmtCleanup() {
     for (auto s : statements_)
       if (s != be_->error_statement())
-        Bstatement::destroy(s, Bstatement::DelBoth);
+        Bstatement::destroy(s, DelBoth);
   }
 
   void add(Bstatement *s) { statements_.push_back(s); }
