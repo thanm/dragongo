@@ -273,6 +273,15 @@ inline Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st)
   return b;
 }
 
+// Append stmt to block
+
+inline void addStmtToBlock(Backend *be, Bblock *block, Bstatement *st)
+{
+  std::vector<Bstatement*> stlist;
+  stlist.push_back(st);
+  be->block_add_statements(block, stlist);
+}
+
 // Works only for InstList stmts
 
 inline std::string repr(Bstatement *statement)
@@ -283,50 +292,36 @@ inline std::string repr(Bstatement *statement)
   if (!ilst)
     return "<not an InstListStatement>";
   std::stringstream ss;
-  for (auto inst : ilst->instructions())
+  bool first = true;
+  for (auto inst : ilst->instructions()) {
+    if (! first)
+      ss << " == ";
+    first = false;
     ss << repr(inst);
+  }
   return ss.str();
 }
 
-// Cleanup of statements created during unit testing.
+// Cleanup of statements and expressions created during unit testing.
 
-class StmtCleanup {
+class IRCleanup {
  public:
-  StmtCleanup(Backend *be) : be_(be) { }
-  ~StmtCleanup() {
+  IRCleanup(Backend *be) : be_(be) { }
+  ~IRCleanup() {
     for (auto s : statements_)
       if (s != be_->error_statement())
         Bstatement::destroy(s, DelBoth);
+    for (auto e : expressions_)
+      if (e != be_->error_expression())
+        Bexpression::destroy(e, DelBoth);
   }
 
   void add(Bstatement *s) { statements_.push_back(s); }
-
- protected:
-  void del(Bstatement *s) {
-    if (s == be_->error_statement())
-      return;
-    switch(s->flavor()) {
-      case Bstatement::ST_Compound: {
-        CompoundStatement *cst = s->castToCompoundStatement();
-        for (auto st : cst->stlist())
-          del(st);
-        break;
-      }
-      case Bstatement::ST_InstList: {
-        InstListStatement *ilst = s->castToInstListStatement();
-        for (auto inst : ilst->instructions()) {
-          delete inst;
-        }
-        break;
-      }
-      default:
-        assert(false && "Not yet implemented");
-    }
-    delete s;
-  }
+  void add(Bexpression *e) { expressions_.push_back(e); }
 
  private:
   std::vector<Bstatement *> statements_;
+  std::vector<Bexpression *> expressions_;
   Backend *be_;
 };
 

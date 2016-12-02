@@ -62,6 +62,12 @@ class Binstructions {
   void appendInstruction(llvm::Instruction* inst) {
     instructions_.push_back(inst);
   }
+  void appendInstructions(const std::vector<llvm::Instruction*> &ilist) {
+    for (auto i : ilist)
+      instructions_.push_back(i);
+  }
+
+  void clear() { instructions_.clear(); }
 
  private:
   std::vector<llvm::Instruction*> instructions_;
@@ -89,11 +95,9 @@ enum WhichDel {
 class Bexpression : public Binstructions {
  public:
   explicit Bexpression(llvm::Value *value) : value_(value) {}
+  Bexpression(llvm::Instruction *inst);
   Bexpression(llvm::Value *value,
-              const std::vector<llvm::Instruction*> &instructions)
-      : Binstructions(instructions)
-      , value_(value)
-  { }
+              const std::vector<llvm::Instruction*> &instructions);
 
   llvm::Value *value() const { return value_; }
 
@@ -168,7 +172,10 @@ class Bstatement {
   inline LabelStatement *castToLabelStatement();
 
   // Helper to creat a new Bstatement from an inst
-  static Bstatement *stmtFromInst(llvm::Instruction *inst);
+  static InstListStatement *stmtFromInst(llvm::Instruction *inst);
+
+  // Create new Bstatement from a series of exprssions.
+  static InstListStatement *stmtFromExprs(Bexpression *expr, ...);
 
   // Perform deletions on the tree of Bstatements rooted at stmt.
   // Delete Bstatements/Bexpressions, instructions, or both (depending
@@ -501,7 +508,7 @@ public:
 
   Bexpression *nil_pointer_expression();
 
-  Bexpression *var_expression(Bvariable *var, Location);
+  Bexpression *var_expression(Bvariable *var, bool lvalue, Location);
 
   Bexpression *indirect_expression(Btype *, Bexpression *expr, bool known_valid,
                                    Location);
@@ -740,7 +747,10 @@ private:
   Bexpression *make_value_expression(llvm::Value *val);
 
   // Assignment helper
-  Bstatement *do_assignment(llvm::Value *lhs, Bexpression *rhs, Location);
+  Bstatement *do_assignment(llvm::Value *lvalue,
+                            Bexpression *lhs,
+                            Bexpression *rhs,
+                            Location);
 
   // Helper to set up entry block for function
   llvm::BasicBlock *genEntryBlock(Bfunction *bfunction);

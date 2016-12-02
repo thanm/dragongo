@@ -31,6 +31,19 @@
 
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
+Bexpression::Bexpression(llvm::Instruction *inst)
+    : value_(inst)
+{
+  instructions().push_back(inst);
+}
+
+Bexpression::Bexpression(llvm::Value *value,
+                         const std::vector<llvm::Instruction*> &instructions)
+    : Binstructions(instructions)
+    , value_(value)
+{
+}
+
 void Bexpression::destroy(Bexpression *expr, WhichDel which)
 {
   if (which != DelWrappers)
@@ -64,9 +77,22 @@ void Bexpression::dump(unsigned ilevel)
   }
 }
 
-Bstatement *Bstatement::stmtFromInst(llvm::Instruction *inst)
+InstListStatement *Bstatement::stmtFromInst(llvm::Instruction *inst)
 {
   return new InstListStatement(inst);
+}
+
+InstListStatement *Bstatement::stmtFromExprs(Bexpression *expr, ...)
+{
+  InstListStatement *st = new InstListStatement();
+  va_list ap;
+  va_start(ap, expr);
+  while (expr) {
+    st->appendInstructions(expr->instructions());
+    expr->clear();
+    expr = va_arg(ap, Bexpression *);
+  }
+  return st;
 }
 
 void Bstatement::dump(unsigned ilevel)
@@ -1012,11 +1038,22 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
 
 // An expression that references a variable.
 
-Bexpression *Llvm_backend::var_expression(Bvariable *var, Location location) {
+Bexpression *Llvm_backend::var_expression(Bvariable *var,
+                                          bool lvalue,
+                                          Location location) {
+  if (var == error_variable())
+    return error_expression();
 
   // FIXME: record debug location
 
-  return make_value_expression(var->value());
+  if (lvalue)
+    return make_value_expression(var->value());
+  std::string ldname(var->getName());
+  ldname += ".ld";
+  llvm::Instruction *ldinst = new llvm::LoadInst(var->value(), ldname);
+  // return make_value_expression(ldinst);
+  return new Bexpression(ldinst);
+
 }
 
 // An expression that indirectly references an expression.
@@ -1387,10 +1424,11 @@ Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
 Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
   if (init == error_expression())
     return error_statement();
-  return do_assignment(var->value(), init, Location());
+  return do_assignment(var->value(), nullptr, init, Location());
 }
 
 Bstatement *Llvm_backend::do_assignment(llvm::Value *lval,
+                                        Bexpression *lhs,
                                         Bexpression *rhs,
                                         Location location)
 {
@@ -1399,8 +1437,10 @@ Bstatement *Llvm_backend::do_assignment(llvm::Value *lval,
   llvm::Value *rval = rhs->value();
   assert(rval->getType() == pt->getElementType());
   // FIXME: alignment?
+  InstListStatement *st = Bstatement::stmtFromExprs(rhs, lhs, nullptr);
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
-  return Bstatement::stmtFromInst(si);
+  st->appendInstruction(si);
+  return st;
 }
 
 // Assignment.
@@ -1410,7 +1450,7 @@ Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
                                                Location location) {
   if (lhs == error_expression() || rhs == error_expression())
     return error_statement();
-  return do_assignment(lhs->value(), rhs, location);
+  return do_assignment(lhs->value(), lhs, rhs, location);
 }
 
 Bstatement *
