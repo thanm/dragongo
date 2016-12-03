@@ -105,18 +105,32 @@ TEST(BackendStmtTests, TestReturnStmt) {
 TEST(BackendStmtTests, TestLabelGotoStmts) {
   LLVMContext C;
   std::unique_ptr<Backend> be(go_get_backend(C));
-
   Bfunction *func = mkFunci32o64(be.get(), "foo");
-  Blabel *lab1 = be->label(func, "foolab", Location());
-  IRCleanup cl(be.get());
+
+  // loc1 = 10
+  Location loc;
+  Btype *bi64t = be->integer_type(false, 64);
+  Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
+  Bstatement *is = be->init_statement(loc1, mkInt64Const(be.get(), 10));
+  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+
+  // goto labeln
+  Blabel *lab1 = be->label(func, "foolab", loc);
+  Bstatement *gots = be->goto_statement(lab1, loc);
+  addStmtToBlock(be.get(), block, gots);
+
+  // dead stmt: loc1 = 11
+  Bexpression *ved = be->var_expression(loc1, true, loc);
+  Bexpression *c11 = mkInt64Const(be.get(), 11);
+  Bstatement *asd = be->assignment_statement(ved, c11, loc);
+  addStmtToBlock(be.get(), block, asd);
+
+  // labeldef
   Bstatement *ldef = be->label_definition_statement(lab1);
-  cl.add(ldef);
-  Bstatement *gots = be->goto_statement(lab1, Location());
-  cl.add(gots);
-  ASSERT_NE(lab1, nullptr);
-  ASSERT_NE(ldef, nullptr);
-  ASSERT_NE(gots, nullptr);
-  delete lab1;
+  addStmtToBlock(be.get(), block, ldef);
+
+  bool ok = be->function_set_body(func, block);
+  EXPECT_TRUE(ok);
 }
 
 TEST(BackendStmtTests, TestIfStmt) {

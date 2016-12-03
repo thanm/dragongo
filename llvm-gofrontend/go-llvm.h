@@ -321,7 +321,7 @@ class LabelStatement : public Bstatement {
   LabelStatement(LabelId label)
       : Bstatement(ST_Label, Location())
       , label_(label) { }
-  LabelId targetLabel() const { return label_; }
+  LabelId definedLabel() const { return label_; }
  private:
   LabelId label_;
 };

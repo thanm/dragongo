@@ -129,10 +129,18 @@ void Bstatement::dump(unsigned ilevel)
       }
       break;
     }
+    case ST_Goto: {
+      GotoStatement *gst = castToGotoStatement();
+      indent(ilevel); std::cerr << "goto L" << gst->targetLabel() << "\n";
+      break;
+    }
+    case ST_Label: {
+      LabelStatement *lbst = castToLabelStatement();
+      indent(ilevel); std::cerr << "label L" << lbst->definedLabel() << "\n";
+      break;
+    }
 
     case ST_SwitchPlaceholder:
-    case ST_Goto:
-    case ST_Label:
       std::cerr << "not yet implemented\n";
       break;
   }
@@ -1466,9 +1474,10 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   // Temporary
   assert(vals.size() == 1);
 
-  llvm::Value *val = vals[0]->value();
-  llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, val);
-  return Bstatement::stmtFromInst(ri);
+  InstListStatement *rst = Bstatement::stmtFromExprs(vals[0], nullptr);
+  llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, vals[0]->value());
+  rst->appendInstruction(ri);
+  return rst;
 }
 
 // Create a statement that attempts to execute BSTAT and calls EXCEPT_STMT if an
@@ -1875,6 +1884,7 @@ class GenBlocks {
       : context_(context)
       , function_(function)
       , ifcount_(0)
+      , orphancount_(0)
   { }
 
   llvm::BasicBlock *walk(Bstatement *stmt, llvm::BasicBlock *curblock);
@@ -1889,11 +1899,20 @@ class GenBlocks {
     return ss.str();
   }
 
+  llvm::BasicBlock *getBlockForLabel(LabelId lab) {
+    auto it = labelmap_.find(lab);
+    if (it != labelmap_.end())
+      return it->second;
+    std::string lname = blockname("label", lab);
+    return llvm::BasicBlock::Create(context_, lname);
+  }
+
  private:
   llvm::LLVMContext &context_;
   Bfunction *function_;
-  std::vector<llvm::BasicBlock *> fallthrough_;
+  std::map<LabelId, llvm::BasicBlock *> labelmap_;
   unsigned ifcount_;
+  unsigned orphancount_;
 };
 
 llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
@@ -1913,7 +1932,6 @@ llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
   // Push fallthrough block
   std::string ftname = blockname("fallthrough", ifcount_);
   llvm::BasicBlock *ft = llvm::BasicBlock::Create(context_, ftname, func);
-  fallthrough_.push_back(ft);
 
   // Create false block if present
   llvm::BasicBlock *fblock = ft;
@@ -1958,6 +1976,26 @@ llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
     case Bstatement::ST_IfPlaceholder: {
       IfPHStatement *ifst = stmt->castToIfPHStatement();
       curblock = genIf(ifst, curblock);
+      break;
+    }
+    case Bstatement::ST_Goto: {
+      GotoStatement *gst = stmt->castToGotoStatement();
+      llvm::BasicBlock *lbb = getBlockForLabel(gst->targetLabel());
+      llvm::BranchInst::Create(lbb, curblock);
+      std::string n = blockname("orphan", orphancount_++);
+      llvm::Function *func = function()->function();
+      llvm::BasicBlock *orphan = llvm::BasicBlock::Create(context_, n, func);
+      curblock = orphan;
+      break;
+    }
+    case Bstatement::ST_Label: {
+      LabelStatement *lbst = stmt->castToLabelStatement();
+      llvm::BasicBlock *lbb = getBlockForLabel(lbst->definedLabel());
+      llvm::BranchInst::Create(lbb, curblock);
+      llvm::Function *func = function()->function();
+      lbb->insertInto(func);
+      lbb->moveAfter(curblock);
+      curblock = lbb;
       break;
     }
     default:
