@@ -1904,7 +1904,10 @@ class GenBlocks {
     if (it != labelmap_.end())
       return it->second;
     std::string lname = blockname("label", lab);
-    return llvm::BasicBlock::Create(context_, lname);
+    llvm::Function *func = function()->function();
+    llvm::BasicBlock *bb = llvm::BasicBlock::Create(context_, lname, func);
+    labelmap_[lab] = bb;
+    return bb;
   }
 
  private:
@@ -1984,7 +1987,8 @@ llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
       llvm::BranchInst::Create(lbb, curblock);
       std::string n = blockname("orphan", orphancount_++);
       llvm::Function *func = function()->function();
-      llvm::BasicBlock *orphan = llvm::BasicBlock::Create(context_, n, func);
+      llvm::BasicBlock *orphan =
+          llvm::BasicBlock::Create(context_, n, func, lbb);
       curblock = orphan;
       break;
     }
@@ -1992,9 +1996,6 @@ llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
       LabelStatement *lbst = stmt->castToLabelStatement();
       llvm::BasicBlock *lbb = getBlockForLabel(lbst->definedLabel());
       llvm::BranchInst::Create(lbb, curblock);
-      llvm::Function *func = function()->function();
-      lbb->insertInto(func);
-      lbb->moveAfter(curblock);
       curblock = lbb;
       break;
     }
