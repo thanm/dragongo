@@ -94,12 +94,11 @@ enum WhichDel {
 
 class Bexpression : public Binstructions {
  public:
-  explicit Bexpression(llvm::Value *value) : value_(value) {}
-  Bexpression(llvm::Instruction *inst);
-  Bexpression(llvm::Value *value,
-              const std::vector<llvm::Instruction*> &instructions);
+  Bexpression(llvm::Value *value, Btype *btype);
+  ~Bexpression();
 
   llvm::Value *value() const { return value_; }
+  Btype *btype() { return btype_; }
 
   // Delete some or all or this Bexpression. Deallocates just the
   // Bexpression, its contained instructions, or both (depending
@@ -112,6 +111,7 @@ class Bexpression : public Binstructions {
  private:
   Bexpression() : value_(NULL) {}
   llvm::Value *value_;
+  Btype *btype_;
 };
 
 // In the current gofrontend implementation, there is an extremely
@@ -135,11 +135,10 @@ class Bexpression : public Binstructions {
 // statement), we create placeholders to record what has to be done,
 // then come along later and stitch things together at the end.
 
-class InstListStatement;
 class CompoundStatement;
+class ExprListStatement;
 class IfPHStatement;
 class SwitchPHStatement;
-//class VarsStatement;
 class GotoStatement;
 class LabelStatement;
 
@@ -150,7 +149,7 @@ class Bstatement {
  public:
   enum StFlavor {
     ST_Compound,
-    ST_InstList,
+    ST_ExprList,
     ST_IfPlaceholder,
     ST_SwitchPlaceholder,
     ST_Goto,
@@ -165,17 +164,14 @@ class Bstatement {
   Location location() const { return location_; }
 
   inline CompoundStatement *castToCompoundStatement();
-  inline InstListStatement *castToInstListStatement();
+  inline ExprListStatement *castToExprListStatement();
   inline IfPHStatement *castToIfPHStatement();
   inline SwitchPHStatement *castToSwitchPHStatement();
   inline GotoStatement *castToGotoStatement();
   inline LabelStatement *castToLabelStatement();
 
-  // Helper to creat a new Bstatement from an inst
-  static InstListStatement *stmtFromInst(llvm::Instruction *inst);
-
   // Create new Bstatement from a series of exprssions.
-  static InstListStatement *stmtFromExprs(Bexpression *expr, ...);
+  static ExprListStatement *stmtFromExprs(Bexpression *expr, ...);
 
   // Perform deletions on the tree of Bstatements rooted at stmt.
   // Delete Bstatements/Bexpressions, instructions, or both (depending
@@ -207,20 +203,29 @@ inline CompoundStatement *Bstatement::castToCompoundStatement()
           static_cast<CompoundStatement*>(this) : nullptr);
 }
 
-// InstList statement contains a list of LLVM instructions.
+// ExprList statement contains a list of LLVM instructions.
 
-class InstListStatement : public Bstatement, public Binstructions {
+class ExprListStatement : public Bstatement {
  public:
-  InstListStatement() : Bstatement(ST_InstList, Location()) { }
-  InstListStatement(llvm::Instruction *inst)
-      : Bstatement(ST_InstList, Location())
-  { appendInstruction(inst); }
+  ExprListStatement() : Bstatement(ST_ExprList, Location()) { }
+  ExprListStatement(Bexpression *e)
+      : Bstatement(ST_ExprList, Location()) {
+    expressions_.push_back(e);
+  }
+  void appendExpression(Bexpression *e) {
+    expressions_.push_back(e);
+  }
+  std::vector<Bexpression *> expressions() { return expressions_; }
+
+ private:
+  std::vector<Bexpression *> expressions_;
+
 };
 
-inline InstListStatement *Bstatement::castToInstListStatement()
+inline ExprListStatement *Bstatement::castToExprListStatement()
 {
-  return (flavor_ == ST_InstList ?
-          static_cast<InstListStatement*>(this) : nullptr);
+  return (flavor_ == ST_ExprList ?
+          static_cast<ExprListStatement*>(this) : nullptr);
 }
 
 // "If" placeholder statement.
@@ -687,10 +692,14 @@ public:
                                 const std::vector<Bfunction *> &,
                                 const std::vector<Bvariable *> &);
 
+  // Exposed for unit testing
   llvm::Module &module() { return *module_.get(); }
 
+  // For debugging
+  void incDebug() { tracelevel_ += 1; }
+
   // For creating useful inst and block names
-  std::string namegen(const char *tag, unsigned expl = 0xffffffff);
+  std::string namegen(const std::string &tag, unsigned expl = 0xffffffff);
 
 private:
   // Make an anonymous Btype from an llvm::Type
@@ -710,11 +719,6 @@ private:
   // Did gofrontend declare this as an unsigned integer type?
   bool is_unsigned_integer_type(Btype *t) const {
     return unsigned_integer_types_.find(t) != unsigned_integer_types_.end();
-  }
-
-  // Did gofrontend mark this expression has having unsigned integer type?
-  bool is_unsigned_integer_expr(Bexpression *e) const {
-    return unsigned_integer_exprs_.find(e) != unsigned_integer_exprs_.end();
   }
 
   // add a builtin function definition
@@ -751,8 +755,22 @@ private:
   void define_intrinsic_builtins();
   void define_trig_builtins();
 
-  // Create a Bexpression to hold an llvm::Value for a constant or instruction
-  Bexpression *make_value_expression(llvm::Value *val, Btype *btype);
+  // Create a Bexpression to hold an llvm::Value. Some Bexpressions
+  // we want to cache (constants for example, or lvalue references to
+  // global variables); for these cases scope should be set to "GlobalScope".
+  // For non-cacheable values (for example, an lvalue reference to a local
+  // var in a function), set scope to LocalScope (no caching in this case).
+  enum ValExprScope { GlobalScope, LocalScope };
+  Bexpression *make_value_expression(llvm::Value *val,
+                                     Btype *btype,
+                                     ValExprScope scope);
+
+  // Create a Bexpression to hold a value being computed by the
+  // instruction "inst".
+  Bexpression *make_inst_expression(llvm::Instruction *inst,
+                                    Btype *btype);
+
+
 
   // Assignment helper
   Bstatement *do_assignment(llvm::Value *lvalue,
@@ -797,6 +815,7 @@ private:
   std::unique_ptr<llvm::Module> module_;
   const llvm::DataLayout &datalayout_;
   unsigned address_space_;
+  unsigned tracelevel_;
 
   // Data structures to record types that are being manfactured.
 
@@ -869,6 +888,11 @@ private:
   // by the frontend, so here we keep track of all returned Bfunctions
   // so that we can free them on exit.
   std::vector<Bfunction *> functions_;
+
+  // Keep track of Bexpression's we've given out to the front end
+  // (those not appearing in other maps) so that we can delete them
+  // when we're done with them.
+  std::vector<Bexpression *> expressions_;
 };
 
 #endif

@@ -23,6 +23,7 @@ set(BackendCoreSources
   BackendStmtTests.cpp
   BackendVarTests.cpp
   LinemapTests.cpp
+  TestUtils.cpp
   )
 
 add_gobackend_unittest(GoBackendCoreTests

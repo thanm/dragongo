@@ -12,6 +12,7 @@
 #include "go-llvm-backend.h"
 
 using namespace llvm;
+using namespace goBackendUnitTests;
 
 namespace {
 

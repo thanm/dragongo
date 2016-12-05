@@ -12,6 +12,7 @@
 #include "go-llvm-backend.h"
 
 using namespace llvm;
+using namespace goBackendUnitTests;
 
 namespace {
 
@@ -66,9 +67,14 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
   Bstatement *as2 = be->assignment_statement(ve2, ve3, loc);
   ASSERT_TRUE(as2 != nullptr);
   addStmtToBlock(be.get(), block, as2);
-  EXPECT_EQ(repr(as2),
-            "%loc1.ld = load i64, i64* %loc1 == "
-            "store i64 %loc1.ld, i64* %loc2");
+
+  const char *exp = R"RAW_RESULT(
+            %loc1.ld = load i64, i64* %loc1
+            store i64 %loc1.ld, i64* %loc2
+   )RAW_RESULT";
+  std::string reason;
+  bool equal = difftokens(tokenize(exp), tokenize(repr(as2)), reason);
+  EXPECT_EQ("pass", equal ? "pass" : reason);
 
   // error handling
   Bvariable *loc3 = be->local_variable(func, "loc3", bi64t, true, loc);

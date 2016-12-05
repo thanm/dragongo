@@ -13,6 +13,7 @@
 #include "go-llvm-backend.h"
 
 using namespace llvm;
+using namespace goBackendUnitTests;
 
 namespace {
 
@@ -167,6 +168,39 @@ TEST(BackendExprTests, TestConversionExpressions) {
   EXPECT_EQ(econ, be->error_expression());
 }
 
+TEST(BackendExprTests, MakeVarExpressions) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  Btype *bi64t = be->integer_type(false, 64);
+  Location loc;
+  Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
+
+  // We should get a distinct value  two separate values when creating
+  // var expressions.
+  bool noLvalue = false;
+  Bexpression *ve1 = be->var_expression(loc1, noLvalue, loc);
+  EXPECT_EQ(repr(ve1), "foo");
+  Bstatement *es = be->expression_statement(ve1);
+  Bblock *block = mkBlockFromStmt(be.get(), func, es);
+  Bexpression *ve2 = be->var_expression(loc1, noLvalue, loc);
+  EXPECT_EQ(repr(ve2), "foo");
+  addExprToBlock(be.get(), block, ve2);
+
+  // Same here.
+  bool yesLvalue = false;
+  Bexpression *ve3 = be->var_expression(loc1, yesLvalue, loc);
+  EXPECT_EQ(repr(ve3), "foo");
+  addExprToBlock(be.get(), block, ve3);
+  Bexpression *ve4 = be->var_expression(loc1, yesLvalue, loc);
+  EXPECT_EQ(repr(ve4), "foo");
+  addExprToBlock(be.get(), block, ve4);
+
+  be->function_set_body(func, block);
+}
+
 TEST(BackendExprTests, TestCompareOps) {
   LLVMContext C;
 
@@ -267,7 +301,6 @@ TEST(BackendExprTests, TestArithOps) {
       addStmtToBlock(be.get(), block, es);
     }
   }
-
 
   const char *exp = R"RAW_RESULT(
     store i1 true, i1* %loc1

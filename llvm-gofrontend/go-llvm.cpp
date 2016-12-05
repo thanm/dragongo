@@ -31,16 +31,14 @@
 
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
-Bexpression::Bexpression(llvm::Instruction *inst)
-    : value_(inst)
+Bexpression::Bexpression(llvm::Value *value,
+                         Btype *btype)
+    : value_(value)
+    , btype_(btype)
 {
-  instructions().push_back(inst);
 }
 
-Bexpression::Bexpression(llvm::Value *value,
-                         const std::vector<llvm::Instruction*> &instructions)
-    : Binstructions(instructions)
-    , value_(value)
+Bexpression::~Bexpression()
 {
 }
 
@@ -77,19 +75,13 @@ void Bexpression::dump(unsigned ilevel)
   }
 }
 
-InstListStatement *Bstatement::stmtFromInst(llvm::Instruction *inst)
+ExprListStatement *Bstatement::stmtFromExprs(Bexpression *expr, ...)
 {
-  return new InstListStatement(inst);
-}
-
-InstListStatement *Bstatement::stmtFromExprs(Bexpression *expr, ...)
-{
-  InstListStatement *st = new InstListStatement();
+  ExprListStatement *st = new ExprListStatement();
   va_list ap;
   va_start(ap, expr);
   while (expr) {
-    st->appendInstructions(expr->instructions());
-    expr->clear();
+    st->appendExpression(expr);
     expr = va_arg(ap, Bexpression *);
   }
   return st;
@@ -106,11 +98,10 @@ void Bstatement::dump(unsigned ilevel)
       indent(ilevel); std::cerr << "}\n";
       break;
     }
-    case ST_InstList: {
-      InstListStatement *ilst = castToInstListStatement();
-      for (auto inst : ilst->instructions()) {
-        indent(ilevel);
-        inst->dump();
+    case ST_ExprList: {
+      ExprListStatement *elst = castToExprListStatement();
+      for (auto expr : elst->expressions()) {
+        expr->dump(ilevel+2);
       }
       break;
     }
@@ -157,11 +148,11 @@ void Bstatement::destroy(Bstatement *stmt, WhichDel which)
       break;
     }
 
-    case ST_InstList:
+    case ST_ExprList:
       if (which != DelWrappers) {
-        InstListStatement *ilst = stmt->castToInstListStatement();
-        for (auto inst : ilst->instructions())
-          delete inst;
+        ExprListStatement *elst = stmt->castToExprListStatement();
+        for (auto expr : elst->expressions())
+          Bexpression::destroy(expr, which);
       }
       break;
     case ST_IfPlaceholder: {
@@ -328,11 +319,15 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 
   // Reuse the error function as the value for error_expression
   error_expression_.reset(
-      new Bexpression(error_function_->function()));
+      new Bexpression(error_function_->function(), error_type()));
 
   // Error statement
   llvm::Instruction *ei = new llvm::UnreachableInst(context_);
-  error_statement_.reset(Bstatement::stmtFromInst(ei));
+  Bexpression *unrexp = new Bexpression(ei, error_type());
+  error_statement_.reset(Bstatement::stmtFromExprs(unrexp, nullptr));
+
+  Bstatement *errst = Bstatement::stmtFromExprs(error_expression(), nullptr);
+  error_statement_.reset(errst);
 
   // Reuse the error function as the value for error_variable
   error_variable_.reset(new Bvariable(error_type(), Location(), "",
@@ -343,6 +338,8 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 
 Llvm_backend::~Llvm_backend() {
   Bstatement::destroy(error_statement_.get(), DelInstructions);
+  for (auto &expr : expressions_)
+    delete expr;
   for (auto pht : placeholders_)
     delete pht;
   for (auto pht : updated_placeholders_)
@@ -361,7 +358,7 @@ Llvm_backend::~Llvm_backend() {
     delete bfcn;
 }
 
-std::string Llvm_backend::namegen(const char *tag, unsigned expl) {
+std::string Llvm_backend::namegen(const std::string &tag, unsigned expl) {
   auto it = nametags_.find(tag);
   unsigned count = 0;
   if (it != nametags_.end())
@@ -1029,17 +1026,28 @@ void Llvm_backend::define_sync_fetch_and_add_builtins()
 }
 
 Bexpression *Llvm_backend::make_value_expression(llvm::Value *val,
-                                                 Btype *btype)
-{
+                                                 Btype *btype,
+                                                 ValExprScope scope) {
   assert(val);
+  if (scope == GlobalScope) {
+    auto it = value_exprmap_.find(val);
+    if (it != value_exprmap_.end())
+      return it->second;
+  }
+  Bexpression *rval = new Bexpression(val, btype);
+  if (scope == GlobalScope)
+    value_exprmap_[val] = rval;
+  else
+    expressions_.push_back(rval);
+  return rval;
+}
 
-  auto it = value_exprmap_.find(val);
-  if (it != value_exprmap_.end())
-    return it->second;
-  Bexpression *rval = new Bexpression(val);
-  if (is_unsigned_integer_type(btype))
-    unsigned_integer_exprs_.insert(rval);
-  value_exprmap_[val] = rval;
+Bexpression *Llvm_backend::make_inst_expression(llvm::Instruction *inst,
+                                                 Btype *btype) {
+  assert(inst);
+  Bexpression *rval = new Bexpression(inst, btype);
+  rval->appendInstruction(inst);
+  expressions_.push_back(rval);
   return rval;
 }
 
@@ -1049,7 +1057,7 @@ Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   if (btype == error_type())
     return error_expression();
   llvm::Value *zeroval = llvm::Constant::getNullValue(btype->type());
-  return make_value_expression(zeroval, btype);
+  return make_value_expression(zeroval, btype, GlobalScope);
 }
 
 Bexpression *Llvm_backend::error_expression() {
@@ -1071,13 +1079,17 @@ Bexpression *Llvm_backend::var_expression(Bvariable *var,
 
   // FIXME: record debug location
 
-  if (lvalue)
-    return make_value_expression(var->value(), var->getType());
-  std::string ldname(var->getName());
-  ldname += ".ld";
-  llvm::Instruction *ldinst = new llvm::LoadInst(var->value(), ldname);
-  return new Bexpression(ldinst);
-
+  if (lvalue) {
+    ValExprScope scope =
+        (var->flavor() == GlobalVar ? GlobalScope : LocalScope);
+    return make_value_expression(var->value(), var->getType(), scope);
+  } else {
+    std::string ldname(var->getName());
+    ldname += ".ld";
+    ldname = namegen(ldname);
+    llvm::Instruction *ldinst = new llvm::LoadInst(var->value(), ldname);
+    return make_inst_expression(ldinst, var->getType());
+  }
 }
 
 // An expression that indirectly references an expression.
@@ -1140,12 +1152,12 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
     uint64_t val = checked_convert_mpz_to_int<uint64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::get(btype->type(), val);
-    rval = make_value_expression(lval, btype);
+    rval = make_value_expression(lval, btype, GlobalScope);
   } else {
     int64_t val = checked_convert_mpz_to_int<int64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::getSigned(btype->type(), val);
-    rval = make_value_expression(lval, btype);
+    rval = make_value_expression(lval, btype, GlobalScope);
   }
   return rval;
 }
@@ -1167,12 +1179,12 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
     float fval = mpfr_get_flt(val, GMP_RNDN);
     llvm::APFloat apf(fval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    return make_value_expression(fcon, btype);
+    return make_value_expression(fcon, btype, GlobalScope);
   } else if (btype->type() == llvm_double_type_) {
     double dval = mpfr_get_d(val, GMP_RNDN);
     llvm::APFloat apf(dval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    return make_value_expression(fcon, btype);
+    return make_value_expression(fcon, btype, GlobalScope);
   } else if (btype->type() == llvm_long_double_type_) {
     assert("not yet implemented" && false);
     return nullptr;
@@ -1199,9 +1211,9 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val) {
 // Make a constant boolean expression.
 
 Bexpression *Llvm_backend::boolean_constant_expression(bool val) {
-  return val ?
-      make_value_expression(llvm::ConstantInt::getTrue(context_), bool_type()) :
-      make_value_expression(llvm::ConstantInt::getFalse(context_), bool_type());
+  llvm::Value *con = (val ? llvm::ConstantInt::getTrue(context_)
+                          : llvm::ConstantInt::getFalse(context_));
+  return make_value_expression(con, bool_type(), GlobalScope);
 }
 
 // Return the real part of a complex expression.
@@ -1378,11 +1390,13 @@ Bexpression *Llvm_backend::binary_expression(Operator op,
                                              Location location) {
   if (left == error_expression() || right == error_expression())
     return error_expression();
+  Btype *bltype = left->btype();
+  Btype *brtype = right->btype();
   llvm::Type *ltype = left->value()->getType();
   llvm::Type *rtype = right->value()->getType();
   assert(ltype == rtype);
-  assert(is_unsigned_integer_expr(left) == is_unsigned_integer_expr(right));
-  bool isUnsigned = is_unsigned_integer_expr(left);
+  assert(is_unsigned_integer_type(bltype) == is_unsigned_integer_type(brtype));
+  bool isUnsigned = is_unsigned_integer_type(bltype);
 
   switch(op) {
     case OPERATOR_EQEQ:
@@ -1400,7 +1414,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op,
       else
         cmp = new llvm::ICmpInst(pred, left->value(), right->value(),
                                  namegen("icmp"));
-      return new Bexpression(cmp);
+      return make_inst_expression(cmp, bltype);
     }
     case OPERATOR_PLUS: {
       const char *tag;
@@ -1409,7 +1423,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op,
       llvm::Instruction *binop =
           llvm::BinaryOperator::Create(llvmop, left->value(), right->value(),
                                        namegen(tag));
-      return new Bexpression(binop);
+      return make_inst_expression(binop, bltype);
     }
     default:
       std::cerr << "Op " << op << "unhandled\n";
@@ -1478,19 +1492,9 @@ Bstatement *Llvm_backend::error_statement() {
 Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
   if (expr == error_expression())
     return error_statement();
-  InstListStatement *st = new InstListStatement();
-  if (expr->instructions().size())
-    for (auto inst : expr->instructions())
-      st->appendInstruction(inst);
-  else {
-    // Create an instruction to capture the value (Q: will this
-    // actually be needed?)
-    llvm::SelectInst *sel =
-        llvm::SelectInst::Create(llvm::ConstantInt::getTrue(context_),
-                                 expr->value(), expr->value());
-    st->appendInstruction(sel);
-  }
-  return st;
+  ExprListStatement *els = new ExprListStatement();
+  els->appendExpression(expr);
+  return els;
 }
 
 // Variable initialization.
@@ -1510,11 +1514,23 @@ Bstatement *Llvm_backend::do_assignment(llvm::Value *lval,
   assert(pt);
   llvm::Value *rval = rhs->value();
   assert(rval->getType() == pt->getElementType());
+
   // FIXME: alignment?
-  InstListStatement *st = Bstatement::stmtFromExprs(rhs, lhs, nullptr);
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
-  st->appendInstruction(si);
-  return st;
+
+  Bexpression *stexp = make_inst_expression(si, rhs->btype());
+  for (auto inst : rhs->instructions()) {
+    assert(inst->getParent() == nullptr);
+    stexp->appendInstruction(inst);
+  }
+  if (lhs) {
+    for (auto inst : lhs->instructions()) {
+      assert(inst->getParent() == nullptr);
+      stexp->appendInstruction(inst);
+    }
+  }
+  ExprListStatement *els = Bstatement::stmtFromExprs(stexp, nullptr);
+  return els;
 }
 
 // Assignment.
@@ -1540,10 +1556,18 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   // Temporary
   assert(vals.size() == 1);
 
-  InstListStatement *rst = Bstatement::stmtFromExprs(vals[0], nullptr);
+  // For the moment return instructions are going to have null type,
+  // since their values should not be feeding into anything else (and
+  // since Go functions can return multiple values).
+  Btype *btype = nullptr;
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, vals[0]->value());
-  rst->appendInstruction(ri);
-  return rst;
+  Bexpression *rexp = make_inst_expression(ri, btype);
+  for (auto inst : vals[0]->instructions()) {
+    assert(inst->getParent() == nullptr);
+    rexp->appendInstruction(inst);
+  }
+  ExprListStatement *els = Bstatement::stmtFromExprs(rexp, nullptr);
+  return els;
 }
 
 // Create a statement that attempts to execute BSTAT and calls EXCEPT_STMT if an
@@ -2027,10 +2051,13 @@ llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
         curblock = walk(st, curblock);
       break;
     }
-    case Bstatement::ST_InstList: {
-      InstListStatement *ilst = stmt->castToInstListStatement();
-      for (auto inst : ilst->instructions())
-        curblock->getInstList().push_back(inst);
+    case Bstatement::ST_ExprList: {
+      ExprListStatement *elst = stmt->castToExprListStatement();
+      for (auto expr : elst->expressions()) {
+        for (auto inst : expr->instructions()) {
+          curblock->getInstList().push_back(inst);
+        }
+      }
       break;
     }
     case Bstatement::ST_IfPlaceholder: {
@@ -2077,10 +2104,11 @@ llvm::BasicBlock *Llvm_backend::genEntryBlock(Bfunction *bfunction)
 
 bool Llvm_backend::function_set_body(Bfunction *function,
                                      Bstatement *code_stmt) {
-
+#if 0
   // debugging
   std::cerr << "Statement tree dump:\n";
   code_stmt->dump();
+  #endif
 
   // Create and populate entry block
   llvm::BasicBlock *entryBlock = genEntryBlock(function);
@@ -2089,8 +2117,10 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   GenBlocks gb(context_, this, function);
   gb.walk(code_stmt, entryBlock);
 
+#if 0
   // debugging
   function->function()->dump();
+#endif
 
   // At this point we can delete the Bstatement tree, we're done with it
   Bstatement::destroy(code_stmt, DelWrappers);

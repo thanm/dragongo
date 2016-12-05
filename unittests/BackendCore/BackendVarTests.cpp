@@ -17,6 +17,7 @@
 #include "go-llvm-backend.h"
 
 using namespace llvm;
+using namespace goBackendUnitTests;
 
 namespace {
 
@@ -54,13 +55,15 @@ TEST(BackendVarTests, MakeLocalVar) {
   // Test var_expression created from local variable
   Bexpression* ve2 = be->var_expression(loc1, false, Location());
   ASSERT_TRUE(ve2 != nullptr);
-  IRCleanup cl(be.get());
-  cl.add(ve2);
+  Bstatement *es = be->expression_statement(ve2);
+  Bblock *block = mkBlockFromStmt(be.get(), func1, es);
   EXPECT_EQ(repr(ve2->value()), "%loc1.ld = load i64, i64* %loc1");
 
   // Make sure error detection is working
   Bvariable* loce = be->local_variable(func1, "", be->error_type(), true, loc);
   EXPECT_TRUE(loce == be->error_variable());
+
+  be->function_set_body(func1, block);
 }
 
 TEST(BackendVarTests, MakeParamVar) {
