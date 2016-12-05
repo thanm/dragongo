@@ -1014,7 +1014,8 @@ void Llvm_backend::define_sync_fetch_and_add_builtins()
   }
 }
 
-Bexpression *Llvm_backend::make_value_expression(llvm::Value *val)
+Bexpression *Llvm_backend::make_value_expression(llvm::Value *val,
+                                                 Btype *btype)
 {
   assert(val);
 
@@ -1022,6 +1023,8 @@ Bexpression *Llvm_backend::make_value_expression(llvm::Value *val)
   if (it != value_exprmap_.end())
     return it->second;
   Bexpression *rval = new Bexpression(val);
+  if (is_unsigned_integer_type(btype))
+    unsigned_integer_exprs_.insert(rval);
   value_exprmap_[val] = rval;
   return rval;
 }
@@ -1032,7 +1035,7 @@ Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   if (btype == error_type())
     return error_expression();
   llvm::Value *zeroval = llvm::Constant::getNullValue(btype->type());
-  return make_value_expression(zeroval);
+  return make_value_expression(zeroval, btype);
 }
 
 Bexpression *Llvm_backend::error_expression() {
@@ -1055,11 +1058,10 @@ Bexpression *Llvm_backend::var_expression(Bvariable *var,
   // FIXME: record debug location
 
   if (lvalue)
-    return make_value_expression(var->value());
+    return make_value_expression(var->value(), var->getType());
   std::string ldname(var->getName());
   ldname += ".ld";
   llvm::Instruction *ldinst = new llvm::LoadInst(var->value(), ldname);
-  // return make_value_expression(ldinst);
   return new Bexpression(ldinst);
 
 }
@@ -1124,12 +1126,12 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
     uint64_t val = checked_convert_mpz_to_int<uint64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::get(btype->type(), val);
-    rval = make_value_expression(lval);
+    rval = make_value_expression(lval, btype);
   } else {
     int64_t val = checked_convert_mpz_to_int<int64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::getSigned(btype->type(), val);
-    rval = make_value_expression(lval);
+    rval = make_value_expression(lval, btype);
   }
   return rval;
 }
@@ -1151,12 +1153,12 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
     float fval = mpfr_get_flt(val, GMP_RNDN);
     llvm::APFloat apf(fval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    return make_value_expression(fcon);
+    return make_value_expression(fcon, btype);
   } else if (btype->type() == llvm_double_type_) {
     double dval = mpfr_get_d(val, GMP_RNDN);
     llvm::APFloat apf(dval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    return make_value_expression(fcon);
+    return make_value_expression(fcon, btype);
   } else if (btype->type() == llvm_long_double_type_) {
     assert("not yet implemented" && false);
     return nullptr;
@@ -1184,8 +1186,8 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val) {
 
 Bexpression *Llvm_backend::boolean_constant_expression(bool val) {
   return val ?
-      make_value_expression(llvm::ConstantInt::getTrue(context_)) :
-      make_value_expression(llvm::ConstantInt::getFalse(context_));
+      make_value_expression(llvm::ConstantInt::getTrue(context_), bool_type()) :
+      make_value_expression(llvm::ConstantInt::getFalse(context_), bool_type());
 }
 
 // Return the real part of a complex expression.
@@ -1278,91 +1280,89 @@ Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
   return nullptr;
 }
 
-#if 0
+static llvm::CmpInst::Predicate compare_op_to_pred(Operator op,
+                                                   llvm::Type *typ,
+                                                   bool isSigned) {
+  bool isFloat = typ->isFloatingPointTy();
 
-// Convert a gofrontend operator to an equivalent tree_code.
-
-static enum tree_code
-operator_to_tree_code(Operator op, tree type)
-{
-  enum tree_code code;
-  switch (op)
-    {
+  if (isFloat) {
+    switch (op) {
     case OPERATOR_EQEQ:
-      code = EQ_EXPR;
-      break;
+      return llvm::CmpInst::Predicate::FCMP_OEQ;
     case OPERATOR_NOTEQ:
-      code = NE_EXPR;
-      break;
+      return llvm::CmpInst::Predicate::FCMP_ONE;
     case OPERATOR_LT:
-      code = LT_EXPR;
-      break;
+      return llvm::CmpInst::Predicate::FCMP_OLT;
     case OPERATOR_LE:
-      code = LE_EXPR;
-      break;
+      return llvm::CmpInst::Predicate::FCMP_OLE;
     case OPERATOR_GT:
-      code = GT_EXPR;
-      break;
+      return llvm::CmpInst::Predicate::FCMP_OGT;
     case OPERATOR_GE:
-      code = GE_EXPR;
-      break;
-    case OPERATOR_OROR:
-      code = TRUTH_ORIF_EXPR;
-      break;
-    case OPERATOR_ANDAND:
-      code = TRUTH_ANDIF_EXPR;
-      break;
-    case OPERATOR_PLUS:
-      code = PLUS_EXPR;
-      break;
-    case OPERATOR_MINUS:
-      code = MINUS_EXPR;
-      break;
-    case OPERATOR_OR:
-      code = BIT_IOR_EXPR;
-      break;
-    case OPERATOR_XOR:
-      code = BIT_XOR_EXPR;
-      break;
-    case OPERATOR_MULT:
-      code = MULT_EXPR;
-      break;
-    case OPERATOR_DIV:
-      if (TREE_CODE(type) == REAL_TYPE || TREE_CODE(type) == COMPLEX_TYPE)
-        code = RDIV_EXPR;
-      else
-        code = TRUNC_DIV_EXPR;
-      break;
-    case OPERATOR_MOD:
-      code = TRUNC_MOD_EXPR;
-      break;
-    case OPERATOR_LSHIFT:
-      code = LSHIFT_EXPR;
-      break;
-    case OPERATOR_RSHIFT:
-      code = RSHIFT_EXPR;
-      break;
-    case OPERATOR_AND:
-      code = BIT_AND_EXPR;
-      break;
-    case OPERATOR_BITCLEAR:
-      code = BIT_AND_EXPR;
-      break;
+      return llvm::CmpInst::Predicate::FCMP_OGE;
     default:
-      gcc_unreachable();
+      break;
     }
-
-  return code;
+  } else {
+    switch (op) {
+    case OPERATOR_EQEQ:
+      return llvm::CmpInst::Predicate::ICMP_EQ;
+    case OPERATOR_NOTEQ:
+      return llvm::CmpInst::Predicate::ICMP_NE;
+    case OPERATOR_LT:
+      return (isSigned ? llvm::CmpInst::Predicate::ICMP_SLT
+                       : llvm::CmpInst::Predicate::ICMP_ULT);
+    case OPERATOR_LE:
+      return (isSigned ? llvm::CmpInst::Predicate::ICMP_SLE
+                       : llvm::CmpInst::Predicate::ICMP_ULE);
+    case OPERATOR_GT:
+      return (isSigned ? llvm::CmpInst::Predicate::ICMP_SGT
+                       : llvm::CmpInst::Predicate::ICMP_UGT);
+    case OPERATOR_GE:
+      return (isSigned ? llvm::CmpInst::Predicate::ICMP_SGE
+                       : llvm::CmpInst::Predicate::ICMP_UGE);
+    default:
+      break;
+    }
+  }
+  assert(false);
+  return llvm::CmpInst::BAD_ICMP_PREDICATE;
 }
-
-#endif
 
 // Return an expression for the binary operation LEFT OP RIGHT.
 
-Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
+Bexpression *Llvm_backend::binary_expression(Operator op,
+                                             Bexpression *left,
                                              Bexpression *right,
                                              Location location) {
-  assert(false && "Llvm_backend::binary_expression not yet impl");
+  if (left == error_expression() || right == error_expression())
+    return error_expression();
+  llvm::Type *ltype = left->value()->getType();
+  llvm::Type *rtype = right->value()->getType();
+  assert(ltype == rtype);
+  assert(is_unsigned_integer_expr(left) == is_unsigned_integer_expr(right));
+  bool isUnsigned = is_unsigned_integer_expr(left);
+
+  switch(op) {
+    case OPERATOR_EQEQ:
+    case OPERATOR_NOTEQ:
+    case OPERATOR_LT:
+    case OPERATOR_LE:
+    case OPERATOR_GT:
+    case OPERATOR_GE: {
+      llvm::CmpInst::Predicate pred =
+          compare_op_to_pred(op, ltype, isUnsigned);
+      llvm::Instruction *cmp;
+      if (ltype->isFloatingPointTy())
+        cmp = new llvm::FCmpInst(pred, left->value(), right->value(), "fcmp");
+      else
+        cmp = new llvm::ICmpInst(pred, left->value(), right->value(), "icmp");
+      return new Bexpression(cmp);
+    }
+    default:
+      std::cerr << "Op " << op << "unhandled\n";
+      assert(false);
+  }
+
   return nullptr;
 }
 
@@ -1423,8 +1423,21 @@ Bstatement *Llvm_backend::error_statement() {
 // An expression as a statement.
 
 Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
-  assert(false && "Llvm_backend::expression_statement not yet impl");
-  return nullptr;
+  if (expr == error_expression())
+    return error_statement();
+  InstListStatement *st = new InstListStatement();
+  if (expr->instructions().size())
+    for (auto inst : expr->instructions())
+      st->appendInstruction(inst);
+  else {
+    // Create an instruction to capture the value (Q: will this
+    // actually be needed?)
+    llvm::SelectInst *sel =
+        llvm::SelectInst::Create(llvm::ConstantInt::getTrue(context_),
+                                 expr->value(), expr->value());
+    st->appendInstruction(sel);
+  }
+  return st;
 }
 
 // Variable initialization.

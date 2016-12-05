@@ -709,6 +709,11 @@ private:
     return unsigned_integer_types_.find(t) != unsigned_integer_types_.end();
   }
 
+  // Did gofrontend mark this expression has having unsigned integer type?
+  bool is_unsigned_integer_expr(Bexpression *e) const {
+    return unsigned_integer_exprs_.find(e) != unsigned_integer_exprs_.end();
+  }
+
   // add a builtin function definition
   void define_builtin_fcn(const char* name, const char* libname,
                           llvm::Function *fcn);
@@ -744,7 +749,7 @@ private:
   void define_trig_builtins();
 
   // Create a Bexpression to hold an llvm::Value for a constant or instruction
-  Bexpression *make_value_expression(llvm::Value *val);
+  Bexpression *make_value_expression(llvm::Value *val, Btype *btype);
 
   // Assignment helper
   Bstatement *do_assignment(llvm::Value *lvalue,
@@ -799,11 +804,13 @@ private:
   // to keep track of named types (for symbol and debug info emit).
   named_type_maptyp named_typemap_;
 
-  // Within the LLVM world there is no notion of an unsigned (vs signed)
-  // type, there are only signed/unsigned operations on vanilla integer
-  // types. This set keeps track of types that the frontend has told
-  // us are unsigned; see Llvm_backend::integer_type for more.
+  // Within the LLVM world there is no notion of an unsigned (vs
+  // signed) type, there are only signed/unsigned operations on
+  // vanilla integer types. These sets keep track of types +
+  // expressions that the frontend has told us are unsigned; see
+  // Llvm_backend::integer_type for more.
   std::unordered_set<Btype *> unsigned_integer_types_;
+  std::unordered_set<Bexpression *> unsigned_integer_exprs_;
 
   // Placeholder types
   std::unordered_set<Btype *> placeholders_;
