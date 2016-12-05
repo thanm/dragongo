@@ -361,6 +361,20 @@ Llvm_backend::~Llvm_backend() {
     delete bfcn;
 }
 
+std::string Llvm_backend::namegen(const char *tag, unsigned expl) {
+  auto it = nametags_.find(tag);
+  unsigned count = 0;
+  if (it != nametags_.end())
+    count = it->second + 1;
+  if (expl != 0xffffffff)
+    count = expl;
+  std::stringstream ss;
+  ss << tag << "." << count;
+  if (expl == 0xffffffff)
+    nametags_[tag] = count;
+  return ss.str();
+}
+
 Btype *Llvm_backend::make_anon_type(llvm::Type *lt) {
   assert(lt);
 
@@ -1280,9 +1294,37 @@ Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
   return nullptr;
 }
 
+static llvm::Instruction::BinaryOps arith_op_to_binop(Operator op,
+                                                      llvm::Type *typ,
+                                                      bool isUnsigned,
+                                                      const char* &tag) {
+  bool isFloat = typ->isFloatingPointTy();
+
+  if (isFloat) {
+    switch (op) {
+      case OPERATOR_PLUS:
+        tag = "fadd";
+        return llvm::Instruction::FAdd;
+      default:
+        break;
+    }
+  } else {
+    switch (op) {
+      case OPERATOR_PLUS:
+        tag = "add";
+        return llvm::Instruction::Add;
+      default:
+        break;
+    }
+  }
+  assert(false);
+  return llvm::Instruction::BinaryOpsEnd;
+}
+
 static llvm::CmpInst::Predicate compare_op_to_pred(Operator op,
                                                    llvm::Type *typ,
                                                    bool isSigned) {
+
   bool isFloat = typ->isFloatingPointTy();
 
   if (isFloat) {
@@ -1353,10 +1395,21 @@ Bexpression *Llvm_backend::binary_expression(Operator op,
           compare_op_to_pred(op, ltype, isUnsigned);
       llvm::Instruction *cmp;
       if (ltype->isFloatingPointTy())
-        cmp = new llvm::FCmpInst(pred, left->value(), right->value(), "fcmp");
+        cmp = new llvm::FCmpInst(pred, left->value(), right->value(),
+                                 namegen("fcmp"));
       else
-        cmp = new llvm::ICmpInst(pred, left->value(), right->value(), "icmp");
+        cmp = new llvm::ICmpInst(pred, left->value(), right->value(),
+                                 namegen("icmp"));
       return new Bexpression(cmp);
+    }
+    case OPERATOR_PLUS: {
+      const char *tag;
+      llvm::Instruction::BinaryOps llvmop =
+          arith_op_to_binop(op, ltype, isUnsigned, tag);
+      llvm::Instruction *binop =
+          llvm::BinaryOperator::Create(llvmop, left->value(), right->value(),
+                                       namegen(tag));
+      return new Bexpression(binop);
     }
     default:
       std::cerr << "Op " << op << "unhandled\n";
@@ -1893,11 +1946,11 @@ bool Llvm_backend::function_set_parameters(
 class GenBlocks {
  public:
   GenBlocks(llvm::LLVMContext &context,
+            Llvm_backend *be,
             Bfunction *function)
       : context_(context)
+      , be_(be)
       , function_(function)
-      , ifcount_(0)
-      , orphancount_(0)
   { }
 
   llvm::BasicBlock *walk(Bstatement *stmt, llvm::BasicBlock *curblock);
@@ -1906,17 +1959,11 @@ class GenBlocks {
 
  private:
 
-  std::string blockname(const char *tag, unsigned count) {
-    std::stringstream ss;
-    ss << tag << "." << count;
-    return ss.str();
-  }
-
   llvm::BasicBlock *getBlockForLabel(LabelId lab) {
     auto it = labelmap_.find(lab);
     if (it != labelmap_.end())
       return it->second;
-    std::string lname = blockname("label", lab);
+    std::string lname = be_->namegen("label", lab);
     llvm::Function *func = function()->function();
     llvm::BasicBlock *bb = llvm::BasicBlock::Create(context_, lname, func);
     labelmap_[lab] = bb;
@@ -1925,34 +1972,31 @@ class GenBlocks {
 
  private:
   llvm::LLVMContext &context_;
+  Llvm_backend *be_;
   Bfunction *function_;
   std::map<LabelId, llvm::BasicBlock *> labelmap_;
-  unsigned ifcount_;
-  unsigned orphancount_;
 };
 
 llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
                                    llvm::BasicBlock *curblock)
 {
-  ifcount_++;
-
   // Append the condition instructions to the current block
   for (auto inst : ifst->cond()->instructions())
     curblock->getInstList().push_back(inst);
 
   // Create true block
-  std::string tname = blockname("then", ifcount_);
+  std::string tname = be_->namegen("then");
   llvm::Function *func = function()->function();
   llvm::BasicBlock *tblock = llvm::BasicBlock::Create(context_, tname, func);
 
   // Push fallthrough block
-  std::string ftname = blockname("fallthrough", ifcount_);
+  std::string ftname = be_->namegen("fallthrough");
   llvm::BasicBlock *ft = llvm::BasicBlock::Create(context_, ftname, func);
 
   // Create false block if present
   llvm::BasicBlock *fblock = ft;
   if (ifst->falseStmt()) {
-    std::string fname = blockname("else", ifcount_);
+    std::string fname = be_->namegen("else");
     fblock = llvm::BasicBlock::Create(context_, fname, func);
   }
 
@@ -1998,7 +2042,7 @@ llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
       GotoStatement *gst = stmt->castToGotoStatement();
       llvm::BasicBlock *lbb = getBlockForLabel(gst->targetLabel());
       llvm::BranchInst::Create(lbb, curblock);
-      std::string n = blockname("orphan", orphancount_++);
+      std::string n = be_->namegen("orphan");
       llvm::Function *func = function()->function();
       llvm::BasicBlock *orphan =
           llvm::BasicBlock::Create(context_, n, func, lbb);
@@ -2042,7 +2086,7 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   llvm::BasicBlock *entryBlock = genEntryBlock(function);
 
   // Walk the code statements
-  GenBlocks gb(context_, function);
+  GenBlocks gb(context_, this, function);
   gb.walk(code_stmt, entryBlock);
 
   // debugging

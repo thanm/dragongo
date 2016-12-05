@@ -689,6 +689,9 @@ public:
 
   llvm::Module &module() { return *module_.get(); }
 
+  // For creating useful inst and block names
+  std::string namegen(const char *tag, unsigned expl = 0xffffffff);
+
 private:
   // Make an anonymous Btype from an llvm::Type
   Btype *make_anon_type(llvm::Type *lt);
@@ -858,8 +861,9 @@ private:
   // Map from LLVM values to Bvariable.
   std::unordered_map<llvm::Value *, Bvariable *> value_varmap_;
 
-  // Label management
-
+  // For creation of useful block and inst names. Key is tag (ex: "add")
+  // and val is counter to uniquify.
+  std::unordered_map<std::string, unsigned> nametags_;
 
   // Currently we don't do any commoning of Bfunction objects created
   // by the frontend, so here we keep track of all returned Bfunctions

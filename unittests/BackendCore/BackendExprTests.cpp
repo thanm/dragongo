@@ -207,25 +207,73 @@ TEST(BackendExprTests, TestCompareOps) {
 
   const char *exp = R"RAW_RESULT(
     store i1 true, i1* %loc1
-    %icmp = icmp eq i64 9, 3
-    %icmp = icmp ne i64 9, 3
-    %icmp = icmp ult i64 9, 3
-    %icmp = icmp ule i64 9, 3
-    %icmp = icmp ugt i64 9, 3
-    %icmp = icmp uge i64 9, 3
-    %icmp = icmp eq i64 9, 3
-    %icmp = icmp ne i64 9, 3
-    %icmp = icmp ult i64 9, 3
-    %icmp = icmp ule i64 9, 3
-    %icmp = icmp ugt i64 9, 3
-    %icmp = icmp uge i64 9, 3
-    %fcmp = fcmp oeq double 9.000000e+00, 3.000000e+00
-    %fcmp = fcmp one double 9.000000e+00, 3.000000e+00
-    %fcmp = fcmp olt double 9.000000e+00, 3.000000e+00
-    %fcmp = fcmp ole double 9.000000e+00, 3.000000e+00
-    %fcmp = fcmp ogt double 9.000000e+00, 3.000000e+00
-    %fcmp = fcmp oge double 9.000000e+00, 3.000000e+00
+    %icmp.0 = icmp eq i64 9, 3
+    %icmp.1 = icmp ne i64 9, 3
+    %icmp.2 = icmp ult i64 9, 3
+    %icmp.3 = icmp ule i64 9, 3
+    %icmp.4 = icmp ugt i64 9, 3
+    %icmp.5 = icmp uge i64 9, 3
+    %icmp.6 = icmp eq i64 9, 3
+    %icmp.7 = icmp ne i64 9, 3
+    %icmp.8 = icmp ult i64 9, 3
+    %icmp.9 = icmp ule i64 9, 3
+    %icmp.10 = icmp ugt i64 9, 3
+    %icmp.11 = icmp uge i64 9, 3
+    %fcmp.0 = fcmp oeq double 9.000000e+00, 3.000000e+00
+    %fcmp.1 = fcmp one double 9.000000e+00, 3.000000e+00
+    %fcmp.2 = fcmp olt double 9.000000e+00, 3.000000e+00
+    %fcmp.3 = fcmp ole double 9.000000e+00, 3.000000e+00
+    %fcmp.4 = fcmp ogt double 9.000000e+00, 3.000000e+00
+    %fcmp.5 = fcmp oge double 9.000000e+00, 3.000000e+00
     )RAW_RESULT";
+
+  std::string reason;
+  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  EXPECT_EQ("pass", equal ? "pass" : reason);
+
+  be->function_set_body(func, block);
+}
+
+TEST(BackendExprTests, TestArithOps) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  Operator optotest[] = { OPERATOR_PLUS };
+
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+
+  Bexpression *beic = mkInt64Const(be.get(), 9);
+  Bexpression *beic2 = mkInt64Const(be.get(), 3);
+  Bexpression *befc = mkFloat64Const(be.get(), 9.0);
+  Bexpression *befc2 = mkFloat64Const(be.get(), 3.0);
+  std::vector<std::pair<Bexpression *, Bexpression *> > valtotest;
+  valtotest.push_back(std::make_pair(beic, beic2));
+  valtotest.push_back(std::make_pair(befc, befc2));
+
+  Location loc;
+  Btype *boolt = be->bool_type();
+  Bvariable *loc1 = be->local_variable(func, "loc1", boolt, true, loc);
+  Bexpression *trueval = be->boolean_constant_expression(true);
+  Bstatement *is = be->init_statement(loc1, trueval);
+  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+
+  for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
+    Bexpression *bleft = valtotest[tidx].first;
+    Bexpression *bright = valtotest[tidx].second;
+    for (auto op : optotest) {
+      Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
+      Bstatement *es = be->expression_statement(cmp);
+      addStmtToBlock(be.get(), block, es);
+    }
+  }
+
+
+  const char *exp = R"RAW_RESULT(
+    store i1 true, i1* %loc1
+    %add.0 = add i64 9, 3
+    %fadd.0 = fadd double 9.000000e+00, 3.000000e+00
+  )RAW_RESULT";
 
   std::string reason;
   bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);

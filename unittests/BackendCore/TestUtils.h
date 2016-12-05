@@ -68,7 +68,7 @@ inline bool difftokens(const std::vector<std::string> &tv1,
     unsigned mins = std::min(tv1.size(), tv2.size());
     unsigned maxs = std::max(tv1.size(), tv2.size());
     for (unsigned idx = 0; idx < maxs; ++idx) {
-      if (idx == mins)
+      if (idx >= mins)
         ss << (idx < tv1.size() ? tv1[idx] : tv2[idx]) << " ";
     }
     diffreason = ss.str();
