@@ -108,7 +108,7 @@ Btype *mkFuncTyp(Backend *be, ...);
 llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...);
 
 // Returns func:  fname(i1, i2 int32) int64 { }
-Bfunction *mkFunci32o64(Backend *be, const char *fname);
+Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams = true);
 
 // Manufacture an unsigned 64-bit integer constant
 Bexpression *mkUint64Const(Backend *be, uint64_t val);

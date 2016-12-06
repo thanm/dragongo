@@ -10,6 +10,7 @@
 #include "TestUtils.h"
 #include "go-llvm-backend.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/Function.h"
 #include "gtest/gtest.h"
 
 using namespace llvm;
@@ -309,4 +310,60 @@ TEST(BackendExprTests, TestArithOps) {
 
   be->function_set_body(func, block);
 }
+
+TEST(BackendExprTests, TestMoreArith) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  // var x int64, y = 10, z = 11, w = 12
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  Btype *bi64t = be->integer_type(false, 64);
+  Location loc;
+  Bvariable *x = be->local_variable(func, "x", bi64t, true, loc);
+  Bvariable *y = be->local_variable(func, "y", bi64t, true, loc);
+  Bvariable *z = be->local_variable(func, "z", bi64t, true, loc);
+  Bvariable *w = be->local_variable(func, "w", bi64t, true, loc);
+  Bexpression *beic9 = mkInt64Const(be.get(), 9);
+  Bstatement *isy = be->init_statement(y, beic9);
+  Bblock *block = mkBlockFromStmt(be.get(), func, isy);
+  Bexpression *beic10 = mkInt64Const(be.get(), 10);
+  Bstatement *isz = be->init_statement(z, beic10);
+  addStmtToBlock(be.get(), block, isz);
+  Bexpression *beic11 = mkInt64Const(be.get(), 11);
+  Bstatement *isw = be->init_statement(w, beic11);
+  addStmtToBlock(be.get(), block, isw);
+
+  // x = y + z + w
+  bool noLvalue = false;
+  Bexpression *vey = be->var_expression(y, noLvalue, loc);
+  Bexpression *vez = be->var_expression(z, noLvalue, loc);
+  Bexpression *vew = be->var_expression(w, noLvalue, loc);
+  Bexpression *ypz = be->binary_expression(OPERATOR_PLUS, vey, vez, loc);
+  Bexpression *ypzpw = be->binary_expression(OPERATOR_PLUS, ypz, vew, loc);
+  bool yesLvalue = true;
+  Bexpression *vex = be->var_expression(x, yesLvalue, loc);
+  Bstatement *as =
+      be->assignment_statement(vex, ypzpw, loc);
+  addStmtToBlock(be.get(), block, as);
+
+  const char *exp = R"RAW_RESULT(
+  store i64 9, i64* %y
+  store i64 10, i64* %z
+  store i64 11, i64* %w
+  %y.ld.0 = load i64, i64* %y
+  %z.ld.0 = load i64, i64* %z
+  %add.0 = add i64 %y.ld.0, %z.ld.0
+  %w.ld.0 = load i64, i64* %w
+  %add.1 = add i64 %add.0, %w.ld.0
+  store i64 %add.1, i64* %x
+  )RAW_RESULT";
+
+  std::string reason;
+  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  EXPECT_EQ("pass", equal ? "pass" : reason);
+
+  be->function_set_body(func, block);
+}
+
 }

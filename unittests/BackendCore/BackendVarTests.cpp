@@ -70,7 +70,8 @@ TEST(BackendVarTests, MakeParamVar) {
   LLVMContext C;
 
   std::unique_ptr<Backend> be(go_get_backend(C));
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  bool dontMakeParams = false;
+  Bfunction *func = mkFunci32o64(be.get(), "foo", dontMakeParams);
 
   // Add params for the function
   Btype *bi32t = be->integer_type(false, 32);

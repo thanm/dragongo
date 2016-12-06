@@ -732,15 +732,22 @@ private:
   // For non-cacheable values (for example, an lvalue reference to a local
   // var in a function), set scope to LocalScope (no caching in this case).
   enum ValExprScope { GlobalScope, LocalScope };
-  Bexpression *make_value_expression(llvm::Value *val, Btype *btype,
-                                     ValExprScope scope);
+  Bexpression *makeValueExpression(llvm::Value *val,
+                                   Btype *btype,
+                                   ValExprScope scope);
 
   // Create a Bexpression to hold a value being computed by the
   // instruction "inst".
-  Bexpression *make_inst_expression(llvm::Instruction *inst, Btype *btype);
+  Bexpression *makeInstExpression(llvm::Instruction *inst, Btype *btype);
+
+  // Combing the contents of a list of src expressions to produce
+  // a new expression.
+  Bexpression *makeExpression(llvm::Instruction *value,
+                              Btype *btype,
+                              Bexpression *src, ...);
 
   // Assignment helper
-  Bstatement *do_assignment(llvm::Value *lvalue, Bexpression *lhs,
+  Bstatement *makeAssignment(llvm::Value *lvalue, Bexpression *lhs,
                             Bexpression *rhs, Location);
 
   // Helper to set up entry block for function

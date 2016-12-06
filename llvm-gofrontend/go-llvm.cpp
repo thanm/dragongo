@@ -184,6 +184,8 @@ Bfunction::~Bfunction() {
     delete ais;
   for (auto &kv : argtoval_)
     delete kv.second;
+  for (auto &lab : labels_)
+    delete lab;
 }
 
 llvm::Argument *Bfunction::getNthArg(unsigned argIdx) {
@@ -214,10 +216,13 @@ void Bfunction::genProlog(llvm::BasicBlock *entry) {
   llvm::Function *func = function();
 
   unsigned nParms = func->getFunctionType()->getNumParams();
+  std::vector<llvm::Instruction *> spills;
   for (unsigned idx = 0; idx < nParms; ++idx) {
     llvm::Argument *arg = getNthArg(idx);
     llvm::Instruction *inst = argValue(arg);
     entry->getInstList().push_back(inst);
+    llvm::Instruction *si = new llvm::StoreInst(arg, inst);
+    spills.push_back(si);
   }
   argtoval_.clear();
 
@@ -225,11 +230,16 @@ void Bfunction::genProlog(llvm::BasicBlock *entry) {
   for (auto aa : allocas_)
     entry->getInstList().push_back(aa);
   allocas_.clear();
+
+  // Param spills
+  for (auto sp : spills)
+    entry->getInstList().push_back(sp);
 }
 
 Blabel *Bfunction::newLabel() {
   Blabel *lb = new Blabel(this, labelcount_++);
   labelmap_.push_back(nullptr);
+  labels_.push_back(lb);
   return lb;
 }
 
@@ -246,16 +256,27 @@ Bstatement *Bfunction::newGotoStatement(Blabel *label, Location location) {
 }
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
-    : context_(context), module_(new llvm::Module("gomodule", context)),
-      datalayout_(module_->getDataLayout()), addressSpace_(0),
-      complexFloatType_(nullptr), complexDoubleType_(nullptr),
-      errorType_(nullptr), llvmVoidType_(nullptr), llvmPtrType_(nullptr),
-      llvmSizeType_(nullptr), llvmIntegerType_(nullptr), llvmInt8Type_(nullptr),
-      llvmInt32Type_(nullptr), llvmInt64Type_(nullptr), llvmFloatType_(nullptr),
-      llvmDoubleType_(nullptr), llvmLongDoubleType_(nullptr)
-      //, llvm_lifetime_start_(nullptr)
-      ,
-      TLI_(nullptr), errorFunction_(nullptr) {
+    : context_(context)
+    , module_(new llvm::Module("gomodule", context))
+    , datalayout_(module_->getDataLayout())
+    , addressSpace_(0)
+    , traceLevel_(0)
+    , complexFloatType_(nullptr)
+    , complexDoubleType_(nullptr)
+    , errorType_(nullptr)
+    , llvmVoidType_(nullptr)
+    , llvmPtrType_(nullptr)
+    , llvmSizeType_(nullptr)
+    , llvmIntegerType_(nullptr)
+    , llvmInt8Type_(nullptr)
+    , llvmInt32Type_(nullptr)
+    , llvmInt64Type_(nullptr)
+    , llvmFloatType_(nullptr)
+    , llvmDoubleType_(nullptr)
+    , llvmLongDoubleType_(nullptr)
+    , TLI_(nullptr)
+    , errorFunction_(nullptr)
+{
   // LLVM doesn't have anything that corresponds directly to the
   // gofrontend notion of an error type. For now we create a so-called
   // 'identified' anonymous struct type and have that act as a
@@ -295,9 +316,8 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
       new Bexpression(errorFunction_->function(), errorType_));
 
   // Error statement
-  llvm::Instruction *ei = new llvm::UnreachableInst(context_);
-  Bexpression *unrexp = new Bexpression(ei, errorType_);
-  errorStatement_.reset(Bstatement::stmtFromExprs(unrexp, nullptr));
+  errorStatement_.reset(Bstatement::stmtFromExprs(errorExpression_.get(),
+                                                  nullptr));
 
   // Reuse the error function as the value for errorVariable_
   errorVariable_.reset(
@@ -307,7 +327,6 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
 }
 
 Llvm_backend::~Llvm_backend() {
-  Bstatement::destroy(errorStatement_.get(), DelInstructions);
   for (auto &expr : expressions_)
     delete expr;
   for (auto pht : placeholders_)
@@ -967,7 +986,7 @@ void Llvm_backend::defineSyncFetchAndAddBuiltins() {
   }
 }
 
-Bexpression *Llvm_backend::make_value_expression(llvm::Value *val, Btype *btype,
+Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val, Btype *btype,
                                                  ValExprScope scope) {
   assert(val);
   if (scope == GlobalScope) {
@@ -985,7 +1004,7 @@ Bexpression *Llvm_backend::make_value_expression(llvm::Value *val, Btype *btype,
   return rval;
 }
 
-Bexpression *Llvm_backend::make_inst_expression(llvm::Instruction *inst,
+Bexpression *Llvm_backend::makeInstExpression(llvm::Instruction *inst,
                                                 Btype *btype) {
   assert(inst);
   Bexpression *rval = new Bexpression(inst, btype);
@@ -1000,7 +1019,7 @@ Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   if (btype == errorType_)
     return errorExpression_.get();
   llvm::Value *zeroval = llvm::Constant::getNullValue(btype->type());
-  return make_value_expression(zeroval, btype, GlobalScope);
+  return makeValueExpression(zeroval, btype, GlobalScope);
 }
 
 Bexpression *Llvm_backend::error_expression() { return errorExpression_.get(); }
@@ -1022,13 +1041,13 @@ Bexpression *Llvm_backend::var_expression(Bvariable *var, bool lvalue,
   if (lvalue) {
     ValExprScope scope =
         (var->flavor() == GlobalVar ? GlobalScope : LocalScope);
-    return make_value_expression(var->value(), var->getType(), scope);
+    return makeValueExpression(var->value(), var->getType(), scope);
   } else {
     std::string ldname(var->getName());
     ldname += ".ld";
     ldname = namegen(ldname);
     llvm::Instruction *ldinst = new llvm::LoadInst(var->value(), ldname);
-    return make_inst_expression(ldinst, var->getType());
+    return makeInstExpression(ldinst, var->getType());
   }
 }
 
@@ -1091,12 +1110,12 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
     uint64_t val = checked_convert_mpz_to_int<uint64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::get(btype->type(), val);
-    rval = make_value_expression(lval, btype, GlobalScope);
+    rval = makeValueExpression(lval, btype, GlobalScope);
   } else {
     int64_t val = checked_convert_mpz_to_int<int64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::getSigned(btype->type(), val);
-    rval = make_value_expression(lval, btype, GlobalScope);
+    rval = makeValueExpression(lval, btype, GlobalScope);
   }
   return rval;
 }
@@ -1118,12 +1137,12 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
     float fval = mpfr_get_flt(val, GMP_RNDN);
     llvm::APFloat apf(fval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    return make_value_expression(fcon, btype, GlobalScope);
+    return makeValueExpression(fcon, btype, GlobalScope);
   } else if (btype->type() == llvmDoubleType_) {
     double dval = mpfr_get_d(val, GMP_RNDN);
     llvm::APFloat apf(dval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    return make_value_expression(fcon, btype, GlobalScope);
+    return makeValueExpression(fcon, btype, GlobalScope);
   } else if (btype->type() == llvmLongDoubleType_) {
     assert("not yet implemented" && false);
     return nullptr;
@@ -1152,7 +1171,7 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val) {
 Bexpression *Llvm_backend::boolean_constant_expression(bool val) {
   llvm::Value *con = (val ? llvm::ConstantInt::getTrue(context_)
                           : llvm::ConstantInt::getFalse(context_));
-  return make_value_expression(con, bool_type(), GlobalScope);
+  return makeValueExpression(con, bool_type(), GlobalScope);
 }
 
 // Return the real part of a complex expression.
@@ -1351,7 +1370,9 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
     else
       cmp = new llvm::ICmpInst(pred, left->value(), right->value(),
                                namegen("icmp"));
-    return make_inst_expression(cmp, bltype);
+    Bexpression *e = makeExpression(cmp, bltype, left, right, nullptr);
+    e->appendInstruction(cmp);
+    return e;
   }
   case OPERATOR_PLUS: {
     const char *tag;
@@ -1359,7 +1380,9 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
         arith_op_to_binop(op, ltype, isUnsigned, tag);
     llvm::Instruction *binop = llvm::BinaryOperator::Create(
         llvmop, left->value(), right->value(), namegen(tag));
-    return make_inst_expression(binop, bltype);
+    Bexpression *e = makeExpression(binop, bltype, left, right, nullptr);
+    e->appendInstruction(binop);
+    return e;
   }
   default:
     std::cerr << "Op " << op << "unhandled\n";
@@ -1436,11 +1459,29 @@ Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
 Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
   if (init == errorExpression_.get())
     return errorStatement_.get();
-  return do_assignment(var->value(), nullptr, init, Location());
+  return makeAssignment(var->value(), nullptr, init, Location());
 }
 
-Bstatement *Llvm_backend::do_assignment(llvm::Value *lval, Bexpression *lhs,
-                                        Bexpression *rhs, Location location) {
+Bexpression *Llvm_backend::makeExpression(llvm::Instruction *value,
+                                           Btype *btype,
+                                           Bexpression *src,
+                                           ...)
+{
+  Bexpression *result = makeValueExpression(value, btype, LocalScope);
+  va_list ap;
+  va_start(ap, src);
+  while (src) {
+    for (auto inst : src->instructions()) {
+      assert(inst->getParent() == nullptr);
+      result->appendInstruction(inst);
+    }
+    src = va_arg(ap, Bexpression *);
+  }
+  return result;
+}
+
+Bstatement *Llvm_backend::makeAssignment(llvm::Value *lval, Bexpression *lhs,
+                                         Bexpression *rhs, Location location) {
   llvm::PointerType *pt = llvm::cast<llvm::PointerType>(lval->getType());
   assert(pt);
   llvm::Value *rval = rhs->value();
@@ -1449,17 +1490,7 @@ Bstatement *Llvm_backend::do_assignment(llvm::Value *lval, Bexpression *lhs,
   // FIXME: alignment?
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
 
-  Bexpression *stexp = make_value_expression(si, rhs->btype(), LocalScope);
-  for (auto inst : rhs->instructions()) {
-    assert(inst->getParent() == nullptr);
-    stexp->appendInstruction(inst);
-  }
-  if (lhs) {
-    for (auto inst : lhs->instructions()) {
-      assert(inst->getParent() == nullptr);
-      stexp->appendInstruction(inst);
-    }
-  }
+  Bexpression *stexp = makeExpression(si, rhs->btype(), rhs, lhs, nullptr);
   stexp->appendInstruction(si);
   ExprListStatement *els = Bstatement::stmtFromExprs(stexp, nullptr);
   return els;
@@ -1472,7 +1503,7 @@ Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
                                                Location location) {
   if (lhs == errorExpression_.get() || rhs == errorExpression_.get())
     return errorStatement_.get();
-  return do_assignment(lhs->value(), lhs, rhs, location);
+  return makeAssignment(lhs->value(), lhs, rhs, location);
 }
 
 Bstatement *
@@ -1492,12 +1523,10 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   // since their values should not be feeding into anything else (and
   // since Go functions can return multiple values).
   Btype *btype = nullptr;
+
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, vals[0]->value());
-  Bexpression *rexp = make_value_expression(ri, btype, LocalScope);
-  for (auto inst : vals[0]->instructions()) {
-    assert(inst->getParent() == nullptr);
-    rexp->appendInstruction(inst);
-  }
+
+  Bexpression *rexp = makeExpression(ri, btype, vals[0], nullptr);
   rexp->appendInstruction(ri);
   ExprListStatement *els = Bstatement::stmtFromExprs(rexp, nullptr);
   return els;

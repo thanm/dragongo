@@ -10,6 +10,7 @@
 #include "TestUtils.h"
 #include "go-llvm-backend.h"
 #include "gtest/gtest.h"
+#include "llvm/IR/Verifier.h"
 
 using namespace llvm;
 using namespace goBackendUnitTests;
@@ -143,11 +144,13 @@ TEST(BackendStmtTests, TestLabelGotoStmts) {
 
   bool ok = be->function_set_body(func, block);
   EXPECT_TRUE(ok);
+
+
 }
 
 TEST(BackendStmtTests, TestIfStmt) {
   LLVMContext C;
-  std::unique_ptr<Backend> be(go_get_backend(C));
+  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
 
   Location loc;
   Btype *bi64t = be->integer_type(false, 64);
@@ -185,5 +188,9 @@ TEST(BackendStmtTests, TestIfStmt) {
   // set function body
   bool ok = be->function_set_body(func, eb);
   EXPECT_TRUE(ok);
+
+  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  EXPECT_FALSE(!broken && "Module not well-formed.");
 }
+
 }

@@ -216,7 +216,7 @@ llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...) {
   return llvm::FunctionType::get(rtyp, elems, false);
 }
 
-Bfunction *mkFunci32o64(Backend *be, const char *fname) {
+Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams) {
   Btype *bi64t = be->integer_type(false, 64);
   Btype *bi32t = be->integer_type(false, 32);
   Btype *befty =
@@ -227,8 +227,14 @@ Bfunction *mkFunci32o64(Backend *be, const char *fname) {
   bool split_stack = true;
   bool unique_sec = false;
   Location loc;
-  return be->function(befty, fname, fname, visible, is_declaration, is_inl,
-                      split_stack, unique_sec, loc);
+  Bfunction *func = be->function(befty, fname, fname, visible,
+                                 is_declaration, is_inl,
+                                 split_stack, unique_sec, loc);
+  if (mkParams) {
+    be->parameter_variable(func, "param1", bi32t, false, loc);
+    be->parameter_variable(func, "param2", bi32t, false, loc);
+  }
+  return func;
 }
 
 Bexpression *mkUint64Const(Backend *be, uint64_t val) {
