@@ -8,9 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestUtils.h"
+#include "go-llvm-backend.h"
 #include "llvm/IR/Function.h"
 #include "gtest/gtest.h"
-#include "go-llvm-backend.h"
 
 using namespace llvm;
 using namespace goBackendUnitTests;
@@ -26,27 +26,24 @@ TEST(BackendFcnTests, MakeFunction) {
   Btype *bi32t = be->integer_type(false, 32);
 
   // func foo(i1, i2 int32) int64 { }
-  Btype *befty = mkFuncTyp(be.get(),
-                           L_PARM, bi32t,
-                           L_PARM, bi32t,
-                           L_RES, bi64t,
-                           L_END);
+  Btype *befty =
+      mkFuncTyp(be.get(), L_PARM, bi32t, L_PARM, bi32t, L_RES, bi64t, L_END);
 
   // FIXME: this is not supported yet.
   bool in_unique_section = false;
 
   const bool is_declaration = true;
-  const bool is_visible[2] = { true, false };
-  const bool is_inlinable[2] = { true, false };
-  bool split_stack[2] = { true, false };
+  const bool is_visible[2] = {true, false};
+  const bool is_inlinable[2] = {true, false};
+  bool split_stack[2] = {true, false};
   Location loc;
   bool first = true;
   for (auto vis : is_visible) {
     for (auto inl : is_inlinable) {
       for (auto split : split_stack) {
         Bfunction *befcn =
-            be->function(befty, "foo", "foo", vis,
-                         is_declaration, inl, split, in_unique_section, loc);
+            be->function(befty, "foo", "foo", vis, is_declaration, inl, split,
+                         in_unique_section, loc);
         llvm::Function *llfunc = befcn->function();
         ASSERT_TRUE(llfunc != NULL);
         if (first) {
@@ -67,9 +64,8 @@ TEST(BackendFcnTests, MakeFunction) {
 
   // Try to create a function with an error type -- we should
   // get back error_function
-  Bfunction *mistake =
-      be->function(be->error_type(), "bad", "bad", true, true,
-                   false, false, false, loc);
+  Bfunction *mistake = be->function(be->error_type(), "bad", "bad", true, true,
+                                    false, false, false, loc);
   EXPECT_EQ(mistake, be_error_fcn);
 }
 
@@ -80,19 +76,13 @@ TEST(BackendFcnTests, BuiltinFunctionsMisc) {
 
   std::unordered_set<Bfunction *> results;
   std::vector<std::string> tocheck = {
-    "__sync_fetch_and_add_1",
-    "__sync_fetch_and_add_2",
-    "__sync_fetch_and_add_4",
-    "__sync_fetch_and_add_8",
-    "__builtin_trap",
-    "__builtin_expect",
-    "__builtin_memcmp",
-    "__builtin_ctz",
-    "__builtin_ctzll",
-    "__builtin_bswap32",
-    "__builtin_bswap64",
-    "__builtin_return_address",
-    "__builtin_frame_address",
+      "__sync_fetch_and_add_1",  "__sync_fetch_and_add_2",
+      "__sync_fetch_and_add_4",  "__sync_fetch_and_add_8",
+      "__builtin_trap",          "__builtin_expect",
+      "__builtin_memcmp",        "__builtin_ctz",
+      "__builtin_ctzll",         "__builtin_bswap32",
+      "__builtin_bswap64",       "__builtin_return_address",
+      "__builtin_frame_address",
   };
   for (auto fname : tocheck) {
     Bfunction *bfcn = be->lookup_builtin(fname);
@@ -110,10 +100,9 @@ TEST(BackendFcnTests, BuiltinFunctionsTrig) {
 
   std::unordered_set<Bfunction *> results;
   std::vector<std::string> tocheck = {
-    "acos", "asin", "atan", "atan2", "ceil", "cos",
-    "exp", "expm1", "fabs", "floor", "fmod", "log",
-    "log1p", "log10", "log2", "sin", "sqrt", "tan",
-    "trunc", "ldexp",
+      "acos",  "asin", "atan",  "atan2", "ceil",  "cos",   "exp",
+      "expm1", "fabs", "floor", "fmod",  "log",   "log1p", "log10",
+      "log2",  "sin",  "sqrt",  "tan",   "trunc", "ldexp",
   };
   for (auto fname : tocheck) {
 
@@ -156,5 +145,4 @@ TEST(BackendFcnTests, MakeBlocks) {
   cl.add(bb);
   ASSERT_TRUE(bb != nullptr);
 }
-
 }

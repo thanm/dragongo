@@ -18,6 +18,7 @@
 #include "go-system.h"
 #include "gogo.h"
 
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
@@ -27,23 +28,15 @@
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
 
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
-Bexpression::Bexpression(llvm::Value *value,
-                         Btype *btype)
-    : value_(value)
-    , btype_(btype)
-{
-}
+Bexpression::Bexpression(llvm::Value *value, Btype *btype)
+    : value_(value), btype_(btype) {}
 
-Bexpression::~Bexpression()
-{
-}
+Bexpression::~Bexpression() {}
 
-void Bexpression::destroy(Bexpression *expr, WhichDel which)
-{
+void Bexpression::destroy(Bexpression *expr, WhichDel which) {
   if (which != DelWrappers)
     for (auto inst : expr->instructions())
       delete inst;
@@ -51,14 +44,12 @@ void Bexpression::destroy(Bexpression *expr, WhichDel which)
     delete expr;
 }
 
-static void indent(unsigned ilevel)
-{
+static void indent(unsigned ilevel) {
   for (unsigned i = 0; i < ilevel; ++i)
     std::cerr << " ";
 }
 
-void Bexpression::dump(unsigned ilevel)
-{
+void Bexpression::dump(unsigned ilevel) {
   indent(ilevel);
   bool hitValue = false;
   for (auto inst : instructions()) {
@@ -69,14 +60,13 @@ void Bexpression::dump(unsigned ilevel)
     }
     inst->dump();
   }
-  if (! hitValue) {
+  if (!hitValue) {
     indent(ilevel);
     value()->dump();
   }
 }
 
-ExprListStatement *Bstatement::stmtFromExprs(Bexpression *expr, ...)
-{
+ExprListStatement *Bstatement::stmtFromExprs(Bexpression *expr, ...) {
   ExprListStatement *st = new ExprListStatement();
   va_list ap;
   va_start(ap, expr);
@@ -87,107 +77,108 @@ ExprListStatement *Bstatement::stmtFromExprs(Bexpression *expr, ...)
   return st;
 }
 
-void Bstatement::dump(unsigned ilevel)
-{
-  switch(flavor()) {
-    case ST_Compound: {
-      CompoundStatement *cst = castToCompoundStatement();
-      indent(ilevel); std::cerr << "{\n";
-      for (auto st : cst->stlist())
-        st->dump(ilevel+2);
-      indent(ilevel); std::cerr << "}\n";
-      break;
+void Bstatement::dump(unsigned ilevel) {
+  switch (flavor()) {
+  case ST_Compound: {
+    CompoundStatement *cst = castToCompoundStatement();
+    indent(ilevel);
+    std::cerr << "{\n";
+    for (auto st : cst->stlist())
+      st->dump(ilevel + 2);
+    indent(ilevel);
+    std::cerr << "}\n";
+    break;
+  }
+  case ST_ExprList: {
+    ExprListStatement *elst = castToExprListStatement();
+    for (auto expr : elst->expressions()) {
+      expr->dump(ilevel + 2);
     }
-    case ST_ExprList: {
-      ExprListStatement *elst = castToExprListStatement();
-      for (auto expr : elst->expressions()) {
-        expr->dump(ilevel+2);
-      }
-      break;
+    break;
+  }
+  case ST_IfPlaceholder: {
+    IfPHStatement *ifst = castToIfPHStatement();
+    indent(ilevel);
+    std::cerr << "if:\n";
+    indent(ilevel + 2);
+    std::cerr << "cond:\n";
+    ifst->cond()->dump(ilevel + 2);
+    if (ifst->trueStmt()) {
+      indent(ilevel + 2);
+      std::cerr << "then:\n";
+      ifst->trueStmt()->dump(ilevel + 2);
     }
-    case ST_IfPlaceholder: {
-      IfPHStatement *ifst = castToIfPHStatement();
-      indent(ilevel); std::cerr << "if:\n";
-      indent(ilevel+2); std::cerr << "cond:\n";
-      ifst->cond()->dump(ilevel+2);
-      if (ifst->trueStmt()) {
-        indent(ilevel+2); std::cerr << "then:\n";
-        ifst->trueStmt()->dump(ilevel+2);
-      }
-      if (ifst->falseStmt()) {
-        indent(ilevel+2); std::cerr << "else:\n";
-        ifst->falseStmt()->dump(ilevel+2);
-      }
-      break;
+    if (ifst->falseStmt()) {
+      indent(ilevel + 2);
+      std::cerr << "else:\n";
+      ifst->falseStmt()->dump(ilevel + 2);
     }
-    case ST_Goto: {
-      GotoStatement *gst = castToGotoStatement();
-      indent(ilevel); std::cerr << "goto L" << gst->targetLabel() << "\n";
-      break;
-    }
-    case ST_Label: {
-      LabelStatement *lbst = castToLabelStatement();
-      indent(ilevel); std::cerr << "label L" << lbst->definedLabel() << "\n";
-      break;
-    }
+    break;
+  }
+  case ST_Goto: {
+    GotoStatement *gst = castToGotoStatement();
+    indent(ilevel);
+    std::cerr << "goto L" << gst->targetLabel() << "\n";
+    break;
+  }
+  case ST_Label: {
+    LabelStatement *lbst = castToLabelStatement();
+    indent(ilevel);
+    std::cerr << "label L" << lbst->definedLabel() << "\n";
+    break;
+  }
 
-    case ST_SwitchPlaceholder:
-      std::cerr << "not yet implemented\n";
-      break;
+  case ST_SwitchPlaceholder:
+    std::cerr << "not yet implemented\n";
+    break;
   }
 }
 
-void Bstatement::destroy(Bstatement *stmt, WhichDel which)
-{
+void Bstatement::destroy(Bstatement *stmt, WhichDel which) {
   assert(stmt);
-  switch(stmt->flavor()) {
-    case ST_Compound: {
-      CompoundStatement *cst = stmt->castToCompoundStatement();
-      for (auto st : cst->stlist())
-        destroy(st, which);
-      break;
-    }
+  switch (stmt->flavor()) {
+  case ST_Compound: {
+    CompoundStatement *cst = stmt->castToCompoundStatement();
+    for (auto st : cst->stlist())
+      destroy(st, which);
+    break;
+  }
 
-    case ST_ExprList:
-      if (which != DelWrappers) {
-        ExprListStatement *elst = stmt->castToExprListStatement();
-        for (auto expr : elst->expressions())
-          Bexpression::destroy(expr, which);
-      }
-      break;
-    case ST_IfPlaceholder: {
-      IfPHStatement *ifst = stmt->castToIfPHStatement();
-      if (which != DelWrappers)
-        Bexpression::destroy(ifst->cond(), which);
-      if (ifst->trueStmt())
-        Bstatement::destroy(ifst->trueStmt(), which);
-      if (ifst->falseStmt())
-        Bstatement::destroy(ifst->falseStmt(), which);
-      break;
+  case ST_ExprList:
+    if (which != DelWrappers) {
+      ExprListStatement *elst = stmt->castToExprListStatement();
+      for (auto expr : elst->expressions())
+        Bexpression::destroy(expr, which);
     }
-    case ST_Goto:
-    case ST_Label: {
-      // nothing to do here at the moment
-      break;
-    }
+    break;
+  case ST_IfPlaceholder: {
+    IfPHStatement *ifst = stmt->castToIfPHStatement();
+    if (which != DelWrappers)
+      Bexpression::destroy(ifst->cond(), which);
+    if (ifst->trueStmt())
+      Bstatement::destroy(ifst->trueStmt(), which);
+    if (ifst->falseStmt())
+      Bstatement::destroy(ifst->falseStmt(), which);
+    break;
+  }
+  case ST_Goto:
+  case ST_Label: {
+    // nothing to do here at the moment
+    break;
+  }
 
-    case ST_SwitchPlaceholder:
-      assert(false && "not yet implemented");
-      break;
+  case ST_SwitchPlaceholder:
+    assert(false && "not yet implemented");
+    break;
   }
   if (which != DelInstructions)
     delete stmt;
 }
 
 Bfunction::Bfunction(llvm::Function *f)
-    : function_(f)
-    , labelcount_(0)
-    , splitstack_(YesSplit)
-{
-}
+    : function_(f), labelcount_(0), splitstack_(YesSplit) {}
 
-Bfunction::~Bfunction()
-{
+Bfunction::~Bfunction() {
   // Needed mainly for unit testing
   for (auto ais : allocas_)
     delete ais;
@@ -195,8 +186,7 @@ Bfunction::~Bfunction()
     delete kv.second;
 }
 
-llvm::Argument *Bfunction::getNthArg(unsigned argIdx)
-{
+llvm::Argument *Bfunction::getNthArg(unsigned argIdx) {
   assert(function()->getFunctionType()->getNumParams() != 0);
   if (arguments_.empty())
     for (auto &arg : function()->getArgumentList())
@@ -205,8 +195,7 @@ llvm::Argument *Bfunction::getNthArg(unsigned argIdx)
   return arguments_[argIdx];
 }
 
-llvm::Instruction *Bfunction::argValue(llvm::Argument *arg)
-{
+llvm::Instruction *Bfunction::argValue(llvm::Argument *arg) {
   auto it = argtoval_.find(arg);
   if (it != argtoval_.end())
     return it->second;
@@ -215,15 +204,13 @@ llvm::Instruction *Bfunction::argValue(llvm::Argument *arg)
   // it. Store into alloca will be generated later.
   std::string aname(arg->getName());
   aname += ".addr";
-  llvm::Instruction *inst =
-      new llvm::AllocaInst(arg->getType(), aname);
+  llvm::Instruction *inst = new llvm::AllocaInst(arg->getType(), aname);
   assert(argtoval_.find(arg) == argtoval_.end());
   argtoval_[arg] = inst;
   return inst;
 }
 
-void Bfunction::genProlog(llvm::BasicBlock *entry)
-{
+void Bfunction::genProlog(llvm::BasicBlock *entry) {
   llvm::Function *func = function();
 
   unsigned nParms = func->getFunctionType()->getNumParams();
@@ -240,121 +227,104 @@ void Bfunction::genProlog(llvm::BasicBlock *entry)
   allocas_.clear();
 }
 
-Blabel *Bfunction::newLabel()
-{
+Blabel *Bfunction::newLabel() {
   Blabel *lb = new Blabel(this, labelcount_++);
   labelmap_.push_back(nullptr);
   return lb;
 }
 
-Bstatement *Bfunction::newLabelDefStatement(Blabel *label)
-{
+Bstatement *Bfunction::newLabelDefStatement(Blabel *label) {
   LabelStatement *st = new LabelStatement(label->label());
   assert(labelmap_[label->label()] == nullptr);
   labelmap_[label->label()] = st;
   return st;
 }
 
-Bstatement *Bfunction::newGotoStatement(Blabel *label, Location location)
-{
+Bstatement *Bfunction::newGotoStatement(Blabel *label, Location location) {
   GotoStatement *st = new GotoStatement(label->label(), location);
   return st;
 }
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
-    : context_(context)
-    , module_(new llvm::Module("gomodule", context))
-    , datalayout_(module_->getDataLayout())
-    , address_space_(0)
-    , complex_float_type_(nullptr)
-    , complex_double_type_(nullptr)
-    , error_type_(nullptr)
-    , llvm_void_type_(nullptr)
-    , llvm_ptr_type_(nullptr)
-    , llvm_size_type_(nullptr)
-    , llvm_integer_type_(nullptr)
-    , llvm_int8_type_(nullptr)
-    , llvm_int32_type_(nullptr)
-    , llvm_int64_type_(nullptr)
-    , llvm_float_type_(nullptr)
-    , llvm_double_type_(nullptr)
-    , llvm_long_double_type_(nullptr)
+    : context_(context), module_(new llvm::Module("gomodule", context)),
+      datalayout_(module_->getDataLayout()), addressSpace_(0),
+      complexFloatType_(nullptr), complexDoubleType_(nullptr),
+      errorType_(nullptr), llvmVoidType_(nullptr), llvmPtrType_(nullptr),
+      llvmSizeType_(nullptr), llvmIntegerType_(nullptr), llvmInt8Type_(nullptr),
+      llvmInt32Type_(nullptr), llvmInt64Type_(nullptr), llvmFloatType_(nullptr),
+      llvmDoubleType_(nullptr), llvmLongDoubleType_(nullptr)
       //, llvm_lifetime_start_(nullptr)
-    , TLI_(nullptr)
-    , error_function_(nullptr)
-{
+      ,
+      TLI_(nullptr), errorFunction_(nullptr) {
   // LLVM doesn't have anything that corresponds directly to the
   // gofrontend notion of an error type. For now we create a so-called
   // 'identified' anonymous struct type and have that act as a
   // stand-in. See http://llvm.org/docs/LangRef.html#structure-type
-  error_type_ = make_anon_type(llvm::StructType::create(context_));
+  errorType_ = makeAnonType(llvm::StructType::create(context_));
 
   // For use handling circular types and for builtin creation
-  llvm_ptr_type_ =
-      llvm::PointerType::get(llvm::StructType::create(context), address_space_);
+  llvmPtrType_ =
+      llvm::PointerType::get(llvm::StructType::create(context), addressSpace_);
 
   // Assorted pre-computer types for use in builtin function creation
-  llvm_void_type_ = llvm::Type::getVoidTy(context_);
-  llvm_integer_type_ =
+  llvmVoidType_ = llvm::Type::getVoidTy(context_);
+  llvmIntegerType_ =
       llvm::IntegerType::get(context_, datalayout_.getPointerSizeInBits());
-  llvm_size_type_ = llvm_integer_type_;
-  llvm_int8_type_ = llvm::IntegerType::get(context_, 8);
-  llvm_int32_type_ = llvm::IntegerType::get(context_, 32);
-  llvm_int64_type_ = llvm::IntegerType::get(context_, 64);
-  llvm_float_type_ = llvm::Type::getFloatTy(context_);
-  llvm_double_type_ = llvm::Type::getDoubleTy(context_);
-  llvm_long_double_type_ = llvm::Type::getFP128Ty(context_);
+  llvmSizeType_ = llvmIntegerType_;
+  llvmInt8Type_ = llvm::IntegerType::get(context_, 8);
+  llvmInt32Type_ = llvm::IntegerType::get(context_, 32);
+  llvmInt64Type_ = llvm::IntegerType::get(context_, 64);
+  llvmFloatType_ = llvm::Type::getFloatTy(context_);
+  llvmDoubleType_ = llvm::Type::getDoubleTy(context_);
+  llvmLongDoubleType_ = llvm::Type::getFP128Ty(context_);
 
   // Create and record an error function. By marking it as varargs this will
   // avoid any collisions with things that the front end might create, since
   // Go varargs is handled/lowered entirely by the front end.
   llvm::SmallVector<llvm::Type *, 1> elems(0);
-  elems.push_back(error_type_->type());
+  elems.push_back(errorType_->type());
   const bool isVarargs = true;
   llvm::FunctionType *eft = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context_), elems, isVarargs);
   llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
-  error_function_.reset(
+  errorFunction_.reset(
       new Bfunction(llvm::Function::Create(eft, plinkage, "", module_.get())));
 
   // Reuse the error function as the value for error_expression
-  error_expression_.reset(
-      new Bexpression(error_function_->function(), error_type()));
+  errorExpression_.reset(
+      new Bexpression(errorFunction_->function(), errorType_));
 
   // Error statement
   llvm::Instruction *ei = new llvm::UnreachableInst(context_);
-  Bexpression *unrexp = new Bexpression(ei, error_type());
-  error_statement_.reset(Bstatement::stmtFromExprs(unrexp, nullptr));
+  Bexpression *unrexp = new Bexpression(ei, errorType_);
+  errorStatement_.reset(Bstatement::stmtFromExprs(unrexp, nullptr));
 
-  Bstatement *errst = Bstatement::stmtFromExprs(error_expression(), nullptr);
-  error_statement_.reset(errst);
+  // Reuse the error function as the value for errorVariable_
+  errorVariable_.reset(
+      new Bvariable(errorType_, Location(), "", ErrorVar, false, nullptr));
 
-  // Reuse the error function as the value for error_variable
-  error_variable_.reset(new Bvariable(error_type(), Location(), "",
-                                      ErrorVar, false, nullptr));
-
-  define_all_builtins();
+  defineAllBuiltins();
 }
 
 Llvm_backend::~Llvm_backend() {
-  Bstatement::destroy(error_statement_.get(), DelInstructions);
+  Bstatement::destroy(errorStatement_.get(), DelInstructions);
   for (auto &expr : expressions_)
     delete expr;
   for (auto pht : placeholders_)
     delete pht;
-  for (auto pht : updated_placeholders_)
+  for (auto pht : updatedPlaceholders_)
     delete pht;
-  for (auto &kv : anon_typemap_)
+  for (auto &kv : anonTypemap_)
     delete kv.second;
-  for (auto &kv : integer_typemap_)
+  for (auto &kv : integerTypemap_)
     delete kv.second;
-  for (auto &kv : value_exprmap_)
+  for (auto &kv : valueExprmap_)
     delete kv.second;
-  for (auto &kv : value_varmap_)
+  for (auto &kv : valueVarmap_)
     delete kv.second;
-  for (auto &kv : named_typemap_)
+  for (auto &kv : namedTypemap_)
     delete kv.second;
-  for (auto &kv : builtin_map_)
+  for (auto &kv : builtinMap_)
     delete kv.second;
   for (auto &bfcn : functions_)
     delete bfcn;
@@ -374,43 +344,43 @@ std::string Llvm_backend::namegen(const std::string &tag, unsigned expl) {
   return ss.str();
 }
 
-Btype *Llvm_backend::make_anon_type(llvm::Type *lt) {
+Btype *Llvm_backend::makeAnonType(llvm::Type *lt) {
   assert(lt);
 
   // unsure whether caching is a net win, but for now cache all
   // previously created types and return the cached result
   // if we ask for the same type twice.
-  auto it = anon_typemap_.find(lt);
-  if (it != anon_typemap_.end())
+  auto it = anonTypemap_.find(lt);
+  if (it != anonTypemap_.end())
     return it->second;
   Btype *rval = new Btype(lt);
-  anon_typemap_[lt] = rval;
+  anonTypemap_[lt] = rval;
   return rval;
 }
 
-Btype *Llvm_backend::make_placeholder_type(llvm::Type *pht) {
+Btype *Llvm_backend::makePlaceholderType(llvm::Type *pht) {
   Btype *bplace = new Btype(pht);
   assert(placeholders_.find(bplace) == placeholders_.end());
   placeholders_.insert(bplace);
   return bplace;
 }
 
-void Llvm_backend::update_placeholder_underlying_type(Btype *pht,
-                                                      llvm::Type *newtyp) {
+void Llvm_backend::updatePlaceholderUnderlyingType(Btype *pht,
+                                                   llvm::Type *newtyp) {
 
   assert(placeholders_.find(pht) != placeholders_.end());
   placeholders_.erase(pht);
-  updated_placeholders_.insert(pht);
+  updatedPlaceholders_.insert(pht);
   pht->type_ = newtyp;
 }
 
-Btype *Llvm_backend::void_type() {
-  return make_anon_type(llvm_void_type_);
-}
+Btype *Llvm_backend::error_type() { return errorType_; }
+
+Btype *Llvm_backend::void_type() { return makeAnonType(llvmVoidType_); }
 
 Btype *Llvm_backend::bool_type() {
   // LLVM has no predefined boolean type. Use int8 for now
-  return make_anon_type(llvm::Type::getInt1Ty(context_));
+  return makeAnonType(llvm::Type::getInt1Ty(context_));
 }
 
 // Get an unnamed integer type.
@@ -447,13 +417,13 @@ Btype *Llvm_backend::bool_type() {
 Btype *Llvm_backend::integer_type(bool is_unsigned, int bits) {
   llvm::Type *typ = llvm::IntegerType::get(context_, bits);
   type_plus_unsigned tpu = std::make_pair(typ, is_unsigned);
-  auto it = integer_typemap_.find(tpu);
-  if (it != integer_typemap_.end())
+  auto it = integerTypemap_.find(tpu);
+  if (it != integerTypemap_.end())
     return it->second;
   Btype *btyp = new Btype(typ);
   if (is_unsigned)
-    btyp->set_unsigned();
-  integer_typemap_[tpu] = btyp;
+    btyp->setUnsigned();
+  integerTypemap_[tpu] = btyp;
   return btyp;
 }
 
@@ -461,11 +431,11 @@ Btype *Llvm_backend::integer_type(bool is_unsigned, int bits) {
 
 Btype *Llvm_backend::float_type(int bits) {
   if (bits == 32)
-    return make_anon_type(llvm_float_type_);
+    return makeAnonType(llvmFloatType_);
   else if (bits == 64)
-    return make_anon_type(llvm_double_type_);
+    return makeAnonType(llvmDoubleType_);
   else if (bits == 128)
-    return make_anon_type(llvm_long_double_type_);
+    return makeAnonType(llvmLongDoubleType_);
   assert(false && "unsupported float width");
   return nullptr;
 }
@@ -480,11 +450,11 @@ Btype *Llvm_backend::float_type(int bits) {
 Btype *Llvm_backend::struct_type(const std::vector<Btyped_identifier> &fields) {
   llvm::SmallVector<llvm::Type *, 64> elems(fields.size());
   for (unsigned i = 0; i < fields.size(); ++i) {
-    if (fields[i].btype == error_type())
-      return error_type();
+    if (fields[i].btype == errorType_)
+      return errorType_;
     elems[i] = fields[i].btype->type();
   }
-  return make_anon_type(llvm::StructType::get(context_, elems));
+  return makeAnonType(llvm::StructType::get(context_, elems));
 }
 
 // LLVM has no such thing as a complex type -- it expects the front
@@ -492,36 +462,36 @@ Btype *Llvm_backend::struct_type(const std::vector<Btyped_identifier> &fields) {
 // that the back end only sees two-element structs.
 
 Btype *Llvm_backend::complex_type(int bits) {
-  if (bits == 64 && complex_float_type_)
-    return complex_float_type_;
-  if (bits == 128 && complex_double_type_)
-    return complex_double_type_;
+  if (bits == 64 && complexFloatType_)
+    return complexFloatType_;
+  if (bits == 128 && complexDoubleType_)
+    return complexDoubleType_;
   assert(bits == 64 || bits == 128);
   llvm::Type *elemTy = (bits == 64 ? llvm::Type::getFloatTy(context_)
                                    : llvm::Type::getDoubleTy(context_));
   llvm::SmallVector<llvm::Type *, 2> elems(2);
   elems[0] = elemTy;
   elems[1] = elemTy;
-  Btype *rval = make_anon_type(llvm::StructType::get(context_, elems));
+  Btype *rval = makeAnonType(llvm::StructType::get(context_, elems));
   if (bits == 64)
-    complex_float_type_ = rval;
+    complexFloatType_ = rval;
   else
-    complex_double_type_ = rval;
+    complexDoubleType_ = rval;
   return rval;
 }
 
 // Get a pointer type.
 
 Btype *Llvm_backend::pointer_type(Btype *to_type) {
-  if (to_type == error_type_)
-    return error_type_;
+  if (to_type == errorType_)
+    return errorType_;
 
   // LLVM does not allow creation of a "pointer to void" type -- model
   // this instead as pointer to char.
-  llvm::Type *lltot = (to_type->type() == llvm_void_type_ ?
-                       llvm_int8_type_ : to_type->type());
+  llvm::Type *lltot =
+      (to_type->type() == llvmVoidType_ ? llvmInt8Type_ : to_type->type());
 
-  return make_anon_type(llvm::PointerType::get(lltot, address_space_));
+  return makeAnonType(llvm::PointerType::get(lltot, addressSpace_));
 }
 
 // Make a function type.
@@ -535,16 +505,16 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
 
   // Receiver type if applicable
   if (receiver.btype != nullptr) {
-    if (receiver.btype == error_type())
-      return error_type();
+    if (receiver.btype == errorType_)
+      return errorType_;
     elems.push_back(receiver.btype->type());
   }
 
   // Argument types
   for (std::vector<Btyped_identifier>::const_iterator p = parameters.begin();
        p != parameters.end(); ++p) {
-    if (p->btype == error_type())
-      return error_type();
+    if (p->btype == errorType_)
+      return errorType_;
     elems.push_back(p->btype->type());
   }
 
@@ -553,8 +523,8 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
   if (results.empty())
     rtyp = llvm::Type::getVoidTy(context_);
   else if (results.size() == 1) {
-    if (results.front().btype == error_type())
-      return error_type();
+    if (results.front().btype == errorType_)
+      return errorType_;
     rtyp = results.front().btype->type();
   } else {
     assert(result_struct != nullptr);
@@ -576,20 +546,19 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
   // from LLVM's perspective, no functions have varargs (all that
   // is dealt with by the front end).
   const bool isVarargs = false;
-  return make_anon_type(llvm::FunctionType::get(rtyp, elems, isVarargs));
+  return makeAnonType(llvm::FunctionType::get(rtyp, elems, isVarargs));
 }
 
 Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
-  if (length == error_expression() || element_btype == error_type())
-    return error_type();
+  if (length == errorExpression_.get() || element_btype == errorType_)
+    return errorType_;
 
-  llvm::ConstantInt *lc =
-      llvm::dyn_cast<llvm::ConstantInt>(length->value());
+  llvm::ConstantInt *lc = llvm::dyn_cast<llvm::ConstantInt>(length->value());
   assert(lc);
   uint64_t asize = lc->getValue().getZExtValue();
 
   llvm::Type *llat = llvm::ArrayType::get(element_btype->type(), asize);
-  return make_anon_type(llat);
+  return makeAnonType(llat);
 }
 
 // LLVM doesn't directly support placeholder types other than opaque
@@ -600,7 +569,7 @@ Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
 // out the name/location information passed into the placeholder type
 // creation routines.
 
-llvm::Type *Llvm_backend::make_opaque_llvm_type() {
+llvm::Type *Llvm_backend::makeOpaqueLlvmType() {
   return llvm::StructType::create(context_);
 }
 
@@ -608,28 +577,28 @@ llvm::Type *Llvm_backend::make_opaque_llvm_type() {
 
 Btype *Llvm_backend::placeholder_pointer_type(const std::string &name,
                                               Location location, bool) {
-  llvm::Type *opaque = make_opaque_llvm_type();
-  llvm::Type *ph_ptr_typ = llvm::PointerType::get(opaque, address_space_);
-  return make_placeholder_type(ph_ptr_typ);
+  llvm::Type *opaque = makeOpaqueLlvmType();
+  llvm::Type *ph_ptr_typ = llvm::PointerType::get(opaque, addressSpace_);
+  return makePlaceholderType(ph_ptr_typ);
 }
 
 // Set the real target type for a placeholder pointer type.
 //
 // NB: front end seems to occasionally call this method on
-// types that were not created via make_placeholder_type(),
+// types that were not created via makePlaceholderType(),
 // so handle this conservatively if the case comes up.
 
 bool Llvm_backend::set_placeholder_pointer_type(Btype *placeholder,
                                                 Btype *to_type) {
   assert(placeholder);
   assert(to_type);
-  if (placeholder == error_type_ || to_type == error_type_)
+  if (placeholder == errorType_ || to_type == errorType_)
     return false;
   assert(to_type->type()->isPointerTy());
   if (placeholders_.find(placeholder) == placeholders_.end()) {
     assert(placeholder->type() == to_type->type());
   } else {
-    update_placeholder_underlying_type(placeholder, to_type->type());
+    updatePlaceholderUnderlyingType(placeholder, to_type->type());
   }
   return true;
 }
@@ -645,17 +614,17 @@ bool Llvm_backend::set_placeholder_function_type(Btype *placeholder,
 
 Btype *Llvm_backend::placeholder_struct_type(const std::string &name,
                                              Location location) {
-  return make_placeholder_type(make_opaque_llvm_type());
+  return makePlaceholderType(makeOpaqueLlvmType());
 }
 
 // Fill in the fields of a placeholder struct type.
 
 bool Llvm_backend::set_placeholder_struct_type(
     Btype *placeholder, const std::vector<Btyped_identifier> &fields) {
-  if (placeholder == error_type_)
+  if (placeholder == errorType_)
     return false;
   Btype *stype = struct_type(fields);
-  update_placeholder_underlying_type(placeholder, stype->type());
+  updatePlaceholderUnderlyingType(placeholder, stype->type());
   return true;
 }
 
@@ -672,10 +641,10 @@ Btype *Llvm_backend::placeholder_array_type(const std::string &name,
 bool Llvm_backend::set_placeholder_array_type(Btype *placeholder,
                                               Btype *element_btype,
                                               Bexpression *length) {
-  if (placeholder == error_type_)
+  if (placeholder == errorType_)
     return false;
   Btype *atype = array_type(element_btype, length);
-  update_placeholder_underlying_type(placeholder, atype->type());
+  updatePlaceholderUnderlyingType(placeholder, atype->type());
   return true;
 }
 
@@ -690,30 +659,30 @@ Btype *Llvm_backend::named_type(const std::string &name, Btype *btype,
   // data structure.
 
   named_llvm_type cand(name, btype->type());
-  auto it = named_typemap_.find(cand);
-  if (it != named_typemap_.end())
+  auto it = namedTypemap_.find(cand);
+  if (it != namedTypemap_.end())
     return it->second;
   Btype *rval = new Btype(btype->type());
-  named_typemap_[cand] = rval;
+  namedTypemap_[cand] = rval;
   return rval;
 }
 
 // Return a pointer type used as a marker for a circular type.
 
 Btype *Llvm_backend::circular_pointer_type(Btype *, bool) {
-  return make_anon_type(llvm_ptr_type_);
+  return makeAnonType(llvmPtrType_);
 }
 
 // Return whether we might be looking at a circular type.
 
 bool Llvm_backend::is_circular_pointer_type(Btype *btype) {
-  return btype->type() == llvm_ptr_type_;
+  return btype->type() == llvmPtrType_;
 }
 
 // Return the size of a type.
 
 int64_t Llvm_backend::type_size(Btype *btype) {
-  if (btype == error_type_)
+  if (btype == errorType_)
     return 1;
   uint64_t uval = datalayout_.getTypeSizeInBits(btype->type());
   return static_cast<int64_t>(uval);
@@ -722,7 +691,7 @@ int64_t Llvm_backend::type_size(Btype *btype) {
 // Return the alignment of a type.
 
 int64_t Llvm_backend::type_alignment(Btype *btype) {
-  if (btype == error_type_)
+  if (btype == errorType_)
     return 1;
   unsigned uval = datalayout_.getPrefTypeAlignment(btype->type());
   return static_cast<int64_t>(uval);
@@ -737,7 +706,7 @@ int64_t Llvm_backend::type_alignment(Btype *btype) {
 
 int64_t Llvm_backend::type_field_alignment(Btype *btype) {
   // Corner cases.
-  if (!btype->type()->isSized() || btype == error_type_)
+  if (!btype->type()->isSized() || btype == errorType_)
     return -1;
 
   // Create a new anonymous struct with two fields: first field is a
@@ -759,7 +728,7 @@ int64_t Llvm_backend::type_field_alignment(Btype *btype) {
 // Return the offset of a field in a struct.
 
 int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index) {
-  if (btype == error_type_)
+  if (btype == errorType_)
     return 0;
   assert(btype->type()->isStructTy());
   llvm::StructType *llvm_st = llvm::cast<llvm::StructType>(btype->type());
@@ -768,11 +737,8 @@ int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index) {
   return static_cast<int64_t>(uoff);
 }
 
-void Llvm_backend::define_libcall_builtin(const char *name,
-                                          const char *libname,
-                                          unsigned libfunc,
-                                          ...)
-{
+void Llvm_backend::defineLibcallBuiltin(const char *name, const char *libname,
+                                        unsigned libfunc, ...) {
   va_list ap;
   std::vector<llvm::Type *> types;
   va_start(ap, libfunc);
@@ -783,14 +749,12 @@ void Llvm_backend::define_libcall_builtin(const char *name,
     types.push_back(parmType);
     parmType = va_arg(ap, llvm::Type *);
   }
-  define_libcall_builtin(name, libname, types, libfunc);
+  defineLibcallBuiltin(name, libname, types, libfunc);
 }
 
-void Llvm_backend::define_libcall_builtin(const char *name,
-                                          const char *libname,
-                                          const std::vector<llvm::Type*> &types,
-                                          unsigned libfunc)
-{
+void Llvm_backend::defineLibcallBuiltin(const char *name, const char *libname,
+                                        const std::vector<llvm::Type *> &types,
+                                        unsigned libfunc) {
   llvm::Type *resultType = types[0];
   llvm::SmallVector<llvm::Type *, 16> ptypes(0);
   for (unsigned idx = 1; idx < types.size(); ++idx)
@@ -800,8 +764,8 @@ void Llvm_backend::define_libcall_builtin(const char *name,
       llvm::FunctionType::get(resultType, ptypes, isVarargs);
   llvm::LibFunc::Func lf = static_cast<llvm::LibFunc::Func>(libfunc);
   llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
-  llvm::Function *fcn = llvm::Function::Create(ft, plinkage,
-                                               name, module_.get());
+  llvm::Function *fcn =
+      llvm::Function::Create(ft, plinkage, name, module_.get());
 
   // FIXME: once we have a pass manager set up for the back end, we'll
   // want to turn on this code, since it will be helpful to catch
@@ -819,14 +783,11 @@ void Llvm_backend::define_libcall_builtin(const char *name,
     assert(TLI_->getLibFunc(*fcn, lf));
   }
 
-  define_builtin_fcn(name, libname, fcn);
+  defineBuiltinFcn(name, libname, fcn);
 }
 
-void Llvm_backend::define_intrinsic_builtin(const char *name,
-                                            const char *libname,
-                                            unsigned intrinsicID,
-                                            ...)
-{
+void Llvm_backend::defineIntrinsicBuiltin(const char *name, const char *libname,
+                                          unsigned intrinsicID, ...) {
   va_list ap;
   llvm::SmallVector<llvm::Type *, 16> overloadTypes;
   va_start(ap, intrinsicID);
@@ -839,7 +800,7 @@ void Llvm_backend::define_intrinsic_builtin(const char *name,
   llvm::Function *fcn =
       llvm::Intrinsic::getDeclaration(module_.get(), iid, overloadTypes);
   assert(fcn != nullptr);
-  define_builtin_fcn(name, libname, fcn);
+  defineBuiltinFcn(name, libname, fcn);
 }
 
 // Define name -> fcn mapping for a builtin.
@@ -851,155 +812,128 @@ void Llvm_backend::define_intrinsic_builtin(const char *name,
 // - intrinsics with the no-return property (such as
 //   "__builtin_trap" will already be set up this way
 
-void Llvm_backend::define_builtin_fcn(const char *name,
-                                      const char *libname,
-                                      llvm::Function *fcn)
-{
+void Llvm_backend::defineBuiltinFcn(const char *name, const char *libname,
+                                    llvm::Function *fcn) {
   Bfunction *bfunc = new Bfunction(fcn);
-  assert(builtin_map_.find(name) == builtin_map_.end());
-  builtin_map_[name] = bfunc;
+  assert(builtinMap_.find(name) == builtinMap_.end());
+  builtinMap_[name] = bfunc;
   if (libname) {
     Bfunction *bfunc = new Bfunction(fcn);
-    assert(builtin_map_.find(libname) == builtin_map_.end());
-    builtin_map_[libname] = bfunc;
+    assert(builtinMap_.find(libname) == builtinMap_.end());
+    builtinMap_[libname] = bfunc;
   }
 }
 
 // Look up a named built-in function in the current backend implementation.
 // Returns NULL if no built-in function by that name exists.
 
-Bfunction *Llvm_backend::lookup_builtin(const std::string &name)
-{
-  auto it = builtin_map_.find(name);
-  if (it == builtin_map_.end())
+Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
+  auto it = builtinMap_.find(name);
+  if (it == builtinMap_.end())
     return nullptr;
   return it->second;
 }
 
-void Llvm_backend::define_all_builtins()
-{
-  define_sync_fetch_and_add_builtins();
-  define_intrinsic_builtins();
-  define_trig_builtins();
+void Llvm_backend::defineAllBuiltins() {
+  defineSyncFetchAndAddBuiltins();
+  defineIntrinsicBuiltins();
+  defineTrigBuiltins();
 }
 
-void Llvm_backend::define_intrinsic_builtins()
-{
-  define_intrinsic_builtin("__builtin_trap", nullptr, llvm::Intrinsic::trap,
-                           nullptr);
+void Llvm_backend::defineIntrinsicBuiltins() {
+  defineIntrinsicBuiltin("__builtin_trap", nullptr, llvm::Intrinsic::trap,
+                         nullptr);
 
-  define_intrinsic_builtin("__builtin_return_address", nullptr,
-                           llvm::Intrinsic::returnaddress,
-                           llvm_ptr_type_,
-                           llvm_int32_type_,
-                           nullptr);
+  defineIntrinsicBuiltin("__builtin_return_address", nullptr,
+                         llvm::Intrinsic::returnaddress, llvmPtrType_,
+                         llvmInt32Type_, nullptr);
 
-  define_intrinsic_builtin("__builtin_frame_address", nullptr,
-                           llvm::Intrinsic::frameaddress,
-                           llvm_ptr_type_,
-                           llvm_int32_type_,
-                           nullptr);
+  defineIntrinsicBuiltin("__builtin_frame_address", nullptr,
+                         llvm::Intrinsic::frameaddress, llvmPtrType_,
+                         llvmInt32Type_, nullptr);
 
-  define_intrinsic_builtin("__builtin_expect", nullptr,
-                           llvm::Intrinsic::expect,
-                           llvm_integer_type_, nullptr);
+  defineIntrinsicBuiltin("__builtin_expect", nullptr, llvm::Intrinsic::expect,
+                         llvmIntegerType_, nullptr);
 
-  define_libcall_builtin("__builtin_memcmp", "memcmp",
-                         llvm::LibFunc::memcmp,
-                         llvm_int32_type_,
-                         llvm_ptr_type_,
-                         llvm_ptr_type_,
-                         llvm_size_type_, nullptr);
+  defineLibcallBuiltin("__builtin_memcmp", "memcmp", llvm::LibFunc::memcmp,
+                       llvmInt32Type_, llvmPtrType_, llvmPtrType_,
+                       llvmSizeType_, nullptr);
 
   // go runtime refers to this intrinsic as "ctz", however the LLVM
   // equivalent is named "cttz".
-  define_intrinsic_builtin("__builtin_ctz", "ctz",
-                           llvm::Intrinsic::cttz,
-                           llvm_integer_type_, nullptr);
+  defineIntrinsicBuiltin("__builtin_ctz", "ctz", llvm::Intrinsic::cttz,
+                         llvmIntegerType_, nullptr);
 
   // go runtime refers to this intrinsic as "ctzll", however the LLVM
   // equivalent is named "cttz".
-  define_intrinsic_builtin("__builtin_ctzll", "ctzll",
-                           llvm::Intrinsic::cttz,
-                           llvm_int64_type_, nullptr);
+  defineIntrinsicBuiltin("__builtin_ctzll", "ctzll", llvm::Intrinsic::cttz,
+                         llvmInt64Type_, nullptr);
 
   // go runtime refers to this intrinsic as "bswap32", however the LLVM
   // equivalent is named just "bswap"
-  define_intrinsic_builtin("__builtin_bswap32", "bswap32",
-                           llvm::Intrinsic::bswap,
-                           llvm_int32_type_, nullptr);
+  defineIntrinsicBuiltin("__builtin_bswap32", "bswap32", llvm::Intrinsic::bswap,
+                         llvmInt32Type_, nullptr);
 
   // go runtime refers to this intrinsic as "bswap64", however the LLVM
   // equivalent is named just "bswap"
-  define_intrinsic_builtin("__builtin_bswap64", "bswap64",
-                           llvm::Intrinsic::bswap,
-                           llvm_int64_type_, nullptr);
+  defineIntrinsicBuiltin("__builtin_bswap64", "bswap64", llvm::Intrinsic::bswap,
+                         llvmInt64Type_, nullptr);
 }
-
 
 namespace {
 
-  typedef enum {
-    OneArg=0,  // takes form "double foo(double)"
-    TwoArgs=1, // takes form "double bar(double, double)"
-    TwoMixed=2 // takes form "double bar(double, int)"
-  } mflav;
+typedef enum {
+  OneArg = 0,  // takes form "double foo(double)"
+  TwoArgs = 1, // takes form "double bar(double, double)"
+  TwoMixed = 2 // takes form "double bar(double, int)"
+} mflav;
 
-  typedef struct {
-    const char *name;
-    mflav nargs;
-    llvm::LibFunc::Func lf;
-  } mathfuncdesc;
+typedef struct {
+  const char *name;
+  mflav nargs;
+  llvm::LibFunc::Func lf;
+} mathfuncdesc;
 }
 
-void Llvm_backend::define_trig_builtins()
-{
-  const std::vector<llvm::Type *> onearg_double = {
-    llvm_double_type_, llvm_double_type_
-  };
-  const std::vector<llvm::Type *> onearg_long_double = {
-    llvm_long_double_type_, llvm_long_double_type_
-  };
+void Llvm_backend::defineTrigBuiltins() {
+  const std::vector<llvm::Type *> onearg_double = {llvmDoubleType_,
+                                                   llvmDoubleType_};
+  const std::vector<llvm::Type *> onearg_long_double = {llvmLongDoubleType_,
+                                                        llvmLongDoubleType_};
   const std::vector<llvm::Type *> twoargs_double = {
-    llvm_double_type_, llvm_double_type_, llvm_double_type_
-  };
+      llvmDoubleType_, llvmDoubleType_, llvmDoubleType_};
   const std::vector<llvm::Type *> twoargs_long_double = {
-    llvm_long_double_type_, llvm_long_double_type_, llvm_long_double_type_
-  };
+      llvmLongDoubleType_, llvmLongDoubleType_, llvmLongDoubleType_};
   const std::vector<llvm::Type *> mixed_double = {
-    llvm_double_type_, llvm_double_type_, llvm_integer_type_
-  };
+      llvmDoubleType_, llvmDoubleType_, llvmIntegerType_};
   const std::vector<llvm::Type *> mixed_long_double = {
-    llvm_long_double_type_, llvm_long_double_type_, llvm_integer_type_
-  };
+      llvmLongDoubleType_, llvmLongDoubleType_, llvmIntegerType_};
   const std::vector<const std::vector<llvm::Type *> *> signatures = {
-    &onearg_double, &twoargs_double, &mixed_double
-  };
+      &onearg_double, &twoargs_double, &mixed_double};
   const std::vector<const std::vector<llvm::Type *> *> lsignatures = {
-    &onearg_long_double, &twoargs_long_double, &mixed_long_double
-  };
+      &onearg_long_double, &twoargs_long_double, &mixed_long_double};
 
   static const mathfuncdesc funcs[] = {
-    { "acos", OneArg, llvm::LibFunc::acos },
-    { "asin", OneArg, llvm::LibFunc::asin },
-    { "atan", OneArg, llvm::LibFunc::atan },
-    { "atan2", TwoArgs, llvm::LibFunc::atan2 },
-    { "ceil", OneArg, llvm::LibFunc::ceil },
-    { "cos", OneArg, llvm::LibFunc::cos },
-    { "exp", OneArg, llvm::LibFunc::exp },
-    { "expm1", OneArg, llvm::LibFunc::expm1 },
-    { "fabs", OneArg, llvm::LibFunc::fabs },
-    { "floor", OneArg, llvm::LibFunc::floor },
-    { "fmod", TwoArgs, llvm::LibFunc::fmod },
-    { "log", OneArg, llvm::LibFunc::log },
-    { "log1p", OneArg, llvm::LibFunc::log1p },
-    { "log10", OneArg, llvm::LibFunc::log10 },
-    { "log2", OneArg, llvm::LibFunc::log2 },
-    { "sin", OneArg, llvm::LibFunc::sin },
-    { "sqrt", OneArg, llvm::LibFunc::sqrt },
-    { "tan", OneArg, llvm::LibFunc::tan },
-    { "trunc", OneArg, llvm::LibFunc::trunc },
-    { "ldexp", TwoMixed, llvm::LibFunc::trunc },
+      {"acos", OneArg, llvm::LibFunc::acos},
+      {"asin", OneArg, llvm::LibFunc::asin},
+      {"atan", OneArg, llvm::LibFunc::atan},
+      {"atan2", TwoArgs, llvm::LibFunc::atan2},
+      {"ceil", OneArg, llvm::LibFunc::ceil},
+      {"cos", OneArg, llvm::LibFunc::cos},
+      {"exp", OneArg, llvm::LibFunc::exp},
+      {"expm1", OneArg, llvm::LibFunc::expm1},
+      {"fabs", OneArg, llvm::LibFunc::fabs},
+      {"floor", OneArg, llvm::LibFunc::floor},
+      {"fmod", TwoArgs, llvm::LibFunc::fmod},
+      {"log", OneArg, llvm::LibFunc::log},
+      {"log1p", OneArg, llvm::LibFunc::log1p},
+      {"log10", OneArg, llvm::LibFunc::log10},
+      {"log2", OneArg, llvm::LibFunc::log2},
+      {"sin", OneArg, llvm::LibFunc::sin},
+      {"sqrt", OneArg, llvm::LibFunc::sqrt},
+      {"tan", OneArg, llvm::LibFunc::tan},
+      {"trunc", OneArg, llvm::LibFunc::trunc},
+      {"ldexp", TwoMixed, llvm::LibFunc::trunc},
   };
 
   const unsigned nfuncs = sizeof(funcs) / sizeof(mathfuncdesc);
@@ -1010,51 +944,49 @@ void Llvm_backend::define_trig_builtins()
 
     sprintf(bbuf, "__builtin_%s", d.name);
     const std::vector<llvm::Type *> *sig = signatures[d.nargs];
-    define_libcall_builtin(bbuf, d.name, *sig, d.lf);
+    defineLibcallBuiltin(bbuf, d.name, *sig, d.lf);
     sprintf(lbuf, "%sl", d.name);
     sprintf(bbuf, "__builtin_%s", lbuf);
     const std::vector<llvm::Type *> *lsig = lsignatures[d.nargs];
-    define_libcall_builtin(bbuf, lbuf, *lsig, d.lf);
+    defineLibcallBuiltin(bbuf, lbuf, *lsig, d.lf);
   }
 }
 
-void Llvm_backend::define_sync_fetch_and_add_builtins()
-{
+void Llvm_backend::defineSyncFetchAndAddBuiltins() {
   std::vector<unsigned> sizes = {1, 2, 4, 8};
   for (auto sz : sizes) {
     char nbuf[64];
     sprintf(nbuf, "__sync_fetch_and_add_%u", sz);
     llvm::Type *it = llvm::IntegerType::get(context_, sz << 3);
-    llvm::PointerType *pit = llvm::PointerType::get(it, address_space_);
-    define_libcall_builtin(nbuf, nullptr,   // name, libname
-                           NotInTargetLib,  // Libfunc ID
-                           llvm_void_type_, // result type
-                           pit, it,         // param types
-                           nullptr);
+    llvm::PointerType *pit = llvm::PointerType::get(it, addressSpace_);
+    defineLibcallBuiltin(nbuf, nullptr,  // name, libname
+                         NotInTargetLib, // Libfunc ID
+                         llvmVoidType_,  // result type
+                         pit, it,        // param types
+                         nullptr);
   }
 }
 
-Bexpression *Llvm_backend::make_value_expression(llvm::Value *val,
-                                                 Btype *btype,
+Bexpression *Llvm_backend::make_value_expression(llvm::Value *val, Btype *btype,
                                                  ValExprScope scope) {
   assert(val);
   if (scope == GlobalScope) {
     valbtype vbt(std::make_pair(val, btype));
-    auto it = value_exprmap_.find(vbt);
-    if (it != value_exprmap_.end())
+    auto it = valueExprmap_.find(vbt);
+    if (it != valueExprmap_.end())
       return it->second;
   }
   Bexpression *rval = new Bexpression(val, btype);
   if (scope == GlobalScope) {
     valbtype vbt(std::make_pair(val, btype));
-    value_exprmap_[vbt] = rval;
+    valueExprmap_[vbt] = rval;
   } else
     expressions_.push_back(rval);
   return rval;
 }
 
 Bexpression *Llvm_backend::make_inst_expression(llvm::Instruction *inst,
-                                                 Btype *btype) {
+                                                Btype *btype) {
   assert(inst);
   Bexpression *rval = new Bexpression(inst, btype);
   rval->appendInstruction(inst);
@@ -1065,15 +997,13 @@ Bexpression *Llvm_backend::make_inst_expression(llvm::Instruction *inst,
 // Return the zero value for a type.
 
 Bexpression *Llvm_backend::zero_expression(Btype *btype) {
-  if (btype == error_type())
-    return error_expression();
+  if (btype == errorType_)
+    return errorExpression_.get();
   llvm::Value *zeroval = llvm::Constant::getNullValue(btype->type());
   return make_value_expression(zeroval, btype, GlobalScope);
 }
 
-Bexpression *Llvm_backend::error_expression() {
-  return error_expression_.get();
-}
+Bexpression *Llvm_backend::error_expression() { return errorExpression_.get(); }
 
 Bexpression *Llvm_backend::nil_pointer_expression() {
   assert(false && "LLvm_backend::nil_pointer_expression not yet implemented");
@@ -1082,11 +1012,10 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
 
 // An expression that references a variable.
 
-Bexpression *Llvm_backend::var_expression(Bvariable *var,
-                                          bool lvalue,
+Bexpression *Llvm_backend::var_expression(Bvariable *var, bool lvalue,
                                           Location location) {
-  if (var == error_variable())
-    return error_expression();
+  if (var == errorVariable_.get())
+    return errorExpression_.get();
 
   // FIXME: record debug location
 
@@ -1123,13 +1052,12 @@ Bexpression *Llvm_backend::named_constant_expression(Btype *btype,
   return nullptr;
 }
 
-template<typename wideint_t>
-wideint_t checked_convert_mpz_to_int(mpz_t value)
-{
+template <typename wideint_t>
+wideint_t checked_convert_mpz_to_int(mpz_t value) {
   // See http://gmplib.org/manual/Integer-Import-and-Export.html for an
   // explanation of this formula
   size_t numbits = 8 * sizeof(wideint_t);
-  size_t count = (mpz_sizeinbase (value, 2) + numbits-1) / numbits;
+  size_t count = (mpz_sizeinbase(value, 2) + numbits - 1) / numbits;
   // frontend should have insured this already
   assert(count <= 2);
   count = 2;
@@ -1141,7 +1069,7 @@ wideint_t checked_convert_mpz_to_int(mpz_t value)
   assert(receive[1] == 0);
   wideint_t rval = receive[0];
   if (mpz_sgn(value) < 0)
-    rval = - rval;
+    rval = -rval;
   return rval;
 }
 
@@ -1149,8 +1077,8 @@ wideint_t checked_convert_mpz_to_int(mpz_t value)
 
 Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
                                                        mpz_t mpz_val) {
-  if (btype == error_type_)
-    return error_expression();
+  if (btype == errorType_)
+    return errorExpression_.get();
   assert(btype->type()->isIntegerTy());
 
   // Force mpz_val into either into uint64_t or int64_t depending on
@@ -1159,7 +1087,7 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
   // Q: better to use APInt here?
 
   Bexpression *rval;
-  if (btype->is_unsigned()) {
+  if (btype->isUnsigned()) {
     uint64_t val = checked_convert_mpz_to_int<uint64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::get(btype->type(), val);
@@ -1176,8 +1104,8 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
 // Return a typed value as a constant floating-point number.
 
 Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
-  if (btype == error_type_)
-    return error_expression();
+  if (btype == errorType_)
+    return errorExpression_.get();
 
   // Force the mpfr value into float, double, or APFloat as appropriate.
   //
@@ -1186,21 +1114,21 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
   // converting a quad mfr value from text and then back into APFloat
   // from there.
 
-  if (btype->type() == llvm_float_type_) {
+  if (btype->type() == llvmFloatType_) {
     float fval = mpfr_get_flt(val, GMP_RNDN);
     llvm::APFloat apf(fval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
     return make_value_expression(fcon, btype, GlobalScope);
-  } else if (btype->type() == llvm_double_type_) {
+  } else if (btype->type() == llvmDoubleType_) {
     double dval = mpfr_get_d(val, GMP_RNDN);
     llvm::APFloat apf(dval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
     return make_value_expression(fcon, btype, GlobalScope);
-  } else if (btype->type() == llvm_long_double_type_) {
+  } else if (btype->type() == llvmLongDoubleType_) {
     assert("not yet implemented" && false);
     return nullptr;
   } else {
-    return error_expression();
+    return errorExpression_.get();
   }
 }
 
@@ -1256,8 +1184,8 @@ Bexpression *Llvm_backend::complex_expression(Bexpression *breal,
 
 Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
                                               Location location) {
-  if (type == error_type() || expr == error_expression())
-    return error_expression();
+  if (type == errorType_ || expr == errorExpression_.get())
+    return errorExpression_.get();
   // no real implementation yet
   assert(type->type() == expr->value()->getType());
   return expr;
@@ -1320,32 +1248,31 @@ Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
 static llvm::Instruction::BinaryOps arith_op_to_binop(Operator op,
                                                       llvm::Type *typ,
                                                       bool isUnsigned,
-                                                      const char* &tag) {
+                                                      const char *&tag) {
   bool isFloat = typ->isFloatingPointTy();
 
   if (isFloat) {
     switch (op) {
-      case OPERATOR_PLUS:
-        tag = "fadd";
-        return llvm::Instruction::FAdd;
-      default:
-        break;
+    case OPERATOR_PLUS:
+      tag = "fadd";
+      return llvm::Instruction::FAdd;
+    default:
+      break;
     }
   } else {
     switch (op) {
-      case OPERATOR_PLUS:
-        tag = "add";
-        return llvm::Instruction::Add;
-      default:
-        break;
+    case OPERATOR_PLUS:
+      tag = "add";
+      return llvm::Instruction::Add;
+    default:
+      break;
     }
   }
   assert(false);
   return llvm::Instruction::BinaryOpsEnd;
 }
 
-static llvm::CmpInst::Predicate compare_op_to_pred(Operator op,
-                                                   llvm::Type *typ,
+static llvm::CmpInst::Predicate compare_op_to_pred(Operator op, llvm::Type *typ,
                                                    bool isUnsigned) {
 
   bool isFloat = typ->isFloatingPointTy();
@@ -1376,16 +1303,16 @@ static llvm::CmpInst::Predicate compare_op_to_pred(Operator op,
       return llvm::CmpInst::Predicate::ICMP_NE;
     case OPERATOR_LT:
       return (isUnsigned ? llvm::CmpInst::Predicate::ICMP_ULT
-                       : llvm::CmpInst::Predicate::ICMP_SLT);
+                         : llvm::CmpInst::Predicate::ICMP_SLT);
     case OPERATOR_LE:
       return (isUnsigned ? llvm::CmpInst::Predicate::ICMP_ULE
-                       : llvm::CmpInst::Predicate::ICMP_SLE);
+                         : llvm::CmpInst::Predicate::ICMP_SLE);
     case OPERATOR_GT:
       return (isUnsigned ? llvm::CmpInst::Predicate::ICMP_UGT
-                       : llvm::CmpInst::Predicate::ICMP_SGT);
+                         : llvm::CmpInst::Predicate::ICMP_SGT);
     case OPERATOR_GE:
       return (isUnsigned ? llvm::CmpInst::Predicate::ICMP_UGE
-                       : llvm::CmpInst::Predicate::ICMP_SGE);
+                         : llvm::CmpInst::Predicate::ICMP_SGE);
     default:
       break;
     }
@@ -1396,50 +1323,47 @@ static llvm::CmpInst::Predicate compare_op_to_pred(Operator op,
 
 // Return an expression for the binary operation LEFT OP RIGHT.
 
-Bexpression *Llvm_backend::binary_expression(Operator op,
-                                             Bexpression *left,
+Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
                                              Bexpression *right,
                                              Location location) {
-  if (left == error_expression() || right == error_expression())
-    return error_expression();
+  if (left == errorExpression_.get() || right == errorExpression_.get())
+    return errorExpression_.get();
   Btype *bltype = left->btype();
   Btype *brtype = right->btype();
   llvm::Type *ltype = left->value()->getType();
   llvm::Type *rtype = right->value()->getType();
   assert(ltype == rtype);
-  assert(bltype->is_unsigned() == brtype->is_unsigned());
-  bool isUnsigned = bltype->is_unsigned();
+  assert(bltype->isUnsigned() == brtype->isUnsigned());
+  bool isUnsigned = bltype->isUnsigned();
 
-  switch(op) {
-    case OPERATOR_EQEQ:
-    case OPERATOR_NOTEQ:
-    case OPERATOR_LT:
-    case OPERATOR_LE:
-    case OPERATOR_GT:
-    case OPERATOR_GE: {
-      llvm::CmpInst::Predicate pred =
-          compare_op_to_pred(op, ltype, isUnsigned);
-      llvm::Instruction *cmp;
-      if (ltype->isFloatingPointTy())
-        cmp = new llvm::FCmpInst(pred, left->value(), right->value(),
-                                 namegen("fcmp"));
-      else
-        cmp = new llvm::ICmpInst(pred, left->value(), right->value(),
-                                 namegen("icmp"));
-      return make_inst_expression(cmp, bltype);
-    }
-    case OPERATOR_PLUS: {
-      const char *tag;
-      llvm::Instruction::BinaryOps llvmop =
-          arith_op_to_binop(op, ltype, isUnsigned, tag);
-      llvm::Instruction *binop =
-          llvm::BinaryOperator::Create(llvmop, left->value(), right->value(),
-                                       namegen(tag));
-      return make_inst_expression(binop, bltype);
-    }
-    default:
-      std::cerr << "Op " << op << "unhandled\n";
-      assert(false);
+  switch (op) {
+  case OPERATOR_EQEQ:
+  case OPERATOR_NOTEQ:
+  case OPERATOR_LT:
+  case OPERATOR_LE:
+  case OPERATOR_GT:
+  case OPERATOR_GE: {
+    llvm::CmpInst::Predicate pred = compare_op_to_pred(op, ltype, isUnsigned);
+    llvm::Instruction *cmp;
+    if (ltype->isFloatingPointTy())
+      cmp = new llvm::FCmpInst(pred, left->value(), right->value(),
+                               namegen("fcmp"));
+    else
+      cmp = new llvm::ICmpInst(pred, left->value(), right->value(),
+                               namegen("icmp"));
+    return make_inst_expression(cmp, bltype);
+  }
+  case OPERATOR_PLUS: {
+    const char *tag;
+    llvm::Instruction::BinaryOps llvmop =
+        arith_op_to_binop(op, ltype, isUnsigned, tag);
+    llvm::Instruction *binop = llvm::BinaryOperator::Create(
+        llvmop, left->value(), right->value(), namegen(tag));
+    return make_inst_expression(binop, bltype);
+  }
+  default:
+    std::cerr << "Op " << op << "unhandled\n";
+    assert(false);
   }
 
   return nullptr;
@@ -1495,15 +1419,13 @@ Bexpression *Llvm_backend::stack_allocation_expression(int64_t size,
   return nullptr;
 }
 
-Bstatement *Llvm_backend::error_statement() {
-  return error_statement_.get();
-}
+Bstatement *Llvm_backend::error_statement() { return errorStatement_.get(); }
 
 // An expression as a statement.
 
 Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
-  if (expr == error_expression())
-    return error_statement();
+  if (expr == errorExpression_.get())
+    return errorStatement_.get();
   ExprListStatement *els = new ExprListStatement();
   els->appendExpression(expr);
   return els;
@@ -1512,16 +1434,13 @@ Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
 // Variable initialization.
 
 Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
-  if (init == error_expression())
-    return error_statement();
+  if (init == errorExpression_.get())
+    return errorStatement_.get();
   return do_assignment(var->value(), nullptr, init, Location());
 }
 
-Bstatement *Llvm_backend::do_assignment(llvm::Value *lval,
-                                        Bexpression *lhs,
-                                        Bexpression *rhs,
-                                        Location location)
-{
+Bstatement *Llvm_backend::do_assignment(llvm::Value *lval, Bexpression *lhs,
+                                        Bexpression *rhs, Location location) {
   llvm::PointerType *pt = llvm::cast<llvm::PointerType>(lval->getType());
   assert(pt);
   llvm::Value *rval = rhs->value();
@@ -1551,8 +1470,8 @@ Bstatement *Llvm_backend::do_assignment(llvm::Value *lval,
 Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
                                                Bexpression *rhs,
                                                Location location) {
-  if (lhs == error_expression() || rhs == error_expression())
-    return error_statement();
+  if (lhs == errorExpression_.get() || rhs == errorExpression_.get())
+    return errorStatement_.get();
   return do_assignment(lhs->value(), lhs, rhs, location);
 }
 
@@ -1561,10 +1480,10 @@ Llvm_backend::return_statement(Bfunction *bfunction,
                                const std::vector<Bexpression *> &vals,
                                Location location) {
   if (bfunction == error_function())
-    return error_statement();
+    return errorStatement_.get();
   for (auto v : vals)
-    if (v == error_expression())
-      return error_statement();
+    if (v == errorExpression_.get())
+      return errorStatement_.get();
 
   // Temporary
   assert(vals.size() == 1);
@@ -1574,11 +1493,12 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   // since Go functions can return multiple values).
   Btype *btype = nullptr;
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, vals[0]->value());
-  Bexpression *rexp = make_inst_expression(ri, btype);
+  Bexpression *rexp = make_value_expression(ri, btype, LocalScope);
   for (auto inst : vals[0]->instructions()) {
     assert(inst->getParent() == nullptr);
     rexp->appendInstruction(inst);
   }
+  rexp->appendInstruction(ri);
   ExprListStatement *els = Bstatement::stmtFromExprs(rexp, nullptr);
   return els;
 }
@@ -1602,8 +1522,8 @@ Bstatement *Llvm_backend::exception_handler_statement(Bstatement *bstat,
 Bstatement *Llvm_backend::if_statement(Bexpression *condition,
                                        Bblock *then_block, Bblock *else_block,
                                        Location location) {
-  if (condition == error_expression())
-    return error_statement();
+  if (condition == errorExpression_.get())
+    return errorStatement_.get();
   assert(then_block);
   IfPHStatement *ifst =
       new IfPHStatement(condition, then_block, else_block, location);
@@ -1641,8 +1561,7 @@ Llvm_backend::statement_list(const std::vector<Bstatement *> &statements) {
   return st;
 }
 
-Bblock *Llvm_backend::block(Bfunction *function,
-                            Bblock *enclosing,
+Bblock *Llvm_backend::block(Bfunction *function, Bblock *enclosing,
                             const std::vector<Bvariable *> &vars,
                             Location start_location, Location) {
   assert(function);
@@ -1655,7 +1574,7 @@ Bblock *Llvm_backend::block(Bfunction *function,
 
   // Mark start of lifetime for each variable
   // for (auto var : vars) {
-    // Not yet implemented
+  // Not yet implemented
   // }
 
   return bb;
@@ -1666,7 +1585,7 @@ Bblock *Llvm_backend::block(Bfunction *function,
 void Llvm_backend::block_add_statements(
     Bblock *bblock, const std::vector<Bstatement *> &statements) {
   for (auto st : statements)
-    if (st == error_statement())
+    if (st == errorStatement_.get())
       return;
   assert(bblock);
   for (auto st : statements)
@@ -1679,20 +1598,17 @@ Bstatement *Llvm_backend::block_statement(Bblock *bblock) {
 
   // class Bblock inherits from CompoundStatement
   return bblock;
-
 }
 
 // Make a global variable.
 
 Bvariable *Llvm_backend::global_variable(const std::string &var_name,
                                          const std::string &asm_name,
-                                         Btype *btype,
-                                         bool is_external,
-                                         bool is_hidden,
-                                         bool in_unique_section,
+                                         Btype *btype, bool is_external,
+                                         bool is_hidden, bool in_unique_section,
                                          Location location) {
-  if (btype == error_type())
-    return error_variable();
+  if (btype == errorType_)
+    return errorVariable_.get();
 
   // FIXME: add code to insure non-zero size
   assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
@@ -1705,18 +1621,17 @@ Bvariable *Llvm_backend::global_variable(const std::string &var_name,
   // FIXME: use correct ASM name
 
   llvm::GlobalValue::LinkageTypes linkage =
-      (is_external ? llvm::GlobalValue::ExternalLinkage :
-       llvm::GlobalValue::InternalLinkage);
+      (is_external ? llvm::GlobalValue::ExternalLinkage
+                   : llvm::GlobalValue::InternalLinkage);
 
   bool isConstant = false;
   llvm::Constant *init = nullptr;
-  llvm::GlobalVariable *glob =
-      new llvm::GlobalVariable(*module_.get(), btype->type(), isConstant,
-                               linkage, init, asm_name);
+  llvm::GlobalVariable *glob = new llvm::GlobalVariable(
+      *module_.get(), btype->type(), isConstant, linkage, init, asm_name);
   Bvariable *bv =
       new Bvariable(btype, location, var_name, GlobalVar, false, glob);
-  assert(value_varmap_.find(bv->value()) == value_varmap_.end());
-  value_varmap_[bv->value()] = bv;
+  assert(valueVarmap_.find(bv->value()) == valueVarmap_.end());
+  valueVarmap_[bv->value()] = bv;
   return bv;
 }
 
@@ -1726,28 +1641,24 @@ void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr) {
   assert(false && "Llvm_backend::global_variable_set_init not yet impl");
 }
 
-Bvariable *Llvm_backend::error_variable() {
-  return error_variable_.get();
-}
+Bvariable *Llvm_backend::error_variable() { return errorVariable_.get(); }
 
 // Make a local variable.
 
 Bvariable *Llvm_backend::local_variable(Bfunction *function,
-                                        const std::string &name,
-                                        Btype *btype,
+                                        const std::string &name, Btype *btype,
                                         bool is_address_taken,
-                                        Location location)
-{
+                                        Location location) {
   assert(function);
-  if (btype == error_type() || function == error_function())
-    return error_variable();
+  if (btype == errorType_ || function == error_function())
+    return errorVariable_.get();
   llvm::Instruction *inst = new llvm::AllocaInst(btype->type(), name);
-  //inst->setDebugLoc(location.debug_location());
+  // inst->setDebugLoc(location.debug_location());
   function->addAlloca(inst);
   Bvariable *bv =
       new Bvariable(btype, location, name, LocalVar, is_address_taken, inst);
-  assert(value_varmap_.find(bv->value()) == value_varmap_.end());
-  value_varmap_[bv->value()] = bv;
+  assert(valueVarmap_.find(bv->value()) == valueVarmap_.end());
+  valueVarmap_[bv->value()] = bv;
   return bv;
 }
 
@@ -1755,13 +1666,11 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
 
 Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
                                             const std::string &name,
-                                            Btype *btype,
-                                            bool is_address_taken,
-                                            Location location)
-{
+                                            Btype *btype, bool is_address_taken,
+                                            Location location) {
   assert(function);
-  if (btype == error_type() || function == error_function())
-    return error_variable();
+  if (btype == errorType_ || function == error_function())
+    return errorVariable_.get();
 
   // Collect argument pointer
   unsigned argIdx = function->paramsCreated();
@@ -1773,10 +1682,10 @@ Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
 
   // Create the alloca slot where we will spill this argument
   llvm::Instruction *inst = function->argValue(arg);
-  assert(value_varmap_.find(inst) == value_varmap_.end());
+  assert(valueVarmap_.find(inst) == valueVarmap_.end());
   Bvariable *bv =
       new Bvariable(btype, location, name, ParamVar, is_address_taken, inst);
-  value_varmap_[inst] = bv;
+  valueVarmap_[inst] = bv;
   return bv;
 }
 
@@ -1806,9 +1715,9 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function, Bblock *bblock,
 
 Bvariable *Llvm_backend::implicit_variable(const std::string &name,
                                            const std::string &asm_name,
-                                           Btype *type,
-                                           bool is_hidden, bool is_constant,
-                                           bool is_common, int64_t alignment) {
+                                           Btype *type, bool is_hidden,
+                                           bool is_constant, bool is_common,
+                                           int64_t alignment) {
   assert(false && "Llvm_backend::implicit_variable not yet impl");
   return nullptr;
 }
@@ -1837,10 +1746,9 @@ Bvariable *Llvm_backend::implicit_variable_reference(const std::string &name,
 Bvariable *Llvm_backend::immutable_struct(const std::string &name,
                                           const std::string &asm_name,
                                           bool is_hidden, bool is_common,
-                                          Btype *btype, Location location)
-{
-  if (btype == error_type())
-    return error_variable();
+                                          Btype *btype, Location location) {
+  if (btype == errorType_)
+    return errorVariable_.get();
 
   // FIXME: add code to insure non-zero size
   assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
@@ -1850,21 +1758,19 @@ Bvariable *Llvm_backend::immutable_struct(const std::string &name,
 
   // Determine linkage
   llvm::GlobalValue::LinkageTypes linkage =
-      (is_common ? llvm::GlobalValue::CommonLinkage :
-       (is_hidden ? llvm::GlobalValue::InternalLinkage :
-        llvm::GlobalValue::ExternalLinkage));
+      (is_common ? llvm::GlobalValue::CommonLinkage
+                 : (is_hidden ? llvm::GlobalValue::InternalLinkage
+                              : llvm::GlobalValue::ExternalLinkage));
 
   bool isConstant = true;
   llvm::Constant *init = nullptr;
   bool addressTakenDontCare = false;
-  llvm::GlobalVariable *glob =
-      new llvm::GlobalVariable(*module_.get(), btype->type(), isConstant,
-                               linkage, init, asm_name);
-  Bvariable *bv =
-      new Bvariable(btype, location, name, GlobalVar,
-                    addressTakenDontCare, glob);
-  assert(value_varmap_.find(bv->value()) == value_varmap_.end());
-  value_varmap_[bv->value()] = bv;
+  llvm::GlobalVariable *glob = new llvm::GlobalVariable(
+      *module_.get(), btype->type(), isConstant, linkage, init, asm_name);
+  Bvariable *bv = new Bvariable(btype, location, name, GlobalVar,
+                                addressTakenDontCare, glob);
+  assert(valueVarmap_.find(bv->value()) == valueVarmap_.end());
+  valueVarmap_[bv->value()] = bv;
   return bv;
 }
 
@@ -1891,8 +1797,7 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
 
 // Make a label.
 
-Blabel *Llvm_backend::label(Bfunction *function,
-                            const std::string &name,
+Blabel *Llvm_backend::label(Bfunction *function, const std::string &name,
                             Location location) {
   return function->newLabel();
 }
@@ -1917,7 +1822,7 @@ Bexpression *Llvm_backend::label_address(Blabel *label, Location location) {
   assert(false);
 }
 
-Bfunction *Llvm_backend::error_function() { return error_function_.get(); }
+Bfunction *Llvm_backend::error_function() { return errorFunction_.get(); }
 
 // Declare or define a new function.
 
@@ -1926,8 +1831,8 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
                                   bool is_declaration, bool is_inlinable,
                                   bool disable_split_stack,
                                   bool in_unique_section, Location location) {
-  if (fntype == error_type_)
-    return error_function_.get();
+  if (fntype == errorType_)
+    return errorFunction_.get();
   llvm::Twine fn(name);
   llvm::FunctionType *fty = llvm::cast<llvm::FunctionType>(fntype->type());
   llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
@@ -1981,21 +1886,15 @@ bool Llvm_backend::function_set_parameters(
 }
 
 class GenBlocks {
- public:
-  GenBlocks(llvm::LLVMContext &context,
-            Llvm_backend *be,
-            Bfunction *function)
-      : context_(context)
-      , be_(be)
-      , function_(function)
-  { }
+public:
+  GenBlocks(llvm::LLVMContext &context, Llvm_backend *be, Bfunction *function)
+      : context_(context), be_(be), function_(function) {}
 
   llvm::BasicBlock *walk(Bstatement *stmt, llvm::BasicBlock *curblock);
   Bfunction *function() { return function_; }
   llvm::BasicBlock *genIf(IfPHStatement *ifst, llvm::BasicBlock *curblock);
 
- private:
-
+private:
   llvm::BasicBlock *getBlockForLabel(LabelId lab) {
     auto it = labelmap_.find(lab);
     if (it != labelmap_.end())
@@ -2007,7 +1906,7 @@ class GenBlocks {
     return bb;
   }
 
- private:
+private:
   llvm::LLVMContext &context_;
   Llvm_backend *be_;
   Bfunction *function_;
@@ -2015,8 +1914,7 @@ class GenBlocks {
 };
 
 llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
-                                   llvm::BasicBlock *curblock)
-{
+                                   llvm::BasicBlock *curblock) {
   // Append the condition instructions to the current block
   for (auto inst : ifst->cond()->instructions())
     curblock->getInstList().push_back(inst);
@@ -2055,55 +1953,52 @@ llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
 }
 
 llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
-                                  llvm::BasicBlock *curblock)
-{
-  switch(stmt->flavor()) {
-    case Bstatement::ST_Compound: {
-      CompoundStatement *cst = stmt->castToCompoundStatement();
-      for (auto st : cst->stlist())
-        curblock = walk(st, curblock);
-      break;
-    }
-    case Bstatement::ST_ExprList: {
-      ExprListStatement *elst = stmt->castToExprListStatement();
-      for (auto expr : elst->expressions()) {
-        for (auto inst : expr->instructions()) {
-          curblock->getInstList().push_back(inst);
-        }
+                                  llvm::BasicBlock *curblock) {
+  switch (stmt->flavor()) {
+  case Bstatement::ST_Compound: {
+    CompoundStatement *cst = stmt->castToCompoundStatement();
+    for (auto st : cst->stlist())
+      curblock = walk(st, curblock);
+    break;
+  }
+  case Bstatement::ST_ExprList: {
+    ExprListStatement *elst = stmt->castToExprListStatement();
+    for (auto expr : elst->expressions()) {
+      for (auto inst : expr->instructions()) {
+        curblock->getInstList().push_back(inst);
       }
-      break;
     }
-    case Bstatement::ST_IfPlaceholder: {
-      IfPHStatement *ifst = stmt->castToIfPHStatement();
-      curblock = genIf(ifst, curblock);
-      break;
-    }
-    case Bstatement::ST_Goto: {
-      GotoStatement *gst = stmt->castToGotoStatement();
-      llvm::BasicBlock *lbb = getBlockForLabel(gst->targetLabel());
-      llvm::BranchInst::Create(lbb, curblock);
-      std::string n = be_->namegen("orphan");
-      llvm::Function *func = function()->function();
-      llvm::BasicBlock *orphan =
-          llvm::BasicBlock::Create(context_, n, func, lbb);
-      curblock = orphan;
-      break;
-    }
-    case Bstatement::ST_Label: {
-      LabelStatement *lbst = stmt->castToLabelStatement();
-      llvm::BasicBlock *lbb = getBlockForLabel(lbst->definedLabel());
-      llvm::BranchInst::Create(lbb, curblock);
-      curblock = lbb;
-      break;
-    }
-    default:
-        assert(false && "not yet handled");
+    break;
+  }
+  case Bstatement::ST_IfPlaceholder: {
+    IfPHStatement *ifst = stmt->castToIfPHStatement();
+    curblock = genIf(ifst, curblock);
+    break;
+  }
+  case Bstatement::ST_Goto: {
+    GotoStatement *gst = stmt->castToGotoStatement();
+    llvm::BasicBlock *lbb = getBlockForLabel(gst->targetLabel());
+    llvm::BranchInst::Create(lbb, curblock);
+    std::string n = be_->namegen("orphan");
+    llvm::Function *func = function()->function();
+    llvm::BasicBlock *orphan = llvm::BasicBlock::Create(context_, n, func, lbb);
+    curblock = orphan;
+    break;
+  }
+  case Bstatement::ST_Label: {
+    LabelStatement *lbst = stmt->castToLabelStatement();
+    llvm::BasicBlock *lbb = getBlockForLabel(lbst->definedLabel());
+    llvm::BranchInst::Create(lbb, curblock);
+    curblock = lbb;
+    break;
+  }
+  default:
+    assert(false && "not yet handled");
   }
   return curblock;
 }
 
-llvm::BasicBlock *Llvm_backend::genEntryBlock(Bfunction *bfunction)
-{
+llvm::BasicBlock *Llvm_backend::genEntryBlock(Bfunction *bfunction) {
   llvm::Function *func = bfunction->function();
   llvm::BasicBlock *entry = llvm::BasicBlock::Create(context_, "entry", func);
 
@@ -2117,11 +2012,11 @@ llvm::BasicBlock *Llvm_backend::genEntryBlock(Bfunction *bfunction)
 
 bool Llvm_backend::function_set_body(Bfunction *function,
                                      Bstatement *code_stmt) {
-#if 0
   // debugging
-  std::cerr << "Statement tree dump:\n";
-  code_stmt->dump();
-  #endif
+  if (traceLevel() > 1) {
+    std::cerr << "Statement tree dump:\n";
+    code_stmt->dump();
+  }
 
   // Create and populate entry block
   llvm::BasicBlock *entryBlock = genEntryBlock(function);
@@ -2130,10 +2025,11 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   GenBlocks gb(context_, this, function);
   gb.walk(code_stmt, entryBlock);
 
-#if 0
   // debugging
-  function->function()->dump();
-#endif
+  if (traceLevel() > 0) {
+    std::cerr << "LLVM function dump:\n";
+    function->function()->dump();
+  }
 
   // At this point we can delete the Bstatement tree, we're done with it
   Bstatement::destroy(code_stmt, DelWrappers);

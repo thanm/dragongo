@@ -8,9 +8,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestUtils.h"
+#include "go-llvm-backend.h"
 #include "llvm/IR/Constants.h"
 #include "gtest/gtest.h"
-#include "go-llvm-backend.h"
 
 using namespace llvm;
 using namespace goBackendUnitTests;
@@ -39,32 +39,29 @@ TEST(BackendExprTests, MakeIntConstExpr) {
   // Integer constants, signed and unsigned
   Btype *bi64t = be->integer_type(false, 64);
   ASSERT_TRUE(bi64t != nullptr);
-  static const int64_t i64tvals[] = { -9223372036854775807,
-                                      0, 1, 17179869184,
-                                      9223372036854775807 };
+  static const int64_t i64tvals[] = {-9223372036854775807, 0, 1, 17179869184,
+                                     9223372036854775807};
   for (auto val : i64tvals) {
     mpz_t mpz_val;
     memset(&mpz_val, '0', sizeof(mpz_val));
     mpz_init_set_si(mpz_val, val);
     Bexpression *beval = be->integer_constant_expression(bi64t, mpz_val);
     ASSERT_TRUE(beval != nullptr);
-    EXPECT_EQ(beval->value(),
-              llvm::ConstantInt::getSigned(bi64t->type(), val));
+    EXPECT_EQ(beval->value(), llvm::ConstantInt::getSigned(bi64t->type(), val));
     mpz_clear(mpz_val);
   }
 
   Btype *bu64t = be->integer_type(true, 64);
   ASSERT_TRUE(bu64t != nullptr);
-  static const uint64_t u64tvals[] = { 0, 1, 9223372036854775807ull,
-                                       17293822569102704639ull };
+  static const uint64_t u64tvals[] = {0, 1, 9223372036854775807ull,
+                                      17293822569102704639ull};
   for (auto val : u64tvals) {
     mpz_t mpz_val;
     memset(&mpz_val, '0', sizeof(mpz_val));
     mpz_init_set_ui(mpz_val, val);
     Bexpression *beval = be->integer_constant_expression(bu64t, mpz_val);
     ASSERT_TRUE(beval != nullptr);
-    EXPECT_EQ(beval->value(),
-              llvm::ConstantInt::get(bu64t->type(), val));
+    EXPECT_EQ(beval->value(), llvm::ConstantInt::get(bu64t->type(), val));
     mpz_clear(mpz_val);
   }
 }
@@ -77,9 +74,8 @@ TEST(BackendExprTests, MakeFloatConstExpr) {
   // Float constants
   Btype *bf32t = be->float_type(32);
   ASSERT_TRUE(bf32t != nullptr);
-  static const float f32vals[] = { 3.402823466e+38F,
-                                   0.0f, 1.1f,
-                                   1.175494351e-38F };
+  static const float f32vals[] = {3.402823466e+38F, 0.0f, 1.1f,
+                                  1.175494351e-38F};
   for (auto val : f32vals) {
     mpfr_t mpfr_val;
 
@@ -102,9 +98,8 @@ TEST(BackendExprTests, MakeFloatConstExpr) {
   // Double constants
   Btype *bf64t = be->float_type(64);
   ASSERT_TRUE(bf64t != nullptr);
-  static const double f64vals[] = { 1.7976931348623158e+308,
-                                   0.0f, 1.1f,
-                                   2.2250738585072014e-308 };
+  static const double f64vals[] = {1.7976931348623158e+308, 0.0f, 1.1f,
+                                   2.2250738585072014e-308};
   for (auto val : f64vals) {
     mpfr_t mpfr_val;
 
@@ -121,7 +116,6 @@ TEST(BackendExprTests, MakeFloatConstExpr) {
 
     mpfr_clear(mpfr_val);
   }
-
 }
 
 TEST(BackendExprTests, MakeZeroValueExpr) {
@@ -163,8 +157,8 @@ TEST(BackendExprTests, TestConversionExpressions) {
   EXPECT_EQ(bzero->value(), bcon->value());
 
   // Error handling
-  Bexpression *econ = be->convert_expression(be->error_type(),
-                                              bzero, Location());
+  Bexpression *econ =
+      be->convert_expression(be->error_type(), bzero, Location());
   EXPECT_EQ(econ, be->error_expression());
 }
 
@@ -207,8 +201,8 @@ TEST(BackendExprTests, TestCompareOps) {
 
   std::unique_ptr<Backend> be(go_get_backend(C));
 
-  Operator optotest[] = { OPERATOR_EQEQ, OPERATOR_NOTEQ, OPERATOR_LT,
-                          OPERATOR_LE, OPERATOR_GT, OPERATOR_GE };
+  Operator optotest[] = {OPERATOR_EQEQ, OPERATOR_NOTEQ, OPERATOR_LT,
+                         OPERATOR_LE,   OPERATOR_GT,    OPERATOR_GE};
 
   Bfunction *func = mkFunci32o64(be.get(), "foo");
 
@@ -218,7 +212,7 @@ TEST(BackendExprTests, TestCompareOps) {
   Bexpression *beuc2 = mkUint64Const(be.get(), 3);
   Bexpression *befc = mkFloat64Const(be.get(), 9.0);
   Bexpression *befc2 = mkFloat64Const(be.get(), 3.0);
-  std::vector<std::pair<Bexpression *, Bexpression *> > valtotest;
+  std::vector<std::pair<Bexpression *, Bexpression *>> valtotest;
   valtotest.push_back(std::make_pair(beic, beic2));
   valtotest.push_back(std::make_pair(beuc, beuc2));
   valtotest.push_back(std::make_pair(befc, befc2));
@@ -274,7 +268,7 @@ TEST(BackendExprTests, TestArithOps) {
 
   std::unique_ptr<Backend> be(go_get_backend(C));
 
-  Operator optotest[] = { OPERATOR_PLUS };
+  Operator optotest[] = {OPERATOR_PLUS};
 
   Bfunction *func = mkFunci32o64(be.get(), "foo");
 
@@ -282,7 +276,7 @@ TEST(BackendExprTests, TestArithOps) {
   Bexpression *beic2 = mkInt64Const(be.get(), 3);
   Bexpression *befc = mkFloat64Const(be.get(), 9.0);
   Bexpression *befc2 = mkFloat64Const(be.get(), 3.0);
-  std::vector<std::pair<Bexpression *, Bexpression *> > valtotest;
+  std::vector<std::pair<Bexpression *, Bexpression *>> valtotest;
   valtotest.push_back(std::make_pair(beic, beic2));
   valtotest.push_back(std::make_pair(befc, befc2));
 
@@ -315,5 +309,4 @@ TEST(BackendExprTests, TestArithOps) {
 
   be->function_set_body(func, block);
 }
-
 }

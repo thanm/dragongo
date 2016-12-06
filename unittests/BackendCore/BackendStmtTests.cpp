@@ -8,8 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestUtils.h"
-#include "gtest/gtest.h"
 #include "go-llvm-backend.h"
+#include "gtest/gtest.h"
 
 using namespace llvm;
 using namespace goBackendUnitTests;
@@ -54,8 +54,8 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
   // assign a constant to a variable
   Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
   Bexpression *ve1 = be->var_expression(loc1, true, loc);
-  Bstatement *as = be->assignment_statement(ve1,
-                                            mkInt64Const(be.get(), 123), loc);
+  Bstatement *as =
+      be->assignment_statement(ve1, mkInt64Const(be.get(), 123), loc);
   ASSERT_TRUE(as != nullptr);
   EXPECT_EQ(repr(as), "store i64 123, i64* %loc1");
   Bblock *block = mkBlockFromStmt(be.get(), func, as);
@@ -79,8 +79,8 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
   // error handling
   Bvariable *loc3 = be->local_variable(func, "loc3", bi64t, true, loc);
   Bexpression *ve4 = be->var_expression(loc3, true, loc);
-  Bstatement *badas = be->assignment_statement(ve4,
-                                               be->error_expression(), loc);
+  Bstatement *badas =
+      be->assignment_statement(ve4, be->error_expression(), loc);
   ASSERT_TRUE(badas != nullptr);
   EXPECT_EQ(badas, be->error_statement());
 
@@ -92,15 +92,21 @@ TEST(BackendStmtTests, TestReturnStmt) {
   std::unique_ptr<Backend> be(go_get_backend(C));
 
   Bfunction *func = mkFunci32o64(be.get(), "foo");
-  std::vector<Bexpression*> vals;
-  vals.push_back(mkInt64Const(be.get(), 99));
+  Btype *bi64t = be->integer_type(false, 64);
   Location loc;
+  Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
+  Bstatement *is = be->init_statement(loc1, mkInt64Const(be.get(), 10));
+  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+  std::vector<Bexpression *> vals;
+  Bexpression *ve1 = be->var_expression(loc1, false, loc);
+  vals.push_back(ve1);
   Bstatement *ret = be->return_statement(func, vals, loc);
-  Bblock *block = mkBlockFromStmt(be.get(), func, ret);
-  EXPECT_EQ(repr(ret), "ret i64 99");
+  EXPECT_EQ(repr(ret), "%loc1.ld.0 = load i64, i64* %loc1\n"
+                       "ret i64 %loc1.ld.0");
+  addStmtToBlock(be.get(), block, ret);
 
   // error handling
-  std::vector<Bexpression*> bvals;
+  std::vector<Bexpression *> bvals;
   vals.push_back(be->error_expression());
   Bstatement *bret = be->return_statement(func, vals, loc);
   EXPECT_EQ(bret, be->error_statement());
@@ -180,5 +186,4 @@ TEST(BackendStmtTests, TestIfStmt) {
   bool ok = be->function_set_body(func, eb);
   EXPECT_TRUE(ok);
 }
-
 }

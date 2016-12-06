@@ -8,8 +8,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestUtils.h"
-#include "gtest/gtest.h"
 #include "go-llvm-backend.h"
+#include "gtest/gtest.h"
 
 using namespace llvm;
 using namespace goBackendUnitTests;
@@ -20,7 +20,6 @@ TEST(BackendCoreTests, MakeBackend) {
   LLVMContext C;
 
   std::unique_ptr<Backend> makeit(go_get_backend(C));
-
 }
 
 TEST(BackendCoreTests, ScalarTypes) {
@@ -81,9 +80,8 @@ TEST(BackendCoreTests, StructTypes) {
 
   // If a field has error type, entire struct has error type
   std::vector<Backend::Btyped_identifier> fields = {
-    Backend::Btyped_identifier("f1", be->bool_type(), Location()),
-    Backend::Btyped_identifier("fe", be->error_type(), Location())
-  };
+      Backend::Btyped_identifier("f1", be->bool_type(), Location()),
+      Backend::Btyped_identifier("fe", be->error_type(), Location())};
   Btype *badst = be->struct_type(fields);
   EXPECT_TRUE(badst != nullptr);
   EXPECT_EQ(badst, be->error_type());
@@ -124,36 +122,27 @@ TEST(BackendCoreTests, FunctionTypes) {
 
   {
     // func (Blah) foo() {}
-    Btype *befn = mkFuncTyp(be.get(),
-                            L_RCV, mkBackendThreeFieldStruct(be.get()),
-                            L_END);
-    Type *llfn = mkLLFuncTyp(&C,
-                             L_RCV, mkLlvmThreeFieldStruct(C),
-                             L_END);
+    Btype *befn =
+        mkFuncTyp(be.get(), L_RCV, mkBackendThreeFieldStruct(be.get()), L_END);
+    Type *llfn = mkLLFuncTyp(&C, L_RCV, mkLlvmThreeFieldStruct(C), L_END);
     ASSERT_TRUE(befn != nullptr && llfn != nullptr);
     EXPECT_TRUE(befn->type() == llfn);
   }
 
   {
     // func foo(x int64) {}
-    Btype *befn = mkFuncTyp(be.get(),
-                            L_PARM, be->integer_type(false, 64),
-                            L_END);
-    Type *llfn = mkLLFuncTyp(&C,
-                             L_PARM, i64t,
-                             L_END);
+    Btype *befn =
+        mkFuncTyp(be.get(), L_PARM, be->integer_type(false, 64), L_END);
+    Type *llfn = mkLLFuncTyp(&C, L_PARM, i64t, L_END);
     ASSERT_TRUE(befn != nullptr && llfn != nullptr);
     EXPECT_TRUE(befn->type() == llfn);
   }
 
   {
     // func foo() int64 {}
-    Btype *befn = mkFuncTyp(be.get(),
-                            L_RES, be->integer_type(false, 64),
-                            L_END);
-    Type *llfn = mkLLFuncTyp(&C,
-                             L_RES, i64t,
-                             L_END);
+    Btype *befn =
+        mkFuncTyp(be.get(), L_RES, be->integer_type(false, 64), L_END);
+    Type *llfn = mkLLFuncTyp(&C, L_RES, i64t, L_END);
     ASSERT_TRUE(befn != nullptr && llfn != nullptr);
     EXPECT_TRUE(befn->type() == llfn);
   }
@@ -162,24 +151,16 @@ TEST(BackendCoreTests, FunctionTypes) {
     // func (Blah) foo(int32, int32, int32) (int64, int64) {}
     Btype *bi64t = be->integer_type(false, 64);
     Btype *bi32t = be->integer_type(false, 32);
-    Btype *befn = mkFuncTyp(be.get(),
-                            L_RCV, mkBackendThreeFieldStruct(be.get()),
-                            L_PARM, bi32t,
-                            L_PARM, bi32t,
-                            L_PARM, bi32t,
-                            L_RES, bi64t, // ignored
-                            L_RES, bi64t, // ignored
-                            L_RES_ST, mkTwoFieldStruct(be.get(), bi64t, bi64t),
-                            L_END);
-    Type *llfn = mkLLFuncTyp(&C,
-                             L_RCV, mkLlvmThreeFieldStruct(C),
-                             L_PARM, i32t,
-                             L_PARM, i32t,
-                             L_PARM, i32t,
-                             L_RES, i64t, // ignored
-                             L_RES, i64t, // ignored
-                             L_RES_ST, mkTwoFieldLLvmStruct(C, i64t, i64t),
-                             L_END);
+    Btype *befn =
+        mkFuncTyp(be.get(), L_RCV, mkBackendThreeFieldStruct(be.get()), L_PARM,
+                  bi32t, L_PARM, bi32t, L_PARM, bi32t, L_RES, bi64t, // ignored
+                  L_RES, bi64t,                                      // ignored
+                  L_RES_ST, mkTwoFieldStruct(be.get(), bi64t, bi64t), L_END);
+    Type *llfn =
+        mkLLFuncTyp(&C, L_RCV, mkLlvmThreeFieldStruct(C), L_PARM, i32t, L_PARM,
+                    i32t, L_PARM, i32t, L_RES, i64t, // ignored
+                    L_RES, i64t,                     // ignored
+                    L_RES_ST, mkTwoFieldLLvmStruct(C, i64t, i64t), L_END);
     ASSERT_TRUE(befn != nullptr && llfn != nullptr);
     EXPECT_TRUE(befn->type() == llfn);
   }
@@ -215,9 +196,9 @@ TEST(BackendCoreTests, PlaceholderTypes) {
 
   // Replace placeholder struct type
   std::vector<Backend::Btyped_identifier> fields = {
-    Backend::Btyped_identifier("f1", be->integer_type(false, 64), Location()),
-    Backend::Btyped_identifier("f2", be->integer_type(false, 64), Location())
-  };
+      Backend::Btyped_identifier("f1", be->integer_type(false, 64), Location()),
+      Backend::Btyped_identifier("f2", be->integer_type(false, 64),
+                                 Location())};
   be->set_placeholder_struct_type(phst1, fields);
   Type *i64t = IntegerType::get(C, 64);
   EXPECT_TRUE(phst1->type() == mkTwoFieldLLvmStruct(C, i64t, i64t));
@@ -270,7 +251,8 @@ TEST(BackendCoreTests, NamedTypes) {
   Location loc;
   Btype *nt = be->named_type("named_int32", be->integer_type(false, 32), loc);
   ASSERT_TRUE(nt != nullptr);
-  Btype *nt2 = be->named_type("another_int32", be->integer_type(false, 32), loc);
+  Btype *nt2 =
+      be->named_type("another_int32", be->integer_type(false, 32), loc);
   ASSERT_TRUE(nt2 != nullptr);
   EXPECT_TRUE(nt != nt2);
 }
@@ -295,5 +277,4 @@ TEST(BackendCoreTests, TypeUtils) {
   Btype *u32 = be->integer_type(true, 32);
   EXPECT_EQ(be->type_field_alignment(u32), 4);
 }
-
 }

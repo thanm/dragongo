@@ -106,6 +106,11 @@ EscapeDebugLevel("fgo-debug-escape",
                           "-fgo-optimize-allocs."),
                  cl::init(0));
 
+static cl::opt<unsigned>
+TraceLevel("tracelevel",
+           cl::desc("Set debug trace level (def: 0, no trace output)."),
+           cl::init(0));
+
 static Llvm_backend *init_gogo(TargetMachine *Target,
                                llvm::LLVMContext &Context,
                                Linemap *linemap)
@@ -184,6 +189,7 @@ int main(int argc, char **argv)
   std::unique_ptr<Linemap> linemap(go_get_linemap());
 
   Llvm_backend *backend = init_gogo(Target.get(), Context, linemap.get());
+  backend->setTraceLevel(TraceLevel);
 
   // Include dirs
   if (! IncludeDirs.empty()) {

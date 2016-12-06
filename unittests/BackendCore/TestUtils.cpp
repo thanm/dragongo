@@ -60,8 +60,8 @@ bool difftokens(const std::vector<std::string> &expv,
   }
   for (unsigned idx = 0; idx < expv.size(); ++idx) {
     if (expv[idx] != resv[idx]) {
-      ss << "token vector diff at slot " << idx << " (expected '"
-         << expv[idx] << "' result '" << resv[idx] << "')";
+      ss << "token vector diff at slot " << idx << " (expected '" << expv[idx]
+         << "' result '" << resv[idx] << "')";
       ss << " res:{" << vectostr(resv) << " }";
       diffreason = ss.str();
       return false;

@@ -15,8 +15,8 @@
 #define LLVMGOFRONTEND_GO_LLVM_H
 
 // Currently these need to be included before backend.h
-#include "go-location.h"
 #include "go-linemap.h"
+#include "go-location.h"
 
 #include "backend.h"
 
@@ -40,40 +40,42 @@ class Value;
 
 class Btype {
 public:
-  explicit Btype(llvm::Type *type) : type_(type) {}
+  explicit Btype(llvm::Type *type) : type_(type), isUnsigned_(false) {}
 
   llvm::Type *type() const { return type_; }
-  bool is_unsigned() { return is_unsigned_; }
-  void set_unsigned() { is_unsigned_ = true; }
+
+  // For integer types.
+  bool isUnsigned() { return isUnsigned_; }
+  void setUnsigned() { isUnsigned_ = true; }
 
 private:
   Btype() : type_(NULL) {}
   llvm::Type *type_;
-  bool is_unsigned_;
+  bool isUnsigned_;
   friend class Llvm_backend;
 };
 
 // Mixin class for a list of instructions
 
 class Binstructions {
- public:
-  Binstructions() { }
-  explicit Binstructions(const std::vector<llvm::Instruction*> instructions)
-      : instructions_(instructions) { }
+public:
+  Binstructions() {}
+  explicit Binstructions(const std::vector<llvm::Instruction *> instructions)
+      : instructions_(instructions) {}
 
-  std::vector<llvm::Instruction*> &instructions() { return instructions_; }
-  void appendInstruction(llvm::Instruction* inst) {
+  std::vector<llvm::Instruction *> &instructions() { return instructions_; }
+  void appendInstruction(llvm::Instruction *inst) {
     instructions_.push_back(inst);
   }
-  void appendInstructions(const std::vector<llvm::Instruction*> &ilist) {
+  void appendInstructions(const std::vector<llvm::Instruction *> &ilist) {
     for (auto i : ilist)
       instructions_.push_back(i);
   }
 
   void clear() { instructions_.clear(); }
 
- private:
-  std::vector<llvm::Instruction*> instructions_;
+private:
+  std::vector<llvm::Instruction *> instructions_;
 };
 
 // Use when deleting a Bstatement or Bexpression subtree. Controls
@@ -96,7 +98,7 @@ enum WhichDel {
 // then assign the result to E3".
 
 class Bexpression : public Binstructions {
- public:
+public:
   Bexpression(llvm::Value *value, Btype *btype);
   ~Bexpression();
 
@@ -111,7 +113,7 @@ class Bexpression : public Binstructions {
   // debugging
   void dump(unsigned ilevel);
 
- private:
+private:
   Bexpression() : value_(NULL) {}
   llvm::Value *value_;
   Btype *btype_;
@@ -149,7 +151,7 @@ class LabelStatement;
 // the various derived statement types.
 
 class Bstatement {
- public:
+public:
   enum StFlavor {
     ST_Compound,
     ST_ExprList,
@@ -160,9 +162,8 @@ class Bstatement {
   };
 
   Bstatement(StFlavor flavor, Location location)
-      : flavor_(flavor)
-      , location_(location) { }
-  virtual ~Bstatement() { }
+      : flavor_(flavor), location_(location) {}
+  virtual ~Bstatement() {}
   StFlavor flavor() const { return flavor_; }
   Location location() const { return location_; }
 
@@ -184,7 +185,7 @@ class Bstatement {
   // debugging
   void dump(unsigned ident = 0);
 
- private:
+private:
   StFlavor flavor_;
   Location location_;
 };
@@ -192,112 +193,99 @@ class Bstatement {
 // Compound statement is simply a list of other statements.
 
 class CompoundStatement : public Bstatement {
- public:
-  CompoundStatement() : Bstatement(ST_Compound, Location()) { }
+public:
+  CompoundStatement() : Bstatement(ST_Compound, Location()) {}
   std::vector<Bstatement *> &stlist() { return stlist_; }
 
- private:
+private:
   std::vector<Bstatement *> stlist_;
 };
 
-inline CompoundStatement *Bstatement::castToCompoundStatement()
-{
-  return (flavor_ == ST_Compound ?
-          static_cast<CompoundStatement*>(this) : nullptr);
+inline CompoundStatement *Bstatement::castToCompoundStatement() {
+  return (flavor_ == ST_Compound ? static_cast<CompoundStatement *>(this)
+                                 : nullptr);
 }
 
 // ExprList statement contains a list of LLVM instructions.
 
 class ExprListStatement : public Bstatement {
- public:
-  ExprListStatement() : Bstatement(ST_ExprList, Location()) { }
-  ExprListStatement(Bexpression *e)
-      : Bstatement(ST_ExprList, Location()) {
+public:
+  ExprListStatement() : Bstatement(ST_ExprList, Location()) {}
+  ExprListStatement(Bexpression *e) : Bstatement(ST_ExprList, Location()) {
     expressions_.push_back(e);
   }
-  void appendExpression(Bexpression *e) {
-    expressions_.push_back(e);
-  }
+  void appendExpression(Bexpression *e) { expressions_.push_back(e); }
   std::vector<Bexpression *> expressions() { return expressions_; }
 
- private:
+private:
   std::vector<Bexpression *> expressions_;
-
 };
 
-inline ExprListStatement *Bstatement::castToExprListStatement()
-{
-  return (flavor_ == ST_ExprList ?
-          static_cast<ExprListStatement*>(this) : nullptr);
+inline ExprListStatement *Bstatement::castToExprListStatement() {
+  return (flavor_ == ST_ExprList ? static_cast<ExprListStatement *>(this)
+                                 : nullptr);
 }
 
 // "If" placeholder statement.
 
 class IfPHStatement : public Bstatement {
- public:
+public:
   IfPHStatement(Bexpression *cond, Bstatement *ifTrue, Bstatement *ifFalse,
                 Location location)
-      : Bstatement(ST_IfPlaceholder, location)
-      , cond_(cond)
-      , iftrue_(ifTrue)
-      , iffalse_(ifFalse)
-  { }
+      : Bstatement(ST_IfPlaceholder, location), cond_(cond), iftrue_(ifTrue),
+        iffalse_(ifFalse) {}
   Bexpression *cond() { return cond_; }
   Bstatement *trueStmt() { return iftrue_; }
   Bstatement *falseStmt() { return iffalse_; }
 
- private:
+private:
   Bexpression *cond_;
   Bstatement *iftrue_;
   Bstatement *iffalse_;
 };
 
-inline IfPHStatement *Bstatement::castToIfPHStatement()
-{
-  return (flavor_ == ST_IfPlaceholder ?
-          static_cast<IfPHStatement*>(this) : nullptr);
+inline IfPHStatement *Bstatement::castToIfPHStatement() {
+  return (flavor_ == ST_IfPlaceholder ? static_cast<IfPHStatement *>(this)
+                                      : nullptr);
 }
 
 // "Switch" placeholder statement.
 
 class SwitchPHStatement : public Bstatement {
- public:
+public:
   SwitchPHStatement(Bexpression *value,
-                    const std::vector<std::vector<Bexpression*> >& cases,
-                    const std::vector<Bstatement*>& statements,
+                    const std::vector<std::vector<Bexpression *>> &cases,
+                    const std::vector<Bstatement *> &statements,
                     Location location)
-      : Bstatement(ST_SwitchPlaceholder, location)
-      , value_(value)
-      , cases_(cases)
-      , statements_(statements)
-  { }
+      : Bstatement(ST_SwitchPlaceholder, location), value_(value),
+        cases_(cases), statements_(statements) {}
   Bexpression *switchValue() { return value_; }
-  std::vector<std::vector<Bexpression*> > &cases() { return cases_; }
-  std::vector<Bstatement*> &statements() { return statements_; }
+  std::vector<std::vector<Bexpression *>> &cases() { return cases_; }
+  std::vector<Bstatement *> &statements() { return statements_; }
 
- private:
+private:
   Bexpression *value_;
-  std::vector<std::vector<Bexpression*> > cases_;
-  std::vector<Bstatement*> statements_;
+  std::vector<std::vector<Bexpression *>> cases_;
+  std::vector<Bstatement *> statements_;
 };
 
-inline SwitchPHStatement *Bstatement::castToSwitchPHStatement()
-{
-  return (flavor_ == ST_SwitchPlaceholder ?
-          static_cast<SwitchPHStatement*>(this) : nullptr);
+inline SwitchPHStatement *Bstatement::castToSwitchPHStatement() {
+  return (flavor_ == ST_SwitchPlaceholder
+              ? static_cast<SwitchPHStatement *>(this)
+              : nullptr);
 }
 
 // Opaque labelID handle.
 typedef unsigned LabelId;
 
-class Blabel  {
- public:
+class Blabel {
+public:
   Blabel(const Bfunction *function, LabelId lab)
-      : function_(const_cast<Bfunction*>(function))
-      , lab_(lab) { }
+      : function_(const_cast<Bfunction *>(function)), lab_(lab) {}
   LabelId label() const { return lab_; }
   Bfunction *function() { return function_; }
- private:
+
+private:
   Bfunction *function_;
   LabelId lab_;
 };
@@ -306,52 +294,46 @@ class Blabel  {
 // some other labeled statement.
 
 class GotoStatement : public Bstatement {
- public:
+public:
   GotoStatement(LabelId label, Location location)
-      : Bstatement(ST_Goto, location)
-      , label_(label) { }
+      : Bstatement(ST_Goto, location), label_(label) {}
   LabelId targetLabel() const { return label_; }
- private:
+
+private:
   LabelId label_;
 };
 
-inline GotoStatement *Bstatement::castToGotoStatement()
-{
-  return (flavor_ == ST_Goto ?
-          static_cast<GotoStatement*>(this) : nullptr);
+inline GotoStatement *Bstatement::castToGotoStatement() {
+  return (flavor_ == ST_Goto ? static_cast<GotoStatement *>(this) : nullptr);
 }
 
 // A label statement, representing the target of some jump (conditional
 // or unconditional).
 
 class LabelStatement : public Bstatement {
- public:
+public:
   LabelStatement(LabelId label)
-      : Bstatement(ST_Label, Location())
-      , label_(label) { }
+      : Bstatement(ST_Label, Location()), label_(label) {}
   LabelId definedLabel() const { return label_; }
- private:
+
+private:
   LabelId label_;
 };
 
-inline LabelStatement *Bstatement::castToLabelStatement()
-{
-  return (flavor_ == ST_Label ?
-          static_cast<LabelStatement*>(this) : nullptr);
+inline LabelStatement *Bstatement::castToLabelStatement() {
+  return (flavor_ == ST_Label ? static_cast<LabelStatement *>(this) : nullptr);
 }
 
 // A Bblock , which wraps statement list. Ssee the comment
 // above on why we need to make it easy to convert between
 // blocks and statements.
 
-class Bblock : public CompoundStatement {
-};
+class Bblock : public CompoundStatement {};
 
 // Class Bfunction wraps llvm::Function
 
-class Bfunction
-{
- public:
+class Bfunction {
+public:
   Bfunction(llvm::Function *f);
   ~Bfunction();
 
@@ -362,14 +344,10 @@ class Bfunction
   SplitStackDisposition splitStack() const { return splitstack_; }
 
   // Record an alloca() instruction, to be added to entry block
-  void addAlloca(llvm::Instruction *inst) {
-    allocas_.push_back(inst);
-  }
+  void addAlloca(llvm::Instruction *inst) { allocas_.push_back(inst); }
 
   // Record a new Bblock for this function (do we need this?)
-  void addBlock(Bblock *block) {
-    blocks_.push_back(block);
-  }
+  void addBlock(Bblock *block) { blocks_.push_back(block); }
 
   // Collect Return nth argument
   llvm::Argument *getNthArg(unsigned argIdx);
@@ -393,13 +371,13 @@ class Bfunction
   // allocas for local variables.
   void genProlog(llvm::BasicBlock *entry);
 
- private:
-  std::vector<llvm::Instruction*> allocas_;
+private:
+  std::vector<llvm::Instruction *> allocas_;
   std::vector<llvm::Argument *> arguments_;
   std::vector<Bblock *> blocks_;
-  std::unordered_map<llvm::Argument*, llvm::Instruction*> argtoval_;
-  std::vector<Bstatement*> labelmap_;
-  std::vector<Blabel*> labels_;
+  std::unordered_map<llvm::Argument *, llvm::Instruction *> argtoval_;
+  std::vector<Bstatement *> labelmap_;
+  std::vector<Blabel *> labels_;
   llvm::Function *function_;
   unsigned labelcount_;
   SplitStackDisposition splitstack_;
@@ -410,17 +388,11 @@ class Bfunction
 enum WhichVar { ParamVar, GlobalVar, LocalVar, ErrorVar };
 
 class Bvariable {
- public:
+public:
   explicit Bvariable(Btype *type, Location location, const std::string &name,
                      WhichVar which, bool address_taken, llvm::Value *value)
-      : name_(name)
-      , location_(location)
-      , value_(value)
-      , type_(type)
-      , which_(which)
-      , addrtaken_(address_taken)
-  {
-  }
+      : name_(name), location_(location), value_(value), type_(type),
+        which_(which), addrtaken_(address_taken) {}
 
   // Common to all varieties of variables
   Location getLocation() { return location_; }
@@ -430,7 +402,7 @@ class Bvariable {
   bool addrtaken() { return addrtaken_; }
   WhichVar flavor() const { return which_; }
 
- private:
+private:
   Bvariable() = delete;
   const std::string name_;
   Location location_;
@@ -456,7 +428,7 @@ public:
 
   // Types.
 
-  Btype *error_type() { return error_type_; }
+  Btype *error_type();
 
   Btype *void_type();
 
@@ -623,8 +595,8 @@ public:
   Bvariable *error_variable();
 
   Bvariable *global_variable(const std::string &var_name,
-                             const std::string &asm_name,
-                             Btype *btype, bool is_external, bool is_hidden,
+                             const std::string &asm_name, Btype *btype,
+                             bool is_external, bool is_hidden,
                              bool in_unique_section, Location location);
 
   void global_variable_set_init(Bvariable *, Bexpression *);
@@ -650,8 +622,8 @@ public:
   Bvariable *implicit_variable_reference(const std::string &,
                                          const std::string &, Btype *);
 
-  Bvariable *immutable_struct(const std::string &, const std::string &,
-                              bool, bool, Btype *, Location);
+  Bvariable *immutable_struct(const std::string &, const std::string &, bool,
+                              bool, Btype *, Location);
 
   void immutable_struct_set_init(Bvariable *, const std::string &, bool, bool,
                                  Btype *, Location, Bexpression *);
@@ -699,29 +671,30 @@ public:
   llvm::Module &module() { return *module_.get(); }
 
   // For debugging
-  void incDebug() { tracelevel_ += 1; }
+  void setTraceLevel(unsigned level) { traceLevel_ = level; }
+  unsigned traceLevel() const { return traceLevel_; }
 
   // For creating useful inst and block names
   std::string namegen(const std::string &tag, unsigned expl = 0xffffffff);
 
 private:
   // Make an anonymous Btype from an llvm::Type
-  Btype *make_anon_type(llvm::Type *lt);
+  Btype *makeAnonType(llvm::Type *lt);
 
   // Create a Btype from an llvm::Type, recording the fact that this
   // is a placeholder type.
-  Btype *make_placeholder_type(llvm::Type *placeholder);
+  Btype *makePlaceholderType(llvm::Type *placeholder);
 
   // Replace the underlying llvm::Type for a given placeholder type once
   // we've determined what the final type will be.
-  void update_placeholder_underlying_type(Btype *plt, llvm::Type *newtyp);
+  void updatePlaceholderUnderlyingType(Btype *plt, llvm::Type *newtyp);
 
   // Create an opaque type for use as part of a placeholder type.
-  llvm::Type *make_opaque_llvm_type();
+  llvm::Type *makeOpaqueLlvmType();
 
   // add a builtin function definition
-  void define_builtin_fcn(const char* name, const char* libname,
-                          llvm::Function *fcn);
+  void defineBuiltinFcn(const char *name, const char *libname,
+                        llvm::Function *fcn);
 
   // varargs convenience wrapper for define_builtin_fcn.
   // creates a libcall builtin. If the builtin being created is defined
@@ -730,28 +703,28 @@ private:
   // varargs: first arg after libfuncID is return type, following
   // arguments are parameter types, followed by NULL type indicating
   // end of params.
-  void define_libcall_builtin(const char* name, const char* libname,
-                              unsigned libfuncID, ...);
+  void defineLibcallBuiltin(const char *name, const char *libname,
+                            unsigned libfuncID, ...);
 
   // similar to the routine above, but takes a vector of
   // types as opposed to an argument list.
-  void define_libcall_builtin(const char* name, const char* libname,
-                              const std::vector<llvm::Type *> &types,
-                              unsigned libfuncID);
+  void defineLibcallBuiltin(const char *name, const char *libname,
+                            const std::vector<llvm::Type *> &types,
+                            unsigned libfuncID);
 
   // varargs convenience wrapper for define_builtin_fcn;
   // creates in intrinsic builtin by looking up intrinsic
   // 'intrinsicID'; variable arguments the overloaded types required
   // by llvm::Intrinsic::getDeclaration (see the comments on that
   // function for more info) terminated by NULL.
-  void define_intrinsic_builtin(const char* name, const char* libname,
-                                unsigned intrinsicID, ...);
+  void defineIntrinsicBuiltin(const char *name, const char *libname,
+                              unsigned intrinsicID, ...);
 
   // more helpers for builtin creation
-  void define_all_builtins();
-  void define_sync_fetch_and_add_builtins();
-  void define_intrinsic_builtins();
-  void define_trig_builtins();
+  void defineAllBuiltins();
+  void defineSyncFetchAndAddBuiltins();
+  void defineIntrinsicBuiltins();
+  void defineTrigBuiltins();
 
   // Create a Bexpression to hold an llvm::Value. Some Bexpressions
   // we want to cache (constants for example, or lvalue references to
@@ -759,138 +732,125 @@ private:
   // For non-cacheable values (for example, an lvalue reference to a local
   // var in a function), set scope to LocalScope (no caching in this case).
   enum ValExprScope { GlobalScope, LocalScope };
-  Bexpression *make_value_expression(llvm::Value *val,
-                                     Btype *btype,
+  Bexpression *make_value_expression(llvm::Value *val, Btype *btype,
                                      ValExprScope scope);
 
   // Create a Bexpression to hold a value being computed by the
   // instruction "inst".
-  Bexpression *make_inst_expression(llvm::Instruction *inst,
-                                    Btype *btype);
-
-
+  Bexpression *make_inst_expression(llvm::Instruction *inst, Btype *btype);
 
   // Assignment helper
-  Bstatement *do_assignment(llvm::Value *lvalue,
-                            Bexpression *lhs,
-                            Bexpression *rhs,
-                            Location);
+  Bstatement *do_assignment(llvm::Value *lvalue, Bexpression *lhs,
+                            Bexpression *rhs, Location);
 
   // Helper to set up entry block for function
   llvm::BasicBlock *genEntryBlock(Bfunction *bfunction);
 
- private:
-
-  template<typename T1, typename T2>
-  class pairvalmap_hash {
+private:
+  template <typename T1, typename T2> class pairvalmap_hash {
     typedef std::pair<T1, T2> pairtype;
-   public:
-    unsigned int
-    operator()(const pairtype& p) const
-    {
+
+  public:
+    unsigned int operator()(const pairtype &p) const {
       std::size_t h1 = std::hash<T1>{}(p.first);
       std::size_t h2 = std::hash<T2>{}(p.second);
       return h1 + h2;
     }
   };
 
-  template<typename T1, typename T2>
-  class pairvalmap_equal {
+  template <typename T1, typename T2> class pairvalmap_equal {
     typedef std::pair<T1, T2> pairtype;
-   public:
-    bool
-    operator()(const pairtype& p1, const pairtype& p2) const
-    {
-      return (p1.first == p2.first &&
-              p1.second == p2.second);
+
+  public:
+    bool operator()(const pairtype &p1, const pairtype &p2) const {
+      return (p1.first == p2.first && p1.second == p2.second);
     }
   };
 
-  template<typename T1, typename T2, typename V>
-  using pairvalmap = std::unordered_map<std::pair<T1, T2>, V,
-                                        pairvalmap_hash<T1, T2>,
-                                        pairvalmap_equal<T1, T2> >;
+  template <typename T1, typename T2, typename V>
+  using pairvalmap =
+      std::unordered_map<std::pair<T1, T2>, V, pairvalmap_hash<T1, T2>,
+                         pairvalmap_equal<T1, T2>>;
 
   typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
-  typedef pairvalmap<std::string, llvm::Type *,
-                     Btype *> named_type_maptyp;
+  typedef pairvalmap<std::string, llvm::Type *, Btype *> named_type_maptyp;
 
   typedef std::pair<llvm::Type *, bool> type_plus_unsigned;
   typedef pairvalmap<llvm::Type *, bool, Btype *> integer_type_maptyp;
 
   typedef std::pair<llvm::Value *, Btype *> valbtype;
-  typedef pairvalmap<llvm::Value *, Btype *,
-                     Bexpression *> btyped_value_expr_maptyp;
+  typedef pairvalmap<llvm::Value *, Btype *, Bexpression *>
+      btyped_value_expr_maptyp;
 
   // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
   std::unique_ptr<llvm::Module> module_;
   const llvm::DataLayout &datalayout_;
-  unsigned address_space_;
-  unsigned tracelevel_;
+  unsigned addressSpace_;
+  unsigned traceLevel_;
 
   // Data structures to record types that are being manfactured.
 
   // Anonymous typed are hashed and commoned via this map, except for
   // integer types (stored in a separate map below).
-  std::unordered_map<llvm::Type *, Btype *> anon_typemap_;
+  std::unordered_map<llvm::Type *, Btype *> anonTypemap_;
 
   // Within the LLVM world there is no notion of an unsigned (vs
   // signed) type, there are only signed/unsigned operations on
   // vanilla integer types.  This table provides for commoning/caching
   // of integer types declared as signed/unsigned by the front end.
-  integer_type_maptyp integer_typemap_;
+  integer_type_maptyp integerTypemap_;
 
   // Named types are commoned/cached using this table (since LLVM types
   // hemselves have no names).
-  named_type_maptyp named_typemap_;
+  named_type_maptyp namedTypemap_;
 
-  // Placeholder types
+  // Placeholder types created by the front end.
   std::unordered_set<Btype *> placeholders_;
-  std::unordered_set<Btype *> updated_placeholders_;
+  std::unordered_set<Btype *> updatedPlaceholders_;
 
   // Various predefined or pre-computed types that we cache away
-  Btype *complex_float_type_;
-  Btype *complex_double_type_;
-  Btype *error_type_;
-  llvm::Type *llvm_void_type_;
-  llvm::Type *llvm_ptr_type_;
-  llvm::Type *llvm_size_type_;
-  llvm::Type *llvm_integer_type_;
-  llvm::Type *llvm_int8_type_;
-  llvm::Type *llvm_int32_type_;
-  llvm::Type *llvm_int64_type_;
-  llvm::Type *llvm_float_type_;
-  llvm::Type *llvm_double_type_;
-  llvm::Type *llvm_long_double_type_;
+  Btype *complexFloatType_;
+  Btype *complexDoubleType_;
+  Btype *errorType_;
+  llvm::Type *llvmVoidType_;
+  llvm::Type *llvmPtrType_;
+  llvm::Type *llvmSizeType_;
+  llvm::Type *llvmIntegerType_;
+  llvm::Type *llvmInt8Type_;
+  llvm::Type *llvmInt32Type_;
+  llvm::Type *llvmInt64Type_;
+  llvm::Type *llvmFloatType_;
+  llvm::Type *llvmDoubleType_;
+  llvm::Type *llvmLongDoubleType_;
 
   // Lifetime start intrinsic function (created lazily)
-  // llvm::Function *llvm_lifetime_start_;
+  // llvm::Function *llvmLifetimeStart_;
 
   // Target library info oracle
   llvm::TargetLibraryInfo *TLI_;
 
   // maps name to builtin function
-  std::unordered_map<std::string, Bfunction *> builtin_map_;
+  std::unordered_map<std::string, Bfunction *> builtinMap_;
 
   // Error function
-  std::unique_ptr<Bfunction> error_function_;
+  std::unique_ptr<Bfunction> errorFunction_;
 
   // Error expression
-  std::unique_ptr<Bexpression> error_expression_;
+  std::unique_ptr<Bexpression> errorExpression_;
 
   // Error statement
-  std::unique_ptr<Bstatement> error_statement_;
+  std::unique_ptr<Bstatement> errorStatement_;
 
   // Error variable
-  std::unique_ptr<Bvariable> error_variable_;
+  std::unique_ptr<Bvariable> errorVariable_;
 
   // Map from LLVM-value/Btype pair to Bexpression. This is
   // used to cache + reuse things like global constants.
-  btyped_value_expr_maptyp value_exprmap_;
+  btyped_value_expr_maptyp valueExprmap_;
 
   // Map from LLVM values to Bvariable.
-  std::unordered_map<llvm::Value *, Bvariable *> value_varmap_;
+  std::unordered_map<llvm::Value *, Bvariable *> valueVarmap_;
 
   // For creation of useful block and inst names. Key is tag (ex: "add")
   // and val is counter to uniquify.
