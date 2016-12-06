@@ -69,8 +69,8 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
   addStmtToBlock(be.get(), block, as2);
 
   const char *exp = R"RAW_RESULT(
-            %loc1.ld = load i64, i64* %loc1
-            store i64 %loc1.ld, i64* %loc2
+            %loc1.ld.0 = load i64, i64* %loc1
+            store i64 %loc1.ld.0, i64* %loc2
    )RAW_RESULT";
   std::string reason;
   bool equal = difftokens(tokenize(exp), tokenize(repr(as2)), reason);

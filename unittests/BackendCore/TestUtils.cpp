@@ -35,30 +35,34 @@ std::vector<std::string> tokenize(const std::string &s) {
 
 std::string vectostr(const std::vector<std::string> &tv) {
   std::stringstream ss;
+  unsigned wc = 0;
   for (auto s : tv)
-    ss << s << " ";
+    ss << " " << wc++ << "[" << s << "]";
   return ss.str();
 }
 
-bool difftokens(const std::vector<std::string> &tv1,
-                const std::vector<std::string> &tv2, std::string &diffreason) {
+bool difftokens(const std::vector<std::string> &expv,
+                const std::vector<std::string> &resv, std::string &diffreason) {
   std::stringstream ss;
-  if (tv1.size() != tv2.size()) {
-    ss << "lengths differ (" << tv1.size() << " vs " << tv2.size()
-       << ") extra tokens: ";
-    unsigned mins = std::min(tv1.size(), tv2.size());
-    unsigned maxs = std::max(tv1.size(), tv2.size());
+  if (expv.size() != resv.size()) {
+    ss << "lengths differ (" << expv.size() << " vs " << resv.size()
+       << ") extra " << (expv.size() > resv.size() ? "result" : "expected")
+       << " tokens: ";
+    unsigned mins = std::min(expv.size(), resv.size());
+    unsigned maxs = std::max(expv.size(), resv.size());
     for (unsigned idx = 0; idx < maxs; ++idx) {
       if (idx >= mins)
-        ss << (idx < tv1.size() ? tv1[idx] : tv2[idx]) << " ";
+        ss << (idx < expv.size() ? expv[idx] : resv[idx]) << " ";
     }
+    ss << " res:{" << vectostr(resv) << " }";
     diffreason = ss.str();
     return false;
   }
-  for (unsigned idx = 0; idx < tv1.size(); ++idx) {
-    if (tv1[idx] != tv2[idx]) {
-      ss << "token vector diff at slot " << idx << "('" << tv1[idx] << "' vs '"
-         << tv2[idx] << "')";
+  for (unsigned idx = 0; idx < expv.size(); ++idx) {
+    if (expv[idx] != resv[idx]) {
+      ss << "token vector diff at slot " << idx << " (expected '"
+         << expv[idx] << "' result '" << resv[idx] << "')";
+      ss << " res:{" << vectostr(resv) << " }";
       diffreason = ss.str();
       return false;
     }
@@ -316,6 +320,8 @@ std::string repr(Bexpression *expr) {
     first = false;
     ss << repr(inst);
   }
+  if (first)
+    ss << repr(expr->value());
   return ss.str();
 }
 

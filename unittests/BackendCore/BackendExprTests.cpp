@@ -182,20 +182,21 @@ TEST(BackendExprTests, MakeVarExpressions) {
   // var expressions.
   bool noLvalue = false;
   Bexpression *ve1 = be->var_expression(loc1, noLvalue, loc);
-  EXPECT_EQ(repr(ve1), "foo");
+  EXPECT_EQ(repr(ve1), "%loc1.ld.0 = load i64, i64* %loc1");
   Bstatement *es = be->expression_statement(ve1);
   Bblock *block = mkBlockFromStmt(be.get(), func, es);
   Bexpression *ve2 = be->var_expression(loc1, noLvalue, loc);
-  EXPECT_EQ(repr(ve2), "foo");
+  EXPECT_EQ(repr(ve2), "%loc1.ld.1 = load i64, i64* %loc1");
   addExprToBlock(be.get(), block, ve2);
 
   // Same here.
-  bool yesLvalue = false;
+  bool yesLvalue = true;
   Bexpression *ve3 = be->var_expression(loc1, yesLvalue, loc);
-  EXPECT_EQ(repr(ve3), "foo");
+  EXPECT_EQ(repr(ve3), "%loc1 = alloca i64");
   addExprToBlock(be.get(), block, ve3);
   Bexpression *ve4 = be->var_expression(loc1, yesLvalue, loc);
-  EXPECT_EQ(repr(ve4), "foo");
+  EXPECT_EQ(repr(ve4), "%loc1 = alloca i64");
+  EXPECT_NE(ve3, ve4);
   addExprToBlock(be.get(), block, ve4);
 
   be->function_set_body(func, block);
@@ -243,10 +244,10 @@ TEST(BackendExprTests, TestCompareOps) {
     store i1 true, i1* %loc1
     %icmp.0 = icmp eq i64 9, 3
     %icmp.1 = icmp ne i64 9, 3
-    %icmp.2 = icmp ult i64 9, 3
-    %icmp.3 = icmp ule i64 9, 3
-    %icmp.4 = icmp ugt i64 9, 3
-    %icmp.5 = icmp uge i64 9, 3
+    %icmp.2 = icmp slt i64 9, 3
+    %icmp.3 = icmp sle i64 9, 3
+    %icmp.4 = icmp sgt i64 9, 3
+    %icmp.5 = icmp sge i64 9, 3
     %icmp.6 = icmp eq i64 9, 3
     %icmp.7 = icmp ne i64 9, 3
     %icmp.8 = icmp ult i64 9, 3

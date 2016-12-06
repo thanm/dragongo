@@ -43,10 +43,13 @@ public:
   explicit Btype(llvm::Type *type) : type_(type) {}
 
   llvm::Type *type() const { return type_; }
+  bool is_unsigned() { return is_unsigned_; }
+  void set_unsigned() { is_unsigned_ = true; }
 
 private:
   Btype() : type_(NULL) {}
   llvm::Type *type_;
+  bool is_unsigned_;
   friend class Llvm_backend;
 };
 
@@ -716,11 +719,6 @@ private:
   // Create an opaque type for use as part of a placeholder type.
   llvm::Type *make_opaque_llvm_type();
 
-  // Did gofrontend declare this as an unsigned integer type?
-  bool is_unsigned_integer_type(Btype *t) const {
-    return unsigned_integer_types_.find(t) != unsigned_integer_types_.end();
-  }
-
   // add a builtin function definition
   void define_builtin_fcn(const char* name, const char* libname,
                           llvm::Function *fcn);
@@ -781,34 +779,48 @@ private:
   // Helper to set up entry block for function
   llvm::BasicBlock *genEntryBlock(Bfunction *bfunction);
 
-private:
-  typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
+ private:
 
-  class named_llvm_type_hash {
+  template<typename T1, typename T2>
+  class pairvalmap_hash {
+    typedef std::pair<T1, T2> pairtype;
    public:
     unsigned int
-    operator()(const named_llvm_type& nt) const
+    operator()(const pairtype& p) const
     {
-      std::size_t h1 = std::hash<std::string>{}(nt.first);
-      // just hash pointer value
-      const void *vptr = static_cast<void*>(nt.second);
-      std::size_t h2 = std::hash<const void*>{}(vptr);
+      std::size_t h1 = std::hash<T1>{}(p.first);
+      std::size_t h2 = std::hash<T2>{}(p.second);
       return h1 + h2;
     }
   };
 
-  class named_llvm_type_equal {
+  template<typename T1, typename T2>
+  class pairvalmap_equal {
+    typedef std::pair<T1, T2> pairtype;
    public:
     bool
-    operator()(const named_llvm_type& nt1, const named_llvm_type& nt2) const
+    operator()(const pairtype& p1, const pairtype& p2) const
     {
-      return (nt1.first == nt2.first &&
-              nt1.second == nt2.second);
+      return (p1.first == p2.first &&
+              p1.second == p2.second);
     }
   };
-  typedef std::unordered_map<named_llvm_type, Btype *,
-                             named_llvm_type_hash,
-                             named_llvm_type_equal > named_type_maptyp;
+
+  template<typename T1, typename T2, typename V>
+  using pairvalmap = std::unordered_map<std::pair<T1, T2>, V,
+                                        pairvalmap_hash<T1, T2>,
+                                        pairvalmap_equal<T1, T2> >;
+
+  typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
+  typedef pairvalmap<std::string, llvm::Type *,
+                     Btype *> named_type_maptyp;
+
+  typedef std::pair<llvm::Type *, bool> type_plus_unsigned;
+  typedef pairvalmap<llvm::Type *, bool, Btype *> integer_type_maptyp;
+
+  typedef std::pair<llvm::Value *, Btype *> valbtype;
+  typedef pairvalmap<llvm::Value *, Btype *,
+                     Bexpression *> btyped_value_expr_maptyp;
 
   // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
@@ -819,20 +831,19 @@ private:
 
   // Data structures to record types that are being manfactured.
 
-  // Anonymous typed are hashed and commoned via this map.
+  // Anonymous typed are hashed and commoned via this map, except for
+  // integer types (stored in a separate map below).
   std::unordered_map<llvm::Type *, Btype *> anon_typemap_;
-
-  // LLVM types have no notion of names, hence this map is used
-  // to keep track of named types (for symbol and debug info emit).
-  named_type_maptyp named_typemap_;
 
   // Within the LLVM world there is no notion of an unsigned (vs
   // signed) type, there are only signed/unsigned operations on
-  // vanilla integer types. These sets keep track of types +
-  // expressions that the frontend has told us are unsigned; see
-  // Llvm_backend::integer_type for more.
-  std::unordered_set<Btype *> unsigned_integer_types_;
-  std::unordered_set<Bexpression *> unsigned_integer_exprs_;
+  // vanilla integer types.  This table provides for commoning/caching
+  // of integer types declared as signed/unsigned by the front end.
+  integer_type_maptyp integer_typemap_;
+
+  // Named types are commoned/cached using this table (since LLVM types
+  // hemselves have no names).
+  named_type_maptyp named_typemap_;
 
   // Placeholder types
   std::unordered_set<Btype *> placeholders_;
@@ -874,8 +885,9 @@ private:
   // Error variable
   std::unique_ptr<Bvariable> error_variable_;
 
-  // Map from LLVM values to Bexpression.
-  std::unordered_map<llvm::Value *, Bexpression *> value_exprmap_;
+  // Map from LLVM-value/Btype pair to Bexpression. This is
+  // used to cache + reuse things like global constants.
+  btyped_value_expr_maptyp value_exprmap_;
 
   // Map from LLVM values to Bvariable.
   std::unordered_map<llvm::Value *, Bvariable *> value_varmap_;

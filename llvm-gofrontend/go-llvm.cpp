@@ -346,6 +346,8 @@ Llvm_backend::~Llvm_backend() {
     delete pht;
   for (auto &kv : anon_typemap_)
     delete kv.second;
+  for (auto &kv : integer_typemap_)
+    delete kv.second;
   for (auto &kv : value_exprmap_)
     delete kv.second;
   for (auto &kv : value_varmap_)
@@ -436,16 +438,23 @@ Btype *Llvm_backend::bool_type() {
 // the C rules about type conversions are enforced.
 //
 // To account for any potential hazards here, we record whether the
-// frontend has announced that a specific type is unsigned in a side table.
-// We can then use that table later on to enforce the rules (for example,
-// to insure that we didn't forget to insert a type conversion, or to
-// derive the correct flavor of an integer ADD based on its arguments).
+// frontend has announced that a specific type is unsigned in a side
+// table.  We can then use that table later on to enforce the rules
+// (for example, to insure that we didn't forget to insert a type
+// conversion, or to derive the correct flavor of an integer ADD based
+// on its arguments).
 
 Btype *Llvm_backend::integer_type(bool is_unsigned, int bits) {
-  Btype *it = make_anon_type(llvm::IntegerType::get(context_, bits));
+  llvm::Type *typ = llvm::IntegerType::get(context_, bits);
+  type_plus_unsigned tpu = std::make_pair(typ, is_unsigned);
+  auto it = integer_typemap_.find(tpu);
+  if (it != integer_typemap_.end())
+    return it->second;
+  Btype *btyp = new Btype(typ);
   if (is_unsigned)
-    unsigned_integer_types_.insert(it);
-  return it;
+    btyp->set_unsigned();
+  integer_typemap_[tpu] = btyp;
+  return btyp;
 }
 
 // Get an unnamed float type.
@@ -1030,14 +1039,16 @@ Bexpression *Llvm_backend::make_value_expression(llvm::Value *val,
                                                  ValExprScope scope) {
   assert(val);
   if (scope == GlobalScope) {
-    auto it = value_exprmap_.find(val);
+    valbtype vbt(std::make_pair(val, btype));
+    auto it = value_exprmap_.find(vbt);
     if (it != value_exprmap_.end())
       return it->second;
   }
   Bexpression *rval = new Bexpression(val, btype);
-  if (scope == GlobalScope)
-    value_exprmap_[val] = rval;
-  else
+  if (scope == GlobalScope) {
+    valbtype vbt(std::make_pair(val, btype));
+    value_exprmap_[vbt] = rval;
+  } else
     expressions_.push_back(rval);
   return rval;
 }
@@ -1140,7 +1151,7 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
                                                        mpz_t mpz_val) {
   if (btype == error_type_)
     return error_expression();
-  assert(llvm::isa<llvm::IntegerType>(btype->type()));
+  assert(btype->type()->isIntegerTy());
 
   // Force mpz_val into either into uint64_t or int64_t depending on
   // whether btype was declared as signed or unsigned.
@@ -1148,7 +1159,7 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
   // Q: better to use APInt here?
 
   Bexpression *rval;
-  if (is_unsigned_integer_type(btype)) {
+  if (btype->is_unsigned()) {
     uint64_t val = checked_convert_mpz_to_int<uint64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::get(btype->type(), val);
@@ -1335,7 +1346,7 @@ static llvm::Instruction::BinaryOps arith_op_to_binop(Operator op,
 
 static llvm::CmpInst::Predicate compare_op_to_pred(Operator op,
                                                    llvm::Type *typ,
-                                                   bool isSigned) {
+                                                   bool isUnsigned) {
 
   bool isFloat = typ->isFloatingPointTy();
 
@@ -1357,23 +1368,24 @@ static llvm::CmpInst::Predicate compare_op_to_pred(Operator op,
       break;
     }
   } else {
+    assert(!isUnsigned || typ->isIntegerTy());
     switch (op) {
     case OPERATOR_EQEQ:
       return llvm::CmpInst::Predicate::ICMP_EQ;
     case OPERATOR_NOTEQ:
       return llvm::CmpInst::Predicate::ICMP_NE;
     case OPERATOR_LT:
-      return (isSigned ? llvm::CmpInst::Predicate::ICMP_SLT
-                       : llvm::CmpInst::Predicate::ICMP_ULT);
+      return (isUnsigned ? llvm::CmpInst::Predicate::ICMP_ULT
+                       : llvm::CmpInst::Predicate::ICMP_SLT);
     case OPERATOR_LE:
-      return (isSigned ? llvm::CmpInst::Predicate::ICMP_SLE
-                       : llvm::CmpInst::Predicate::ICMP_ULE);
+      return (isUnsigned ? llvm::CmpInst::Predicate::ICMP_ULE
+                       : llvm::CmpInst::Predicate::ICMP_SLE);
     case OPERATOR_GT:
-      return (isSigned ? llvm::CmpInst::Predicate::ICMP_SGT
-                       : llvm::CmpInst::Predicate::ICMP_UGT);
+      return (isUnsigned ? llvm::CmpInst::Predicate::ICMP_UGT
+                       : llvm::CmpInst::Predicate::ICMP_SGT);
     case OPERATOR_GE:
-      return (isSigned ? llvm::CmpInst::Predicate::ICMP_SGE
-                       : llvm::CmpInst::Predicate::ICMP_UGE);
+      return (isUnsigned ? llvm::CmpInst::Predicate::ICMP_UGE
+                       : llvm::CmpInst::Predicate::ICMP_SGE);
     default:
       break;
     }
@@ -1395,8 +1407,8 @@ Bexpression *Llvm_backend::binary_expression(Operator op,
   llvm::Type *ltype = left->value()->getType();
   llvm::Type *rtype = right->value()->getType();
   assert(ltype == rtype);
-  assert(is_unsigned_integer_type(bltype) == is_unsigned_integer_type(brtype));
-  bool isUnsigned = is_unsigned_integer_type(bltype);
+  assert(bltype->is_unsigned() == brtype->is_unsigned());
+  bool isUnsigned = bltype->is_unsigned();
 
   switch(op) {
     case OPERATOR_EQEQ:
@@ -1518,7 +1530,7 @@ Bstatement *Llvm_backend::do_assignment(llvm::Value *lval,
   // FIXME: alignment?
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
 
-  Bexpression *stexp = make_inst_expression(si, rhs->btype());
+  Bexpression *stexp = make_value_expression(si, rhs->btype(), LocalScope);
   for (auto inst : rhs->instructions()) {
     assert(inst->getParent() == nullptr);
     stexp->appendInstruction(inst);
@@ -1529,6 +1541,7 @@ Bstatement *Llvm_backend::do_assignment(llvm::Value *lval,
       stexp->appendInstruction(inst);
     }
   }
+  stexp->appendInstruction(si);
   ExprListStatement *els = Bstatement::stmtFromExprs(stexp, nullptr);
   return els;
 }
