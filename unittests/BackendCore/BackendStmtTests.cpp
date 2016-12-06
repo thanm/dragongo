@@ -144,8 +144,6 @@ TEST(BackendStmtTests, TestLabelGotoStmts) {
 
   bool ok = be->function_set_body(func, block);
   EXPECT_TRUE(ok);
-
-
 }
 
 TEST(BackendStmtTests, TestIfStmt) {
@@ -185,12 +183,17 @@ TEST(BackendStmtTests, TestIfStmt) {
   Bstatement *ifst2 = be->if_statement(tv2, ib, b3, Location());
   Bblock *eb = mkBlockFromStmt(be.get(), func, ifst2);
 
+  std::vector<Bexpression *> vals;
+  vals.push_back(mkInt64Const(be.get(), 10101));
+  Bstatement *ret = be->return_statement(func, vals, loc);
+  addStmtToBlock(be.get(), eb, ret);
+
   // set function body
   bool ok = be->function_set_body(func, eb);
   EXPECT_TRUE(ok);
 
   bool broken = llvm::verifyModule(be->module(), &dbgs());
-  EXPECT_FALSE(!broken && "Module not well-formed.");
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 }
