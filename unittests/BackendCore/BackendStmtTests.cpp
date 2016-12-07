@@ -10,7 +10,6 @@
 #include "TestUtils.h"
 #include "go-llvm-backend.h"
 #include "gtest/gtest.h"
-#include "llvm/IR/Verifier.h"
 
 using namespace llvm;
 using namespace goBackendUnitTests;

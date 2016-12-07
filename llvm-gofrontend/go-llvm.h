@@ -48,7 +48,10 @@ public:
   bool isUnsigned() { return isUnsigned_; }
   void setUnsigned() { isUnsigned_ = true; }
 
-private:
+  // debugging
+  void dump(unsigned ilevel = 0);
+
+ private:
   Btype() : type_(NULL) {}
   llvm::Type *type_;
   bool isUnsigned_;
@@ -78,6 +81,25 @@ private:
   std::vector<llvm::Instruction *> instructions_;
 };
 
+class VarContext {
+ public:
+  VarContext() : addrLevel_(0), pending_(false) { }
+  VarContext(unsigned addrLevel, bool pending)
+      : addrLevel_(addrLevel), pending_(pending) { }
+
+  bool varPending() const { return pending_; }
+  bool addrLevel() const { return addrLevel_; }
+
+  void setVarExprPending(unsigned addrLevel) {
+    addrLevel_ = addrLevel;
+    pending_ = true;
+  }
+
+ private:
+  unsigned addrLevel_;
+  bool pending_;
+};
+
 // Use when deleting a Bstatement or Bexpression subtree. Controls
 // whether to delete just the Bstatement/Bexpression objects, just
 // the LLVM instructions they contain, or both.
@@ -88,22 +110,24 @@ enum WhichDel {
   DelBoth          // delete wrappers and instructions
 };
 
-// Class Bexpression, which is mostly a wrapper around llvm::Value,
-// however in addition to the consumable value it produces, a given
+// Here Bexpression is largely a wrapper around llvm::Value, however
+// in addition to the consumable value it produces, a given
 // Bexpression may also encapsulate a collection of other instructions
-// that need to be executed prior to to that value.  This is to
+// that need to be executed prior to to that value. This is to
 // accommodate the compound expressions produced in gofrontend, which
 // loosely correspond to the C++ comma operator.  For something like
 // E3 = E1, E2, the semantics are "evaluate E1 prior to evalating E2,
 // then assign the result to E3".
 
-class Bexpression : public Binstructions {
+class Bexpression : public Binstructions, public VarContext {
 public:
-  Bexpression(llvm::Value *value, Btype *btype);
+  Bexpression(llvm::Value *value, Btype *btype, const std::string &tag = "");
   ~Bexpression();
 
   llvm::Value *value() const { return value_; }
   Btype *btype() { return btype_; }
+  const std::string &tag() const { return tag_; }
+  void setTag(const std::string &tag) { tag_ = tag; }
 
   // Delete some or all or this Bexpression. Deallocates just the
   // Bexpression, its contained instructions, or both (depending
@@ -111,12 +135,13 @@ public:
   static void destroy(Bexpression *expr, WhichDel which = DelWrappers);
 
   // debugging
-  void dump(unsigned ilevel);
+  void dump(unsigned ilevel = 0);
 
 private:
   Bexpression() : value_(NULL) {}
   llvm::Value *value_;
   Btype *btype_;
+  std::string tag_;
 };
 
 // In the current gofrontend implementation, there is an extremely
@@ -686,6 +711,9 @@ private:
   // is a placeholder type.
   Btype *makePlaceholderType(llvm::Type *placeholder);
 
+  // For pointer types, return pointed to type
+  Btype *pointsToType(Btype *ptrType);
+
   // Replace the underlying llvm::Type for a given placeholder type once
   // we've determined what the final type will be.
   void updatePlaceholderUnderlyingType(Btype *plt, llvm::Type *newtyp);
@@ -754,6 +782,10 @@ private:
   // Helper to set up entry block for function
   llvm::BasicBlock *genEntryBlock(Bfunction *bfunction);
 
+  // Var expr management
+  Bexpression *resolveVarContext(Bexpression *expr);
+  Bexpression *loadFromExpr(Bexpression *expr, Btype *loadResultType);
+
 private:
   template <typename T1, typename T2> class pairvalmap_hash {
     typedef std::pair<T1, T2> pairtype;
@@ -816,6 +848,9 @@ private:
   // Placeholder types created by the front end.
   std::unordered_set<Btype *> placeholders_;
   std::unordered_set<Btype *> updatedPlaceholders_;
+
+  // Records target Btype of pointer Btype
+  std::unordered_map<Btype *, Btype *> pointsTo_;
 
   // Various predefined or pre-computed types that we cache away
   Btype *complexFloatType_;

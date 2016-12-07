@@ -15,6 +15,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
 // Currently these need to be included before backend.h

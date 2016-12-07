@@ -176,11 +176,12 @@ TEST(BackendExprTests, MakeVarExpressions) {
   // We should get a distinct value  two separate values when creating
   // var expressions.
   Bexpression *ve1 = be->var_expression(loc1, VE_rvalue, loc);
-  EXPECT_EQ(repr(ve1), "%loc1.ld.0 = load i64, i64* %loc1");
+  EXPECT_EQ(repr(ve1), "%loc1 = alloca i64");
   Bstatement *es = be->expression_statement(ve1);
   Bblock *block = mkBlockFromStmt(be.get(), func, es);
   Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, loc);
-  EXPECT_EQ(repr(ve2), "%loc1.ld.1 = load i64, i64* %loc1");
+  EXPECT_EQ(repr(ve2), "%loc1 = alloca i64");
+  EXPECT_NE(ve1, ve2);
   addExprToBlock(be.get(), block, ve2);
 
   // Same here.
@@ -339,8 +340,7 @@ TEST(BackendExprTests, TestMoreArith) {
   Bexpression *ypz = be->binary_expression(OPERATOR_PLUS, vey, vez, loc);
   Bexpression *ypzpw = be->binary_expression(OPERATOR_PLUS, ypz, vew, loc);
   Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
-  Bstatement *as =
-      be->assignment_statement(vex, ypzpw, loc);
+  Bstatement *as = be->assignment_statement(vex, ypzpw, loc);
   addStmtToBlock(be.get(), block, as);
 
   const char *exp = R"RAW_RESULT(
@@ -362,4 +362,81 @@ TEST(BackendExprTests, TestMoreArith) {
   be->function_set_body(func, block);
 }
 
+TEST(BackendExprTests, TestAddrAndIndirection) {
+  LLVMContext C;
+
+  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+
+  // var y int64 = 10
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  Btype *bi64t = be->integer_type(false, 64);
+  Location loc;
+  Bvariable *y = be->local_variable(func, "y", bi64t, true, loc);
+  Bexpression *beic11 = mkInt64Const(be.get(), 10);
+  Bstatement *isy = be->init_statement(y, beic11);
+  Bblock *block = mkBlockFromStmt(be.get(), func, isy);
+
+  // var x *int64 = nil
+  Btype *bpi64t = be->pointer_type(bi64t);
+  Bvariable *x = be->local_variable(func, "x", bpi64t, true, loc);
+  Bstatement *isx = be->init_statement(x, be->zero_expression(bpi64t));
+  addStmtToBlock(be.get(), block, isx);
+
+  {
+    // x = &y
+    Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
+    Bexpression *vey = be->var_expression(y, VE_rvalue, loc);
+    Bexpression *ady = be->address_expression(vey, loc);
+    Bstatement *as = be->assignment_statement(vex, ady, loc);
+    addStmtToBlock(be.get(), block, as);
+  }
+
+  {
+    // y = **&x
+    Bexpression *vey = be->var_expression(y, VE_lvalue, loc);
+    Bexpression *vex = be->var_expression(x, VE_rvalue, loc);
+    Bexpression *adx = be->address_expression(vex, loc);
+    bool knValid = false;
+    Bexpression *indx1 = be->indirect_expression(bpi64t, adx, knValid, loc);
+    Bexpression *indx2 = be->indirect_expression(bi64t, indx1, knValid, loc);
+    Bstatement *as = be->assignment_statement(vey, indx2, loc);
+    addStmtToBlock(be.get(), block, as);
+  }
+
+  {
+    // *x = 3
+    Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
+    Bexpression *indx = be->indirect_expression(bpi64t, vex, false, loc);
+    Bexpression *beic3 = mkInt64Const(be.get(), 3);
+    Bstatement *as = be->assignment_statement(indx, beic3, loc);
+    addStmtToBlock(be.get(), block, as);
+  }
+
+  // return 10101
+  std::vector<Bexpression *> vals;
+  vals.push_back(mkInt64Const(be.get(), 10101));
+  Bstatement *ret = be->return_statement(func, vals, loc);
+  addStmtToBlock(be.get(), block, ret);
+
+  const char *exp = R"RAW_RESULT(
+    store i64 10, i64* %y
+    store i64* null, i64** %x
+    store i64* %y, i64** %x
+    %x.deref.ld.0 = load i64*, i64** %x
+    %.ld.0 = load i64, i64* %x.deref.ld.0
+    store i64 %.ld.0, i64* %y
+    %x.deref.ld.1 = load i64*, i64** %x
+    store i64 3, i64* %x.deref.ld.1
+    ret i64 10101
+    )RAW_RESULT";
+
+  std::string reason;
+  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  EXPECT_EQ("pass", equal ? "pass" : reason);
+
+  be->function_set_body(func, block);
+
+  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
 }

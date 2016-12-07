@@ -31,8 +31,22 @@
 
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
-Bexpression::Bexpression(llvm::Value *value, Btype *btype)
-    : value_(value), btype_(btype) {}
+static void indent(unsigned ilevel) {
+  for (unsigned i = 0; i < ilevel; ++i)
+    std::cerr << " ";
+}
+
+void Btype::dump(unsigned ilevel) {
+  indent(ilevel);
+  if (isUnsigned())
+    std::cerr << "[uns] ";
+  type_->dump();
+}
+
+Bexpression::Bexpression(llvm::Value *value,
+                         Btype *btype,
+                         const std::string &tag)
+    : value_(value), btype_(btype), tag_(tag) {}
 
 Bexpression::~Bexpression() {}
 
@@ -42,11 +56,6 @@ void Bexpression::destroy(Bexpression *expr, WhichDel which) {
       delete inst;
   if (which != DelInstructions)
     delete expr;
-}
-
-static void indent(unsigned ilevel) {
-  for (unsigned i = 0; i < ilevel; ++i)
-    std::cerr << " ";
 }
 
 void Bexpression::dump(unsigned ilevel) {
@@ -64,6 +73,8 @@ void Bexpression::dump(unsigned ilevel) {
     indent(ilevel);
     value()->dump();
   }
+  if (varPending())
+    std::cerr << "pending: level=" << addrLevel() << "\n";
 }
 
 ExprListStatement *Bstatement::stmtFromExprs(Bexpression *expr, ...) {
@@ -377,6 +388,14 @@ Btype *Llvm_backend::makeAnonType(llvm::Type *lt) {
   return rval;
 }
 
+Btype *Llvm_backend::pointsToType(Btype *ptrType)
+{
+  assert(ptrType);
+  assert(ptrType != errorType_);
+  auto it = pointsTo_.find(ptrType);
+  return (it != pointsTo_.end() ? it->second : nullptr);
+}
+
 Btype *Llvm_backend::makePlaceholderType(llvm::Type *pht) {
   Btype *bplace = new Btype(pht);
   assert(placeholders_.find(bplace) == placeholders_.end());
@@ -510,7 +529,9 @@ Btype *Llvm_backend::pointer_type(Btype *to_type) {
   llvm::Type *lltot =
       (to_type->type() == llvmVoidType_ ? llvmInt8Type_ : to_type->type());
 
-  return makeAnonType(llvm::PointerType::get(lltot, addressSpace_));
+  Btype *pt = makeAnonType(llvm::PointerType::get(lltot, addressSpace_));
+  pointsTo_[pt] = to_type;
+  return pt;
 }
 
 // Make a function type.
@@ -1005,7 +1026,7 @@ Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val, Btype *btype,
 }
 
 Bexpression *Llvm_backend::makeInstExpression(llvm::Instruction *inst,
-                                                Btype *btype) {
+                                              Btype *btype) {
   assert(inst);
   Bexpression *rval = new Bexpression(inst, btype);
   rval->appendInstruction(inst);
@@ -1029,6 +1050,65 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
   return nullptr;
 }
 
+Bexpression *Llvm_backend::loadFromExpr(Bexpression *expr,
+                                        Btype *loadResultType)
+{
+  std::string ldname(expr->tag());
+  ldname += ".ld";
+  ldname = namegen(ldname);
+  llvm::Instruction *ldinst = new llvm::LoadInst(expr->value(), ldname);
+  Bexpression *rval = makeExpression(ldinst, loadResultType, expr, nullptr);
+  rval->appendInstruction(ldinst);
+  return rval;
+}
+
+// An expression that indirectly references an expression.
+
+Bexpression *Llvm_backend::indirect_expression(Btype *btype,
+                                               Bexpression *expr,
+                                               bool known_valid,
+                                               Location location) {
+  if (expr->varPending()) {
+    if (expr->addrLevel() > 0) {
+      unsigned addrLevel = expr->addrLevel() - 1;
+      Bexpression *rval = new Bexpression(expr->value(), btype, expr->tag());
+      rval->setVarExprPending(addrLevel);
+      std::string tag(expr->tag());
+      tag += ".deref";
+      rval->setTag(tag);
+      expressions_.push_back(rval);
+      return rval;
+    }
+  }
+  expr = resolveVarContext(expr);
+  return loadFromExpr(expr, btype);
+}
+
+// Get the address of an expression.
+
+Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
+                                              Location location) {
+  Btype *pt = pointer_type(bexpr->btype());
+  unsigned addrLevel = 0;
+  if (bexpr->varPending())
+    addrLevel = bexpr->addrLevel();
+  Bexpression *rval = new Bexpression(bexpr->value(), pt, bexpr->tag());
+  rval->setVarExprPending(addrLevel+1);
+  expressions_.push_back(rval);
+  return rval;
+}
+
+Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
+{
+  if (expr->varPending()) {
+    assert(expr->addrLevel() == 0 || expr->addrLevel() == 1);
+    if (expr->addrLevel() == 1)
+      return expr;
+    return loadFromExpr(expr, expr->btype());
+  }
+  return expr;
+}
+
 // An expression that references a variable.
 
 Bexpression *Llvm_backend::var_expression(Bvariable *var,
@@ -1039,26 +1119,12 @@ Bexpression *Llvm_backend::var_expression(Bvariable *var,
 
   // FIXME: record debug location
 
-  if (in_lvalue_pos == VE_lvalue) {
-    ValExprScope scope =
-        (var->flavor() == GlobalVar ? GlobalScope : LocalScope);
-    return makeValueExpression(var->value(), var->getType(), scope);
-  } else {
-    std::string ldname(var->getName());
-    ldname += ".ld";
-    ldname = namegen(ldname);
-    llvm::Instruction *ldinst = new llvm::LoadInst(var->value(), ldname);
-    return makeInstExpression(ldinst, var->getType());
-  }
-}
-
-// An expression that indirectly references an expression.
-
-Bexpression *Llvm_backend::indirect_expression(Btype *btype, Bexpression *expr,
-                                               bool known_valid,
-                                               Location location) {
-  assert(false && "LLvm_backend::indirect_expression not yet implemented");
-  return nullptr;
+  unsigned addrLevel = (in_lvalue_pos == VE_lvalue ? 1 : 0);
+  Bexpression *varexp =
+      makeValueExpression(var->value(), var->getType(), LocalScope);
+  varexp->setTag(var->getName().c_str());
+  varexp->setVarExprPending(addrLevel);
+  return varexp;
 }
 
 // Return an expression that declares a constant named NAME with the
@@ -1219,14 +1285,6 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
   return nullptr;
 }
 
-// Get the address of an expression.
-
-Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
-                                              Location location) {
-  assert(false && "Llvm_backend::address_code_expression not yet impl");
-  return nullptr;
-}
-
 // Return an expression for the field at INDEX in BSTRUCT.
 
 Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
@@ -1348,6 +1406,10 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
                                              Location location) {
   if (left == errorExpression_.get() || right == errorExpression_.get())
     return errorExpression_.get();
+
+  left = resolveVarContext(left);
+  right = resolveVarContext(right);
+
   Btype *bltype = left->btype();
   Btype *brtype = right->btype();
   llvm::Type *ltype = left->value()->getType();
@@ -1451,7 +1513,7 @@ Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
   if (expr == errorExpression_.get())
     return errorStatement_.get();
   ExprListStatement *els = new ExprListStatement();
-  els->appendExpression(expr);
+  els->appendExpression(resolveVarContext(expr));
   return els;
 }
 
@@ -1460,6 +1522,7 @@ Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
 Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
   if (init == errorExpression_.get())
     return errorStatement_.get();
+  init = resolveVarContext(init);
   return makeAssignment(var->value(), nullptr, init, Location());
 }
 
@@ -1504,6 +1567,8 @@ Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
                                                Location location) {
   if (lhs == errorExpression_.get() || rhs == errorExpression_.get())
     return errorStatement_.get();
+  lhs = resolveVarContext(lhs);
+  rhs = resolveVarContext(rhs);
   return makeAssignment(lhs->value(), lhs, rhs, location);
 }
 
@@ -1525,9 +1590,9 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   // since Go functions can return multiple values).
   Btype *btype = nullptr;
 
-  llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, vals[0]->value());
-
-  Bexpression *rexp = makeExpression(ri, btype, vals[0], nullptr);
+  Bexpression *toret = resolveVarContext(vals[0]);
+  llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, toret->value());
+  Bexpression *rexp = makeExpression(ri, btype, toret, nullptr);
   rexp->appendInstruction(ri);
   ExprListStatement *els = Bstatement::stmtFromExprs(rexp, nullptr);
   return els;
@@ -1554,6 +1619,7 @@ Bstatement *Llvm_backend::if_statement(Bexpression *condition,
                                        Location location) {
   if (condition == errorExpression_.get())
     return errorStatement_.get();
+  condition = resolveVarContext(condition);
   assert(then_block);
   IfPHStatement *ifst =
       new IfPHStatement(condition, then_block, else_block, location);
@@ -1684,7 +1750,8 @@ Bvariable *Llvm_backend::error_variable() { return errorVariable_.get(); }
 // Make a local variable.
 
 Bvariable *Llvm_backend::local_variable(Bfunction *function,
-                                        const std::string &name, Btype *btype,
+                                        const std::string &name,
+                                        Btype *btype,
                                         bool is_address_taken,
                                         Location location) {
   assert(function);
