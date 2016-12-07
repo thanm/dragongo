@@ -211,4 +211,27 @@ TEST(BackendVarTests, MakeImmutableStruct) {
     m->dump();
   }
 }
+
+TEST(BackendVarTests, MakeImmutableStructReference) {
+  LLVMContext C;
+
+  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+
+  Location loc;
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bst = mkTwoFieldStruct(be.get(), bi32t, bi32t);
+  Bvariable *ims =
+      be->immutable_struct_reference("name", "asmname", bst, loc);
+  ASSERT_TRUE(ims != nullptr);
+  Value *ival = ims->value();
+  ASSERT_TRUE(ival != nullptr);
+  EXPECT_TRUE(isa<GlobalVariable>(ival));
+  EXPECT_EQ(repr(ival), "@asmname = external constant { i32, i32 }");
+
+  // error case
+  Bvariable *ierr =
+      be->immutable_struct_reference("name", "asmname", be->error_type(), loc);
+  EXPECT_TRUE(ierr == be->error_variable());
+}
+
 }

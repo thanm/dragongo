@@ -1948,8 +1948,24 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
                                                     const std::string &asmname,
                                                     Btype *btype,
                                                     Location location) {
-  assert(false && "Llvm_backend::immutable_struct_reference not yet impl");
-  return nullptr;
+  if (btype == errorType_)
+    return errorVariable_.get();
+
+  // FIXME: add code to insure non-zero size
+  assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
+
+  // FIXME: add DIGlobalVariable to debug info for this variable
+
+  llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
+  bool isConstant = true;
+  llvm::Constant *init = nullptr;
+  llvm::GlobalVariable *glob = new llvm::GlobalVariable(
+      *module_.get(), btype->type(), isConstant, linkage, init, asmname);
+  Bvariable *bv =
+      new Bvariable(btype, location, name, GlobalVar, false, glob);
+  assert(valueVarmap_.find(bv->value()) == valueVarmap_.end());
+  valueVarmap_[bv->value()] = bv;
+  return bv;
 }
 
 // Make a label.
