@@ -701,8 +701,10 @@ bool Llvm_backend::set_placeholder_array_type(Btype *placeholder,
 
 // Return a named version of a type.
 
-Btype *Llvm_backend::named_type(const std::string &name, Btype *btype,
-                                Location location) {
+Btype *Llvm_backend::named_type(const std::string &name,
+                                Btype *btype,
+                                Location location)
+{
   // TODO: add support for debug metadata
 
   // In the LLVM type world, all types are nameless except for so-called
@@ -714,6 +716,8 @@ Btype *Llvm_backend::named_type(const std::string &name, Btype *btype,
   if (it != namedTypemap_.end())
     return it->second;
   Btype *rval = new Btype(btype->type());
+  if (btype->isUnsigned())
+    rval->setUnsigned();
   namedTypemap_[cand] = rval;
   return rval;
 }
