@@ -439,4 +439,73 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
   bool broken = llvm::verifyModule(be->module(), &dbgs());
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
+
+TEST(BackendExprTests, TestStructFieldExprs) {
+  LLVMContext C;
+
+  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+
+  //
+  // type X struct {
+  //    f1 *bool
+  //    f2 int32
+  // }
+  // var loc1 X
+  //
+  Location loc;
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  Btype *bt = be->bool_type();
+  Btype *pbt = be->pointer_type(bt);
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *s2t = mkTwoFieldStruct(be.get(), pbt, bi32t);
+  Bvariable *loc1 = be->local_variable(func, "loc1", s2t, true, loc);
+  Bexpression *bszero = be->zero_expression(s2t);
+  Bstatement *is = be->init_statement(loc1, bszero);
+  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+
+  // x := loc1.f2
+  Bvariable *x = be->local_variable(func, "x", bi32t, true, loc);
+  Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
+  Bexpression *sex = be->var_expression(loc1, VE_rvalue, loc);
+  Bexpression *fex = be->struct_field_expression(sex, 1, loc);
+  Bstatement *as = be->assignment_statement(vex, fex, loc);
+  addStmtToBlock(be.get(), block, as);
+
+  // var b2 bool
+  // loc1.b = &b2
+  Bvariable *b2 = be->local_variable(func, "b2", bt, true, loc);
+  Bexpression *lvex = be->var_expression(loc1, VE_lvalue, loc);
+  Bexpression *bfex = be->struct_field_expression(lvex, 0, loc);
+  Bexpression *b2ex = be->var_expression(b2, VE_rvalue, loc);
+  Bexpression *adb2 = be->address_expression(b2ex, loc);
+  Bstatement *as2 = be->assignment_statement(bfex, adb2, loc);
+  addStmtToBlock(be.get(), block, as2);
+
+  // return 10101
+  std::vector<Bexpression *> vals;
+  vals.push_back(mkInt64Const(be.get(), 10101));
+  Bstatement *ret = be->return_statement(func, vals, loc);
+  addStmtToBlock(be.get(), block, ret);
+
+  const char *exp = R"RAW_RESULT(
+    store { i1*, i32 } zeroinitializer, { i1*, i32 }* %loc1
+    %field.0 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc1, i32 0, i32 1
+    %loc1.field.ld.0 = load i32, i32* %field.0
+    store i32 %loc1.field.ld.0, i32* %x
+    %field.1 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc1, i32 0, i32 0
+    store i1* %b2, i1** %field.1
+    ret i64 10101
+  )RAW_RESULT";
+
+  std::cerr << repr(block);
+
+  std::string reason;
+  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  EXPECT_EQ("pass", equal ? "pass" : reason);
+
+  be->function_set_body(func, block);
+  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 }

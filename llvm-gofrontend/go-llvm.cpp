@@ -388,14 +388,6 @@ Btype *Llvm_backend::makeAnonType(llvm::Type *lt) {
   return rval;
 }
 
-Btype *Llvm_backend::pointsToType(Btype *ptrType)
-{
-  assert(ptrType);
-  assert(ptrType != errorType_);
-  auto it = pointsTo_.find(ptrType);
-  return (it != pointsTo_.end() ? it->second : nullptr);
-}
-
 Btype *Llvm_backend::makePlaceholderType(llvm::Type *pht) {
   Btype *bplace = new Btype(pht);
   assert(placeholders_.find(bplace) == placeholders_.end());
@@ -492,7 +484,18 @@ Btype *Llvm_backend::struct_type(const std::vector<Btyped_identifier> &fields) {
       return errorType_;
     elems[i] = fields[i].btype->type();
   }
-  return makeAnonType(llvm::StructType::get(context_, elems));
+  llvm::Type *lst = llvm::StructType::get(context_, elems);
+  bool isNew = (anonTypemap_.find(lst) == anonTypemap_.end());
+  Btype *st = makeAnonType(lst);
+  if (isNew) {
+    for (unsigned i = 0; i < fields.size(); ++i) {
+      structplusindextype spi(std::make_pair(st, i));
+      auto it = fieldmap_.find(spi);
+      assert(it == fieldmap_.end());
+      fieldmap_[spi] = fields[i].btype;
+    }
+  }
+  return st;
 }
 
 // LLVM has no such thing as a complex type -- it expects the front
@@ -529,9 +532,7 @@ Btype *Llvm_backend::pointer_type(Btype *to_type) {
   llvm::Type *lltot =
       (to_type->type() == llvmVoidType_ ? llvmInt8Type_ : to_type->type());
 
-  Btype *pt = makeAnonType(llvm::PointerType::get(lltot, addressSpace_));
-  pointsTo_[pt] = to_type;
-  return pt;
+  return makeAnonType(llvm::PointerType::get(lltot, addressSpace_));
 }
 
 // Make a function type.
@@ -601,6 +602,14 @@ Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
   return makeAnonType(llat);
 }
 
+Btype *Llvm_backend::fieldTypeByIndex(Btype *type, unsigned field_index)
+{
+  structplusindextype spi(std::make_pair(type, field_index));
+  auto it = fieldmap_.find(spi);
+  assert(it != fieldmap_.end());
+  return it->second;
+}
+
 // LLVM doesn't directly support placeholder types other than opaque
 // structs, so the general strategy for placeholders is to create an
 // opaque struct (corresponding to the thing being pointed to) and then
@@ -612,6 +621,8 @@ Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
 llvm::Type *Llvm_backend::makeOpaqueLlvmType() {
   return llvm::StructType::create(context_);
 }
+
+
 
 // Create a placeholder for a pointer type.
 
@@ -1008,7 +1019,7 @@ void Llvm_backend::defineSyncFetchAndAddBuiltins() {
 }
 
 Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val, Btype *btype,
-                                                 ValExprScope scope) {
+                                               ValExprScope scope) {
   assert(val);
   if (scope == GlobalScope) {
     valbtype vbt(std::make_pair(val, btype));
@@ -1290,8 +1301,34 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
 Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
                                                    size_t index,
                                                    Location location) {
-  assert(false && "Llvm_backend::struct_field_expression not yet impl");
-  return nullptr;
+  if (bstruct == errorExpression_.get())
+    return errorExpression_.get();
+
+  // Construct an appropriate GEP
+  llvm::Type *llt = bstruct->btype()->type();
+  assert(llt->isStructTy());
+  llvm::StructType *llst = llvm::cast<llvm::StructType>(llt);
+  assert(index < llst->getNumElements());
+  //llvm::Type *llft = llst->getElementType(index);
+  Btype *bft = fieldTypeByIndex(bstruct->btype(), index);
+  llvm::SmallVector<llvm::Value *, 2> elems(2);
+  elems[0] = llvm::ConstantInt::get(llvmInt32Type_, 0);
+  elems[1] = llvm::ConstantInt::get(llvmInt32Type_, index);
+  std::string name = namegen("field");
+  llvm::GetElementPtrInst *gep =
+      llvm::GetElementPtrInst::Create(llst, bstruct->value(), elems, name);
+
+  // Wrap in a Bexpression
+  Bexpression *rval = makeValueExpression(gep, bft, LocalScope);
+  rval->appendInstruction(gep);
+  if (bstruct->varPending())
+    rval->setVarExprPending(bstruct->addrLevel());
+  std::string tag(bstruct->tag());
+  tag += ".field";
+  rval->setTag(tag);
+
+  // We're done
+  return rval;
 }
 
 // Return an expression that executes BSTAT before BEXPR.
@@ -1520,7 +1557,7 @@ Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
 // Variable initialization.
 
 Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
-  if (init == errorExpression_.get())
+  if (var == errorVariable_.get() || init == errorExpression_.get())
     return errorStatement_.get();
   init = resolveVarContext(init);
   return makeAssignment(var->value(), nullptr, init, Location());
@@ -1806,8 +1843,10 @@ Bvariable *Llvm_backend::static_chain_variable(Bfunction *function,
 
 // Make a temporary variable.
 
-Bvariable *Llvm_backend::temporary_variable(Bfunction *function, Bblock *bblock,
-                                            Btype *btype, Bexpression *binit,
+Bvariable *Llvm_backend::temporary_variable(Bfunction *function,
+                                            Bblock *bblock,
+                                            Btype *btype,
+                                            Bexpression *binit,
                                             bool is_address_taken,
                                             Location location,
                                             Bstatement **pstatement) {

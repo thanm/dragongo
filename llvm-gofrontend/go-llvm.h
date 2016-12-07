@@ -711,15 +711,15 @@ private:
   // is a placeholder type.
   Btype *makePlaceholderType(llvm::Type *placeholder);
 
-  // For pointer types, return pointed to type
-  Btype *pointsToType(Btype *ptrType);
-
   // Replace the underlying llvm::Type for a given placeholder type once
   // we've determined what the final type will be.
   void updatePlaceholderUnderlyingType(Btype *plt, llvm::Type *newtyp);
 
   // Create an opaque type for use as part of a placeholder type.
   llvm::Type *makeOpaqueLlvmType();
+
+  // Returns field type from struct type and index
+  Btype *fieldTypeByIndex(Btype *type, unsigned field_index);
 
   // add a builtin function definition
   void defineBuiltinFcn(const char *name, const char *libname,
@@ -820,7 +820,10 @@ private:
 
   typedef std::pair<llvm::Value *, Btype *> valbtype;
   typedef pairvalmap<llvm::Value *, Btype *, Bexpression *>
-      btyped_value_expr_maptyp;
+  btyped_value_expr_maptyp;
+
+  typedef std::pair<Btype *, unsigned> structplusindextype;
+  typedef pairvalmap<Btype *, unsigned, Btype *> fieldmaptype;
 
   // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
@@ -845,12 +848,12 @@ private:
   // hemselves have no names).
   named_type_maptyp namedTypemap_;
 
+  // Maps <structType,index> => <fieldType>
+  fieldmaptype fieldmap_;
+
   // Placeholder types created by the front end.
   std::unordered_set<Btype *> placeholders_;
   std::unordered_set<Btype *> updatedPlaceholders_;
-
-  // Records target Btype of pointer Btype
-  std::unordered_map<Btype *, Btype *> pointsTo_;
 
   // Various predefined or pre-computed types that we cache away
   Btype *complexFloatType_;
