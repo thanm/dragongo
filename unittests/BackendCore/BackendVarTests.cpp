@@ -48,12 +48,12 @@ TEST(BackendVarTests, MakeLocalVar) {
   EXPECT_TRUE(loc1 != loc2 && loc1->value() != loc2->value());
 
   // Test var_expression created from local variable
-  Bexpression *ve1 = be->var_expression(loc1, true, Location());
+  Bexpression *ve1 = be->var_expression(loc1, VE_lvalue, Location());
   ASSERT_TRUE(ve1 != nullptr);
   EXPECT_EQ(ve1->value(), loc1->value());
 
   // Test var_expression created from local variable
-  Bexpression *ve2 = be->var_expression(loc1, false, Location());
+  Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, Location());
   ASSERT_TRUE(ve2 != nullptr);
   Bstatement *es = be->expression_statement(ve2);
   Bblock *block = mkBlockFromStmt(be.get(), func1, es);
@@ -88,7 +88,7 @@ TEST(BackendVarTests, MakeParamVar) {
   EXPECT_TRUE(isa<AllocaInst>(p2->value()));
 
   // Test var_expression created from param variable
-  Bexpression *ve1 = be->var_expression(p1, true, Location());
+  Bexpression *ve1 = be->var_expression(p1, VE_lvalue, Location());
   ASSERT_TRUE(ve1 != nullptr);
   EXPECT_EQ(ve1->value(), p1->value());
 
@@ -116,8 +116,11 @@ TEST(BackendVarTests, MakeGlobalVar) {
   EXPECT_TRUE(isa<GlobalVariable>(g1val));
   EXPECT_EQ(g1val->getName(), "asmname");
 
+  // Set initializer
+  be->global_variable_set_init(g1, mkInt32Const(be.get(), 101));
+
   // Test var_expression created from global variable
-  Bexpression *ve1 = be->var_expression(g1, true, Location());
+  Bexpression *ve1 = be->var_expression(g1, VE_lvalue, Location());
   ASSERT_TRUE(ve1 != nullptr);
   EXPECT_EQ(ve1->value(), g1->value());
 

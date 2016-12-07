@@ -268,6 +268,17 @@ Bexpression *mkFloat64Const(Backend *be, double val) {
   return beval;
 }
 
+Bexpression *mkInt32Const(Backend *be, int32_t val)
+{
+  mpz_t mpz_val;
+  memset(&mpz_val, '0', sizeof(mpz_val));
+  mpz_init_set_si(mpz_val, int64_t(val));
+  Btype *bi32t = be->integer_type(false, 32);
+  Bexpression *rval = be->integer_constant_expression(bi32t, mpz_val);
+  mpz_clear(mpz_val);
+  return rval;
+}
+
 Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st) {
   const std::vector<Bvariable *> empty;
   Bblock *b = be->block(func, nullptr, empty, Location(), Location());

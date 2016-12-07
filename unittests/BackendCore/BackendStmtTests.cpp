@@ -54,7 +54,7 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
 
   // assign a constant to a variable
   Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
-  Bexpression *ve1 = be->var_expression(loc1, true, loc);
+  Bexpression *ve1 = be->var_expression(loc1, VE_lvalue, loc);
   Bstatement *as =
       be->assignment_statement(ve1, mkInt64Const(be.get(), 123), loc);
   ASSERT_TRUE(as != nullptr);
@@ -63,8 +63,8 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
 
   // assign a variable to a variable
   Bvariable *loc2 = be->local_variable(func, "loc2", bi64t, true, loc);
-  Bexpression *ve2 = be->var_expression(loc2, true, loc);
-  Bexpression *ve3 = be->var_expression(loc1, false, loc);
+  Bexpression *ve2 = be->var_expression(loc2, VE_lvalue, loc);
+  Bexpression *ve3 = be->var_expression(loc1, VE_rvalue, loc);
   Bstatement *as2 = be->assignment_statement(ve2, ve3, loc);
   ASSERT_TRUE(as2 != nullptr);
   addStmtToBlock(be.get(), block, as2);
@@ -79,7 +79,7 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
 
   // error handling
   Bvariable *loc3 = be->local_variable(func, "loc3", bi64t, true, loc);
-  Bexpression *ve4 = be->var_expression(loc3, true, loc);
+  Bexpression *ve4 = be->var_expression(loc3, VE_lvalue, loc);
   Bstatement *badas =
       be->assignment_statement(ve4, be->error_expression(), loc);
   ASSERT_TRUE(badas != nullptr);
@@ -99,7 +99,7 @@ TEST(BackendStmtTests, TestReturnStmt) {
   Bstatement *is = be->init_statement(loc1, mkInt64Const(be.get(), 10));
   Bblock *block = mkBlockFromStmt(be.get(), func, is);
   std::vector<Bexpression *> vals;
-  Bexpression *ve1 = be->var_expression(loc1, false, loc);
+  Bexpression *ve1 = be->var_expression(loc1, VE_rvalue, loc);
   vals.push_back(ve1);
   Bstatement *ret = be->return_statement(func, vals, loc);
   EXPECT_EQ(repr(ret), "%loc1.ld.0 = load i64, i64* %loc1\n"
@@ -133,7 +133,7 @@ TEST(BackendStmtTests, TestLabelGotoStmts) {
   addStmtToBlock(be.get(), block, gots);
 
   // dead stmt: loc1 = 11
-  Bexpression *ved = be->var_expression(loc1, true, loc);
+  Bexpression *ved = be->var_expression(loc1, VE_lvalue, loc);
   Bexpression *c11 = mkInt64Const(be.get(), 11);
   Bstatement *asd = be->assignment_statement(ved, c11, loc);
   addStmtToBlock(be.get(), block, asd);
@@ -156,19 +156,19 @@ TEST(BackendStmtTests, TestIfStmt) {
   Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
 
   // loc1 = 123
-  Bexpression *ve1 = be->var_expression(loc1, true, loc);
+  Bexpression *ve1 = be->var_expression(loc1, VE_lvalue, loc);
   Bexpression *c123 = mkInt64Const(be.get(), 123);
   Bstatement *as1 = be->assignment_statement(ve1, c123, loc);
   Bblock *b1 = mkBlockFromStmt(be.get(), func, as1);
 
   // loc1 = 987
-  Bexpression *ve2 = be->var_expression(loc1, true, loc);
+  Bexpression *ve2 = be->var_expression(loc1, VE_lvalue, loc);
   Bexpression *c987 = mkInt64Const(be.get(), 987);
   Bstatement *as2 = be->assignment_statement(ve2, c987, loc);
   Bblock *b2 = mkBlockFromStmt(be.get(), func, as2);
 
   // loc1 = 456
-  Bexpression *ve3 = be->var_expression(loc1, true, loc);
+  Bexpression *ve3 = be->var_expression(loc1, VE_lvalue, loc);
   Bexpression *c456 = mkInt64Const(be.get(), 456);
   Bstatement *as3 = be->assignment_statement(ve3, c456, loc);
   Bblock *b3 = mkBlockFromStmt(be.get(), func, as3);

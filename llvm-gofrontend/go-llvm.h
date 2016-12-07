@@ -488,7 +488,8 @@ public:
 
   Bexpression *nil_pointer_expression();
 
-  Bexpression *var_expression(Bvariable *var, bool lvalue, Location);
+  Bexpression *var_expression(Bvariable *var, Varexpr_context in_lvalue_pos,
+                              Location);
 
   Bexpression *indirect_expression(Btype *, Bexpression *expr, bool known_valid,
                                    Location);

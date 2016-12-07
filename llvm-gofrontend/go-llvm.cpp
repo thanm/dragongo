@@ -1031,14 +1031,15 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
 
 // An expression that references a variable.
 
-Bexpression *Llvm_backend::var_expression(Bvariable *var, bool lvalue,
+Bexpression *Llvm_backend::var_expression(Bvariable *var,
+                                          Varexpr_context in_lvalue_pos,
                                           Location location) {
   if (var == errorVariable_.get())
     return errorExpression_.get();
 
   // FIXME: record debug location
 
-  if (lvalue) {
+  if (in_lvalue_pos == VE_lvalue) {
     ValExprScope scope =
         (var->flavor() == GlobalVar ? GlobalScope : LocalScope);
     return makeValueExpression(var->value(), var->getType(), scope);
@@ -1667,7 +1668,15 @@ Bvariable *Llvm_backend::global_variable(const std::string &var_name,
 // Set the initial value of a global variable.
 
 void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr) {
-  assert(false && "Llvm_backend::global_variable_set_init not yet impl");
+  if (var == errorVariable_.get() || expr == errorExpression_.get())
+    return;
+  assert(llvm::isa<llvm::GlobalVariable>(var->value()));
+  llvm::GlobalVariable *gvar = llvm::cast<llvm::GlobalVariable>(var->value());
+
+  assert(llvm::isa<llvm::Constant>(var->value()));
+  llvm::Constant *econ = llvm::cast<llvm::Constant>(expr->value());
+
+  gvar->setInitializer(econ);
 }
 
 Bvariable *Llvm_backend::error_variable() { return errorVariable_.get(); }

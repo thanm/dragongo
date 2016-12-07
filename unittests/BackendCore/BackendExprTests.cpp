@@ -175,21 +175,19 @@ TEST(BackendExprTests, MakeVarExpressions) {
 
   // We should get a distinct value  two separate values when creating
   // var expressions.
-  bool noLvalue = false;
-  Bexpression *ve1 = be->var_expression(loc1, noLvalue, loc);
+  Bexpression *ve1 = be->var_expression(loc1, VE_rvalue, loc);
   EXPECT_EQ(repr(ve1), "%loc1.ld.0 = load i64, i64* %loc1");
   Bstatement *es = be->expression_statement(ve1);
   Bblock *block = mkBlockFromStmt(be.get(), func, es);
-  Bexpression *ve2 = be->var_expression(loc1, noLvalue, loc);
+  Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, loc);
   EXPECT_EQ(repr(ve2), "%loc1.ld.1 = load i64, i64* %loc1");
   addExprToBlock(be.get(), block, ve2);
 
   // Same here.
-  bool yesLvalue = true;
-  Bexpression *ve3 = be->var_expression(loc1, yesLvalue, loc);
+  Bexpression *ve3 = be->var_expression(loc1, VE_lvalue, loc);
   EXPECT_EQ(repr(ve3), "%loc1 = alloca i64");
   addExprToBlock(be.get(), block, ve3);
-  Bexpression *ve4 = be->var_expression(loc1, yesLvalue, loc);
+  Bexpression *ve4 = be->var_expression(loc1, VE_lvalue, loc);
   EXPECT_EQ(repr(ve4), "%loc1 = alloca i64");
   EXPECT_NE(ve3, ve4);
   addExprToBlock(be.get(), block, ve4);
@@ -335,14 +333,12 @@ TEST(BackendExprTests, TestMoreArith) {
   addStmtToBlock(be.get(), block, isw);
 
   // x = y + z + w
-  bool noLvalue = false;
-  Bexpression *vey = be->var_expression(y, noLvalue, loc);
-  Bexpression *vez = be->var_expression(z, noLvalue, loc);
-  Bexpression *vew = be->var_expression(w, noLvalue, loc);
+  Bexpression *vey = be->var_expression(y, VE_rvalue, loc);
+  Bexpression *vez = be->var_expression(z, VE_rvalue, loc);
+  Bexpression *vew = be->var_expression(w, VE_rvalue, loc);
   Bexpression *ypz = be->binary_expression(OPERATOR_PLUS, vey, vez, loc);
   Bexpression *ypzpw = be->binary_expression(OPERATOR_PLUS, ypz, vew, loc);
-  bool yesLvalue = true;
-  Bexpression *vex = be->var_expression(x, yesLvalue, loc);
+  Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
   Bstatement *as =
       be->assignment_statement(vex, ypzpw, loc);
   addStmtToBlock(be.get(), block, as);
