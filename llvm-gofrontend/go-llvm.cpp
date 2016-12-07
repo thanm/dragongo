@@ -1850,8 +1850,17 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function,
                                             bool is_address_taken,
                                             Location location,
                                             Bstatement **pstatement) {
-  assert(false && "Llvm_backend::temporary_variable not yet impl");
-  return nullptr;
+  if (binit == errorExpression_.get())
+    return errorVariable_.get();
+  std::string tname(namegen("tmp"));
+  Bvariable *tvar = local_variable(function, tname, btype,
+                                   is_address_taken, location);
+  if (tvar == errorVariable_.get())
+    return tvar;
+  Bstatement *is = init_statement(tvar, binit);
+  bblock->stlist().push_back(is);
+  *pstatement = is;
+  return tvar;
 }
 
 // Create an implicit variable that is compiler-defined.  This is used when
