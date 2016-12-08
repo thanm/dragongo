@@ -212,6 +212,47 @@ TEST(BackendVarTests, MakeImmutableStruct) {
   }
 }
 
+TEST(BackendVarTests, MakeImplicitVariable) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bst = mkTwoFieldStruct(be.get(), bi32t, bi32t);
+
+  const bool is_common[2] = {true, false};
+  const bool is_constant[2] = {true, false};
+  const bool is_hidden[2] = {true, false};
+  GlobalVariable *gvar = nullptr;
+  bool first = true;
+  for (auto hidden : is_hidden) {
+    for (auto common : is_common) {
+      for (auto iscon : is_constant) {
+        if (hidden && common)
+          continue;
+        Bvariable *ims =
+            be->implicit_variable("name", "asmname", bst, hidden, iscon,
+                                  common, 8);
+        ASSERT_TRUE(ims != nullptr);
+        Value *ival = ims->value();
+        ASSERT_TRUE(ival != nullptr);
+        EXPECT_TRUE(isa<GlobalVariable>(ival));
+        if (first) {
+          gvar = cast<GlobalVariable>(ival);
+          EXPECT_EQ(ival->getName(), "asmname");
+          first = false;
+        }
+      }
+    }
+  }
+
+  // error case
+  Bvariable *gerr =
+      be->implicit_variable("", "", be->error_type(), false, false,
+                            false, 0);
+  EXPECT_TRUE(gerr == be->error_variable());
+}
+
 TEST(BackendVarTests, MakeImmutableStructReference) {
   LLVMContext C;
 

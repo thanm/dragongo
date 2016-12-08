@@ -1737,13 +1737,21 @@ Bstatement *Llvm_backend::block_statement(Bblock *bblock) {
   return bblock;
 }
 
-// Make a global variable.
+// Helper routine for creating module-scope variables (static, global, etc).
 
-Bvariable *Llvm_backend::global_variable(const std::string &var_name,
-                                         const std::string &asm_name,
-                                         Btype *btype, bool is_external,
-                                         bool is_hidden, bool in_unique_section,
-                                         Location location) {
+Bvariable *
+Llvm_backend::makeModuleVar(Btype *btype,
+                            const std::string &name,
+                            const std::string &asm_name,
+                            Location location,
+                            bool isConstant,
+                            bool inUniqueSection,
+                            bool inComdat,
+                            bool isHiddenVisibility,
+                            llvm::GlobalValue::LinkageTypes linkage,
+                            unsigned alignment)
+
+{
   if (btype == errorType_)
     return errorVariable_.get();
 
@@ -1751,25 +1759,48 @@ Bvariable *Llvm_backend::global_variable(const std::string &var_name,
   assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
 
   // FIXME: add support for this
-  assert(in_unique_section == false);
+  assert(inUniqueSection == false);
+
+  // FIXME: add support for this
+  assert(inComdat == false);
 
   // FIXME: add DIGlobalVariable to debug info for this variable
 
-  // FIXME: use correct ASM name
-
-  llvm::GlobalValue::LinkageTypes linkage =
-      (is_external ? llvm::GlobalValue::ExternalLinkage
-                   : llvm::GlobalValue::InternalLinkage);
-
-  bool isConstant = false;
   llvm::Constant *init = nullptr;
   llvm::GlobalVariable *glob = new llvm::GlobalVariable(
       *module_.get(), btype->type(), isConstant, linkage, init, asm_name);
+  if (isHiddenVisibility)
+    glob->setVisibility(llvm::GlobalValue::HiddenVisibility);
+  if (alignment)
+    glob->setAlignment(alignment);
+  bool addressTaken = true; // for now
   Bvariable *bv =
-      new Bvariable(btype, location, var_name, GlobalVar, false, glob);
+      new Bvariable(btype, location, name, GlobalVar, addressTaken, glob);
   assert(valueVarmap_.find(bv->value()) == valueVarmap_.end());
   valueVarmap_[bv->value()] = bv;
   return bv;
+}
+
+// Make a global variable.
+
+Bvariable *Llvm_backend::global_variable(const std::string &var_name,
+                                         const std::string &asm_name,
+                                         Btype *btype,
+                                         bool is_external,
+                                         bool is_hidden,
+                                         bool in_unique_section,
+                                         Location location) {
+
+  llvm::GlobalValue::LinkageTypes linkage =
+      (is_external ? llvm::GlobalValue::ExternalLinkage
+       : llvm::GlobalValue::InternalLinkage);
+  bool isConstant = false;
+  bool isComdat = false;
+  Bvariable *gvar =
+      makeModuleVar(btype, var_name, asm_name, location,
+                    isConstant, in_unique_section, isComdat,
+                    is_hidden, linkage);
+  return gvar;
 }
 
 // Set the initial value of a global variable.
@@ -1872,11 +1903,35 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function,
 
 Bvariable *Llvm_backend::implicit_variable(const std::string &name,
                                            const std::string &asm_name,
-                                           Btype *type, bool is_hidden,
-                                           bool is_constant, bool is_common,
-                                           int64_t alignment) {
-  assert(false && "Llvm_backend::implicit_variable not yet impl");
-  return nullptr;
+                                           Btype *btype,
+                                           bool is_hidden,
+                                           bool is_constant,
+                                           bool is_common,
+                                           int64_t ialignment) {
+  if (btype == errorType_)
+    return errorVariable_.get();
+
+  // Vett alignment
+  assert(ialignment >= 0);
+  assert(ialignment < 1<<30);
+  unsigned alignment = static_cast<unsigned>(ialignment);
+
+  // Common + hidden makes no sense
+  assert(!(is_hidden && is_common));
+
+  llvm::GlobalValue::LinkageTypes linkage =
+      (is_hidden ? llvm::GlobalValue::ExternalLinkage
+       : llvm::GlobalValue::WeakODRLinkage);
+
+  // bool isComdat = is_common;
+  bool isComdat = false; // for now
+  // bool inUniqueSection = true;
+  bool inUniqueSection = false; // for now
+  Bvariable *gvar =
+      makeModuleVar(btype, name, asm_name, Location(),
+                    is_constant, inUniqueSection, isComdat,
+                    is_hidden, linkage, alignment);
+  return gvar;
 }
 
 // Set the initalizer for a variable created by implicit_variable.
@@ -1902,41 +1957,39 @@ Bvariable *Llvm_backend::implicit_variable_reference(const std::string &name,
 
 Bvariable *Llvm_backend::immutable_struct(const std::string &name,
                                           const std::string &asm_name,
-                                          bool is_hidden, bool is_common,
-                                          Btype *btype, Location location) {
+                                          bool is_hidden,
+                                          bool is_common,
+                                          Btype *btype,
+                                          Location location) {
   if (btype == errorType_)
     return errorVariable_.get();
-
-  // FIXME: add code to insure non-zero size
-  assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
 
   // Common + hidden makes no sense
   assert(!(is_hidden && is_common));
 
-  // Determine linkage
   llvm::GlobalValue::LinkageTypes linkage =
-      (is_common ? llvm::GlobalValue::CommonLinkage
-                 : (is_hidden ? llvm::GlobalValue::InternalLinkage
-                              : llvm::GlobalValue::ExternalLinkage));
-
+      (is_hidden ? llvm::GlobalValue::ExternalLinkage
+       : llvm::GlobalValue::WeakODRLinkage);
   bool isConstant = true;
-  llvm::Constant *init = nullptr;
-  bool addressTakenDontCare = false;
-  llvm::GlobalVariable *glob = new llvm::GlobalVariable(
-      *module_.get(), btype->type(), isConstant, linkage, init, asm_name);
-  Bvariable *bv = new Bvariable(btype, location, name, GlobalVar,
-                                addressTakenDontCare, glob);
-  assert(valueVarmap_.find(bv->value()) == valueVarmap_.end());
-  valueVarmap_[bv->value()] = bv;
-  return bv;
+  // bool isComdat = is_common;
+  bool isComdat = false; // for now
+  bool inUniqueSection = false; // for now
+  Bvariable *gvar =
+      makeModuleVar(btype, name, asm_name, location,
+                    isConstant, inUniqueSection, isComdat,
+                    is_hidden, linkage);
+  return gvar;
 }
 
 // Set the initializer for a variable created by immutable_struct.
 // This is where we finish compiling the variable.
 
 void Llvm_backend::immutable_struct_set_init(Bvariable *var,
-                                             const std::string &, bool,
-                                             bool is_common, Btype *, Location,
+                                             const std::string &,
+                                             bool is_hidden,
+                                             bool is_common,
+                                             Btype *,
+                                             Location,
                                              Bexpression *initializer) {
   assert(false && "Llvm_backend::immutable_struct_set_init not yet impl");
 }

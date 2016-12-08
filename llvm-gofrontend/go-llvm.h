@@ -36,6 +36,8 @@ class Type;
 class Value;
 }
 
+#include "llvm/IR/GlobalValue.h"
+
 // Btype wraps llvm::Type
 
 class Btype {
@@ -765,6 +767,18 @@ private:
                                    Btype *btype,
                                    ValExprScope scope);
 
+  // Make a module-scope variable (static, global, or external).
+  Bvariable *makeModuleVar(Btype *btype,
+                           const std::string &name,
+                           const std::string &asm_name,
+                           Location location,
+                           bool isConstant,
+                           bool inUniqueSection,
+                           bool inComdat,
+                           bool isHiddenVisibility,
+                           llvm::GlobalValue::LinkageTypes linkage,
+                           unsigned alignmentInBytes = 0);
+
   // Create a Bexpression to hold a value being computed by the
   // instruction "inst".
   Bexpression *makeInstExpression(llvm::Instruction *inst, Btype *btype);
@@ -777,7 +791,7 @@ private:
 
   // Assignment helper
   Bstatement *makeAssignment(llvm::Value *lvalue, Bexpression *lhs,
-                            Bexpression *rhs, Location);
+                             Bexpression *rhs, Location);
 
   // Helper to set up entry block for function
   llvm::BasicBlock *genEntryBlock(Bfunction *bfunction);
