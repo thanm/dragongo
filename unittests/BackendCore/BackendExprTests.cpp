@@ -497,6 +497,58 @@ TEST(BackendExprTests, TestStructFieldExprs) {
     ret i64 10101
   )RAW_RESULT";
 
+  std::string reason;
+  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  EXPECT_EQ("pass", equal ? "pass" : reason);
+
+  be->function_set_body(func, block);
+  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+TEST(BackendExprTests, CreateArrayConstructionExprs) {
+  LLVMContext C;
+
+  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+
+  // var aa [4]int64 = { 4, 3, 2, 1 }
+  Location loc;
+  Bexpression *val4 = mkInt64Const(be.get(), int64_t(4));
+  Btype *bi64t = be->integer_type(false, 64);
+  Btype *at4 = be->array_type(bi64t, val4);
+  Bvariable *aa = be->local_variable(func, "aa", at4, true, loc);
+  std::vector<unsigned long> indexes1 = { 0, 1, 2, 3 };
+  std::vector<Bexpression *> vals1;
+  for (int64_t v : {4, 3, 2, 1})
+    vals1.push_back(mkInt64Const(be.get(), v));
+  Bexpression *arcon1 =
+    be->array_constructor_expression(at4, indexes1, vals1, loc);
+  Bstatement *is = be->init_statement(aa, arcon1);
+  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+
+  // var ab [4]int64 = { 2:3 }
+  Bvariable *ab = be->local_variable(func, "ab", at4, true, loc);
+  std::vector<unsigned long> indexes2 = { 2 };
+  std::vector<Bexpression *> vals2;
+  vals2.push_back(mkInt64Const(be.get(), int64_t(3)));
+  Bexpression *arcon2 =
+    be->array_constructor_expression(at4, indexes2, vals2, loc);
+  Bstatement *is2 = be->init_statement(ab, arcon2);
+  addStmtToBlock(be.get(), block, is2);
+
+  // return 10101
+  std::vector<Bexpression *> vals;
+  vals.push_back(mkInt64Const(be.get(), 10101));
+  Bstatement *ret = be->return_statement(func, vals, loc);
+  addStmtToBlock(be.get(), block, ret);
+
+  const char *exp = R"RAW_RESULT(
+    store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
+    store [4 x i64] [i64 0, i64 0, i64 3, i64 0], [4 x i64]* %ab
+    ret i64 10101
+  )RAW_RESULT";
+
   std::cerr << repr(block);
 
   std::string reason;
@@ -507,5 +559,6 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   bool broken = llvm::verifyModule(be->module(), &dbgs());
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
+
 
 }

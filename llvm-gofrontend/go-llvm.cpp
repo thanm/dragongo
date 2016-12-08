@@ -1504,10 +1504,70 @@ Bexpression *Llvm_backend::constructor_expression(
   return nullptr;
 }
 
-Bexpression *Llvm_backend::array_constructor_expression(
+Bexpression *
+Llvm_backend::makeConstArrayExpr(Btype *array_btype,
+                                 llvm::ArrayType *llat,
+                                 const std::vector<unsigned long> &indexes,
+                                 const std::vector<Bexpression *> &vals,
+                                 Location location)
+{
+  unsigned long nel = llat->getNumElements();
+  unsigned long nvals = vals.size();
+  std::set<unsigned long> touched;
+  llvm::SmallVector<llvm::Constant *, 64> llvals(nel);
+  for (unsigned ii = 0; ii < indexes.size(); ++ii) {
+    auto idx = indexes[ii];
+    if (nel != nvals)
+      touched.insert(idx);
+    Bexpression *bex = vals[ii];
+    llvm::Constant *con = llvm::cast<llvm::Constant>(bex->value());
+    llvals[idx] = con;
+  }
+  if (nel != nvals) {
+    llvm::Type *elt = llat->getElementType();
+    for (unsigned long ii = 0; ii < nel; ++ii) {
+      if (touched.find(ii) == touched.end())
+        llvals[ii] = llvm::Constant::getNullValue(elt);
+    }
+  }
+  llvm::Value *arcon = llvm::ConstantArray::get(llat, llvals);
+  Bexpression *bcon = makeValueExpression(arcon, array_btype, GlobalScope);
+  return bcon;
+}
+
+Bexpression *
+Llvm_backend::array_constructor_expression(
     Btype *array_btype, const std::vector<unsigned long> &indexes,
-    const std::vector<Bexpression *> &vals, Location location) {
-  assert(false && "Llvm_backend::array_constructor_expression not yet impl");
+    const std::vector<Bexpression *> &vals, Location location)
+{
+  if (array_btype == errorType_)
+    return errorExpression_.get();
+
+  llvm::Type *llt = array_btype->type();
+  assert(llt->isArrayTy());
+  llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(llt);
+
+  // frontend should be enforcing this
+  assert(indexes.size() == vals.size());
+
+  // Constant values?
+  bool isConstant = true;
+  for (auto val : vals) {
+    if (val == errorExpression_.get())
+      return errorExpression_.get();
+    if (! llvm::isa<llvm::Constant>(val->value())) {
+      isConstant = false;
+      break;
+    }
+  }
+  if (isConstant)
+    return makeConstArrayExpr(array_btype, llat, indexes, vals, location);
+
+  // Don't yet handle sparse init
+  assert(indexes.size() == llat->getNumElements());
+
+  // Non-constant case.
+  assert(false && "Not yet implemented.");
   return nullptr;
 }
 

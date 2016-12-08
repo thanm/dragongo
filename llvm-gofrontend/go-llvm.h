@@ -83,6 +83,54 @@ private:
   std::vector<llvm::Instruction *> instructions_;
 };
 
+// Use when deleting a Bstatement or Bexpression subtree. Controls
+// whether to delete just the Bstatement/Bexpression objects, just
+// the LLVM instructions they contain, or both.
+//
+enum WhichDel {
+  DelInstructions, // delete only instructions
+  DelWrappers,     // delete only wrappers
+  DelBoth          // delete wrappers and instructions
+};
+
+// The general strategy for handling Bexpression creation is to
+// generate the llvm::Instruction representation of a given
+// Bexpression at the point where it is create.  For example, if
+// Llvm_backend::binary_operator is invoked to create a Bexpression
+// for an addition operation, it will eagerly manufacture a new
+// llvm::BinaryOperator object and return a new Bexpression that
+// encapsulates that object.
+//
+// This eager strategy works well in general but has to be relaxed a
+// bit in some instances, notably variable references and composite
+// initializers.  For example, consider the following Go code:
+//
+//        func foo(q int64, ip *int64) int64 {
+//           y := q
+//           x := **&ip
+//           ip = &q
+//
+// The right hand side expression trees for these statements would look like:
+//
+//        stmt 1:   varexpr("q")
+//        stmt 2:   deref(deref(address(varexpr("ip")))).
+//        stmt 3:   address(varexpr("q"))
+//
+// At the point where Llvm_backend::var_expression is called, we don't
+// know the context for the consuming instruction. For statement 1, we
+// want to generate a load for the varexpr, however in statement 3 it
+// would be premature to create the load (since the varexpr is feeding
+// into an address operator).
+//
+// To deal with this, we use this mix-in class below (Bexpression
+// inherits from it) to record whether the subtree in question
+// contains a root variable expression, and if so, the number of
+// "address" operators that have been applied. Once we reach a point
+// where we have concrete consumer for the subtree of
+// (var/address/indrect) ops, we can then use this information to
+// decide whether to materialize an address or perform a load.
+//
+
 class VarContext {
  public:
   VarContext() : addrLevel_(0), pending_(false) { }
@@ -100,16 +148,6 @@ class VarContext {
  private:
   unsigned addrLevel_;
   bool pending_;
-};
-
-// Use when deleting a Bstatement or Bexpression subtree. Controls
-// whether to delete just the Bstatement/Bexpression objects, just
-// the LLVM instructions they contain, or both.
-//
-enum WhichDel {
-  DelInstructions, // delete only instructions
-  DelWrappers,     // delete only wrappers
-  DelBoth          // delete wrappers and instructions
 };
 
 // Here Bexpression is largely a wrapper around llvm::Value, however
@@ -788,6 +826,13 @@ private:
   Bexpression *makeExpression(llvm::Instruction *value,
                               Btype *btype,
                               Bexpression *src, ...);
+
+  // Constant array creation helper
+  Bexpression *makeConstArrayExpr(Btype *array_btype,
+                                  llvm::ArrayType *llat,
+                                  const std::vector<unsigned long> &indexes,
+                                  const std::vector<Bexpression *> &vals,
+                                  Location location);
 
   // Assignment helper
   Bstatement *makeAssignment(llvm::Value *lvalue, Bexpression *lhs,
