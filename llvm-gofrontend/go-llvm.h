@@ -144,22 +144,69 @@ class VarContext {
     addrLevel_ = addrLevel;
     pending_ = true;
   }
+  void resetVarExprPending() {
+    pending_ = false;
+  }
 
  private:
   unsigned addrLevel_;
   bool pending_;
 };
 
+// Mix-in helper class for composite init expresions. Consider the following
+// Go code:
+//
+//    func foo(qq int64) int64 {
+//      var ad [4]int64 = [4]int64{ 0, 1, qq, 3 }
+//
+// Frontend will invoke the Backend::array_constructor_expression() method
+// for the initializer ("{ 0, 1, qq, 3 }"). Because this initializer is not
+// a pure constant (it contains a reference to the variable "qq"), the
+// LLVM instructions we generate for it will have to store values to a
+// chunk of memory. At the point where array_constructor_expression()
+// is called, we don't have a good way to create a temporary variable, so
+// we don't have anything to store to. In addition, since this initializer
+// feeds directly into a variable, would be more efficient to generate
+// the init code storing into "bar" as opposed to storing into a temporary
+// and then copying over from the temp into "bar".
+//
+// To address these issues, this help class can be used to capture the
+// sequence of instructions corresponding to the values for each element
+// so as to delay creation of the initialization code.
+//
+
+class CompositeInitContext {
+ public:
+  CompositeInitContext() : pending_(false) { }
+
+  bool compositeInitPending() const { return pending_; }
+  void setCompositeInit(const std::vector<Bexpression *> &vals,
+                        Btype *compositeType) {
+    vals_.reset(new std::vector<Bexpression *>(vals));
+    pending_ = true;
+  }
+  std::vector<Bexpression *> &elementExpressions() {
+    assert(pending_);
+    return *vals_.get();
+  }
+  void resetCompositeInit() {
+    vals_.reset(nullptr);
+    pending_ = false;
+  }
+
+ private:
+  std::unique_ptr<std::vector<Bexpression *> > vals_;
+  bool pending_;
+};
+
 // Here Bexpression is largely a wrapper around llvm::Value, however
 // in addition to the consumable value it produces, a given
 // Bexpression may also encapsulate a collection of other instructions
-// that need to be executed prior to to that value. This is to
-// accommodate the compound expressions produced in gofrontend, which
-// loosely correspond to the C++ comma operator.  For something like
-// E3 = E1, E2, the semantics are "evaluate E1 prior to evalating E2,
-// then assign the result to E3".
+// that need to be executed prior to to that value. Semantics are
+// roughly equivalent to the C++ comma operator, e.g. evaluate some
+// set of expressions E1, E2, .. EK, then produce result EK.
 
-class Bexpression : public Binstructions, public VarContext {
+class Bexpression : public Binstructions, public VarContext, public CompositeInitContext {
 public:
   Bexpression(llvm::Value *value, Btype *btype, const std::string &tag = "");
   ~Bexpression();
@@ -176,6 +223,13 @@ public:
 
   // debugging
   void dump(unsigned ilevel = 0);
+
+  void finishCompositeInit(llvm::Value *finalizedValue) {
+    assert(value_ == nullptr);
+    assert(finalizedValue);
+    value_ = finalizedValue;
+    resetCompositeInit();
+  }
 
 private:
   Bexpression() : value_(NULL) {}
@@ -239,8 +293,8 @@ public:
   inline GotoStatement *castToGotoStatement();
   inline LabelStatement *castToLabelStatement();
 
-  // Create new Bstatement from a series of exprssions.
-  static ExprListStatement *stmtFromExprs(Bexpression *expr, ...);
+  // Create new Bstatement from an expression.
+  static ExprListStatement *stmtFromExpr(Bexpression *expr);
 
   // Perform deletions on the tree of Bstatements rooted at stmt.
   // Delete Bstatements/Bexpressions, instructions, or both (depending
@@ -621,7 +675,7 @@ public:
 
   Bstatement *error_statement();
 
-  Bstatement *expression_statement(Bexpression *);
+  Bstatement *expression_statement(Bfunction *, Bexpression *);
 
   Bstatement *init_statement(Bvariable *var, Bexpression *init);
 
@@ -631,7 +685,8 @@ public:
   Bstatement *return_statement(Bfunction *, const std::vector<Bexpression *> &,
                                Location);
 
-  Bstatement *if_statement(Bexpression *condition, Bblock *then_block,
+  Bstatement *if_statement(Bfunction *func,
+                           Bexpression *condition, Bblock *then_block,
                            Bblock *else_block, Location);
 
   Bstatement *
@@ -761,6 +816,9 @@ private:
   // Returns field type from struct type and index
   Btype *fieldTypeByIndex(Btype *type, unsigned field_index);
 
+  // Returns array element type from array type
+  Btype *elementType(Btype *artype);
+
   // add a builtin function definition
   void defineBuiltinFcn(const char *name, const char *libname,
                         llvm::Function *fcn);
@@ -834,6 +892,22 @@ private:
                                   const std::vector<Bexpression *> &vals,
                                   Location location);
 
+  // Non-constant array value creation helper
+  Bexpression *makeDelayedArrayExpr(Btype *array_btype, llvm::ArrayType *llat,
+                                    const std::vector<unsigned long> &indexes,
+                                    const std::vector<Bexpression *> &vals,
+                                    Location location);
+
+  // Field GEP helper
+  llvm::Instruction *makeFieldGEP(llvm::StructType *llst,
+                                  unsigned fieldIndex,
+                                  llvm::Value *sptr);
+
+  // Array indexing GEP helper
+  llvm::Instruction *makeArrayIndexGEP(llvm::ArrayType *art,
+                                       unsigned elemIndex,
+                                       llvm::Value *sptr);
+
   // Assignment helper
   Bstatement *makeAssignment(llvm::Value *lvalue, Bexpression *lhs,
                              Bexpression *rhs, Location);
@@ -844,6 +918,25 @@ private:
   // Var expr management
   Bexpression *resolveVarContext(Bexpression *expr);
   Bexpression *loadFromExpr(Bexpression *expr, Btype *loadResultType);
+
+  // Composite init management
+  Bexpression *resolveCompositeInit(Bexpression *expr,
+                                    Bfunction *func,
+                                    llvm::Value *storage = nullptr);
+
+  // Array init helper
+  Bexpression *genArrayInit(llvm::ArrayType *llat,
+                            Bexpression *expr,
+                            llvm::Value *storage);
+
+  // Struct init helper
+  Bexpression *genStructInit(llvm::StructType *llst,
+                             Bexpression *expr,
+                             llvm::Value *storage);
+
+  // General-purpose resolver, handles var expr context and
+  // composite init context.
+  Bexpression *resolve(Bexpression *expr, Bfunction *func);
 
 private:
   template <typename T1, typename T2> class pairvalmap_hash {
@@ -909,6 +1002,9 @@ private:
 
   // Maps <structType,index> => <fieldType>
   fieldmaptype fieldmap_;
+
+  // Maps array type to element type
+  std::unordered_map<Btype *, Btype *> arrayElemTypeMap_;
 
   // Placeholder types created by the front end.
   std::unordered_set<Btype *> placeholders_;

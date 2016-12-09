@@ -55,7 +55,7 @@ TEST(BackendVarTests, MakeLocalVar) {
   // Test var_expression created from local variable
   Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, Location());
   ASSERT_TRUE(ve2 != nullptr);
-  Bstatement *es = be->expression_statement(ve2);
+  Bstatement *es = be->expression_statement(func1, ve2);
   Bblock *block = mkBlockFromStmt(be.get(), func1, es);
   EXPECT_EQ(repr(ve2->value()), "%loc1 = alloca i64");
   EXPECT_EQ(repr(es), "%loc1.ld.0 = load i64, i64* %loc1");

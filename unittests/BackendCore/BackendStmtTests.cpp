@@ -96,14 +96,14 @@ TEST(BackendStmtTests, TestReturnStmt) {
   Location loc;
   Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
   Bstatement *is = be->init_statement(loc1, mkInt64Const(be.get(), 10));
-  Bblock *block = mkBlockFromStmt(be.get(), func, is);
   std::vector<Bexpression *> vals;
   Bexpression *ve1 = be->var_expression(loc1, VE_rvalue, loc);
   vals.push_back(ve1);
   Bstatement *ret = be->return_statement(func, vals, loc);
   EXPECT_EQ(repr(ret), "%loc1.ld.0 = load i64, i64* %loc1\n"
-                       "ret i64 %loc1.ld.0");
-  addStmtToBlock(be.get(), block, ret);
+            "ret i64 %loc1.ld.0");
+  Bstatement *cs = be->compound_statement(is, ret);
+  Bblock *block = mkBlockFromStmt(be.get(), func, cs);
 
   // error handling
   std::vector<Bexpression *> bvals;
@@ -174,12 +174,12 @@ TEST(BackendStmtTests, TestIfStmt) {
 
   // if true b1 else b2
   Bexpression *trueval = be->boolean_constant_expression(true);
-  Bstatement *ifst = be->if_statement(trueval, b1, b2, Location());
+  Bstatement *ifst = be->if_statement(func, trueval, b1, b2, Location());
   Bblock *ib = mkBlockFromStmt(be.get(), func, ifst);
 
   // if true if
   Bexpression *tv2 = be->boolean_constant_expression(true);
-  Bstatement *ifst2 = be->if_statement(tv2, ib, b3, Location());
+  Bstatement *ifst2 = be->if_statement(func, tv2, ib, b3, Location());
   Bblock *eb = mkBlockFromStmt(be.get(), func, ifst2);
 
   std::vector<Bexpression *> vals;

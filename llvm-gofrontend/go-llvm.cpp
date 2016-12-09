@@ -71,20 +71,18 @@ void Bexpression::dump(unsigned ilevel) {
   }
   if (!hitValue) {
     indent(ilevel);
-    value()->dump();
+    if (value())
+      value()->dump();
+    else
+      std::cerr << "<nil value>";
   }
   if (varPending())
     std::cerr << "pending: level=" << addrLevel() << "\n";
 }
 
-ExprListStatement *Bstatement::stmtFromExprs(Bexpression *expr, ...) {
+ExprListStatement *Bstatement::stmtFromExpr(Bexpression *expr) {
   ExprListStatement *st = new ExprListStatement();
-  va_list ap;
-  va_start(ap, expr);
-  while (expr) {
-    st->appendExpression(expr);
-    expr = va_arg(ap, Bexpression *);
-  }
+  st->appendExpression(expr);
   return st;
 }
 
@@ -327,8 +325,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
       new Bexpression(errorFunction_->function(), errorType_));
 
   // Error statement
-  errorStatement_.reset(Bstatement::stmtFromExprs(errorExpression_.get(),
-                                                  nullptr));
+  errorStatement_.reset(Bstatement::stmtFromExpr(errorExpression_.get()));
 
   // Reuse the error function as the value for errorVariable_
   errorVariable_.reset(
@@ -599,7 +596,11 @@ Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
   uint64_t asize = lc->getValue().getZExtValue();
 
   llvm::Type *llat = llvm::ArrayType::get(element_btype->type(), asize);
-  return makeAnonType(llat);
+  Btype *ar_btype = makeAnonType(llat);
+  bool isNew = (arrayElemTypeMap_.find(ar_btype) == arrayElemTypeMap_.end());
+  if (isNew)
+    arrayElemTypeMap_[ar_btype] = element_btype;
+  return ar_btype;
 }
 
 Btype *Llvm_backend::fieldTypeByIndex(Btype *type, unsigned field_index)
@@ -607,6 +608,14 @@ Btype *Llvm_backend::fieldTypeByIndex(Btype *type, unsigned field_index)
   structplusindextype spi(std::make_pair(type, field_index));
   auto it = fieldmap_.find(spi);
   assert(it != fieldmap_.end());
+  return it->second;
+}
+
+Btype *Llvm_backend::elementType(Btype *artype)
+{
+  assert(artype);
+  auto it = arrayElemTypeMap_.find(artype);
+  assert(it != arrayElemTypeMap_.end());
   return it->second;
 }
 
@@ -1024,7 +1033,7 @@ void Llvm_backend::defineSyncFetchAndAddBuiltins() {
 
 Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val, Btype *btype,
                                                ValExprScope scope) {
-  assert(val);
+  assert(val || scope == LocalScope);
   if (scope == GlobalScope) {
     valbtype vbt(std::make_pair(val, btype));
     auto it = valueExprmap_.find(vbt);
@@ -1113,15 +1122,112 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
   return rval;
 }
 
+Bexpression *Llvm_backend::resolve(Bexpression *expr, Bfunction *func)
+{
+  if (expr->compositeInitPending())
+    expr = resolveCompositeInit(expr, func, nullptr);
+  else if (expr->varPending())
+    expr = resolveVarContext(expr);
+  return expr;
+}
+
 Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
 {
   if (expr->varPending()) {
     assert(expr->addrLevel() == 0 || expr->addrLevel() == 1);
-    if (expr->addrLevel() == 1)
+    if (expr->addrLevel() == 1) {
+      expr->resetVarExprPending();
       return expr;
+    }
     return loadFromExpr(expr, expr->btype());
   }
   return expr;
+}
+
+// This version repurposes/reuses the input Bexpression as the
+// result (which could be changed if needed).
+
+Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
+                                        Bexpression *expr,
+                                        llvm::Value *storage)
+{
+  const std::vector<Bexpression *> &aexprs = expr->elementExpressions();
+  unsigned nElements = llat->getNumElements();
+  assert(nElements == aexprs.size());
+
+  for (unsigned eidx = 0; eidx < nElements; ++eidx) {
+
+    // Construct an appropriate GEP
+    llvm::Instruction *gep = makeArrayIndexGEP(llat, eidx, storage);
+    expr->appendInstruction(gep);
+
+    // Store value into gep
+    Bexpression *valexp = resolveVarContext(aexprs[eidx]);
+    for (auto inst : valexp->instructions()) {
+      assert(inst->getParent() == nullptr);
+      expr->appendInstruction(inst);
+    }
+    llvm::Instruction *si = new llvm::StoreInst(valexp->value(), gep);
+    expr->appendInstruction(si);
+  }
+
+  expr->finishCompositeInit(storage);
+  return expr;
+}
+
+// This version repurposes/reuses the input Bexpression as the
+// result (which could be changed if needed).
+
+Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
+                                         Bexpression *expr,
+                                         llvm::Value *storage)
+{
+  const std::vector<Bexpression *> &fexprs = expr->elementExpressions();
+  unsigned nFields = llst->getNumElements();
+  assert(nFields == fexprs.size());
+
+  for (unsigned fidx = 0; fidx < nFields; ++fidx) {
+
+    // Construct an appropriate GEP
+    llvm::Instruction *gep = makeFieldGEP(llst, fidx, storage);
+    expr->appendInstruction(gep);
+
+    // Store value into gep
+    Bexpression *valexp = resolveVarContext(fexprs[fidx]);
+    for (auto inst : valexp->instructions()) {
+      assert(inst->getParent() == nullptr);
+      expr->appendInstruction(inst);
+    }
+    llvm::Instruction *si = new llvm::StoreInst(valexp->value(), gep);
+    expr->appendInstruction(si);
+  }
+
+  expr->finishCompositeInit(storage);
+  return expr;
+}
+
+Bexpression *Llvm_backend::resolveCompositeInit(Bexpression *expr,
+                                                Bfunction *func,
+                                                llvm::Value *storage)
+{
+  assert(!func || !storage);
+  if (expr == errorExpression_.get() || func == errorFunction_.get())
+    return errorExpression_.get();
+  if (!storage) {
+    assert(func);
+    std::string tname(namegen("tmp"));
+    Bvariable *tvar = local_variable(func, tname, expr->btype(), true,
+                                     Location());
+    storage = tvar->value();
+  }
+
+  // Call separate helper depending on array or struct
+  llvm::Type *llt = expr->btype()->type();
+  assert(llt->isStructTy() || llt->isArrayTy());
+  if (llt->isStructTy())
+    return genStructInit(llvm::cast<llvm::StructType>(llt), expr, storage);
+  else
+    return genArrayInit(llvm::cast<llvm::ArrayType>(llt), expr, storage);
 }
 
 // An expression that references a variable.
@@ -1300,6 +1406,35 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
   return nullptr;
 }
 
+llvm::Instruction *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
+                                                   unsigned elemIndex,
+                                                   llvm::Value *sptr)
+{
+  assert(elemIndex < llat->getNumElements());
+  llvm::SmallVector<llvm::Value *, 2> elems(2);
+  elems[0] = llvm::ConstantInt::get(llvmInt32Type_, 0);
+  elems[1] = llvm::ConstantInt::get(llvmInt32Type_, elemIndex);
+  std::string name = namegen("index");
+  llvm::GetElementPtrInst *gep =
+      llvm::GetElementPtrInst::Create(llat, sptr, elems, name);
+  return gep;
+}
+
+// Field GEP helper
+llvm::Instruction *Llvm_backend::makeFieldGEP(llvm::StructType *llst,
+                                              unsigned fieldIndex,
+                                              llvm::Value *sptr)
+{
+  assert(fieldIndex < llst->getNumElements());
+  llvm::SmallVector<llvm::Value *, 2> elems(2);
+  elems[0] = llvm::ConstantInt::get(llvmInt32Type_, 0);
+  elems[1] = llvm::ConstantInt::get(llvmInt32Type_, fieldIndex);
+  std::string name = namegen("field");
+  llvm::GetElementPtrInst *gep =
+      llvm::GetElementPtrInst::Create(llst, sptr, elems, name);
+  return gep;
+}
+
 // Return an expression for the field at INDEX in BSTRUCT.
 
 Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
@@ -1312,17 +1447,11 @@ Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
   llvm::Type *llt = bstruct->btype()->type();
   assert(llt->isStructTy());
   llvm::StructType *llst = llvm::cast<llvm::StructType>(llt);
-  assert(index < llst->getNumElements());
-  //llvm::Type *llft = llst->getElementType(index);
-  Btype *bft = fieldTypeByIndex(bstruct->btype(), index);
-  llvm::SmallVector<llvm::Value *, 2> elems(2);
-  elems[0] = llvm::ConstantInt::get(llvmInt32Type_, 0);
-  elems[1] = llvm::ConstantInt::get(llvmInt32Type_, index);
-  std::string name = namegen("field");
-  llvm::GetElementPtrInst *gep =
-      llvm::GetElementPtrInst::Create(llst, bstruct->value(), elems, name);
+  llvm::Instruction *gep =
+      makeFieldGEP(llst, index, bstruct->value());
 
   // Wrap in a Bexpression
+  Btype *bft = fieldTypeByIndex(bstruct->btype(), index);
   Bexpression *rval = makeValueExpression(gep, bft, LocalScope);
   rval->appendInstruction(gep);
   if (bstruct->varPending())
@@ -1450,6 +1579,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
 
   left = resolveVarContext(left);
   right = resolveVarContext(right);
+  assert(left->value() && right->value());
 
   Btype *bltype = left->btype();
   Btype *brtype = right->btype();
@@ -1505,12 +1635,38 @@ Bexpression *Llvm_backend::constructor_expression(
 }
 
 Bexpression *
-Llvm_backend::makeConstArrayExpr(Btype *array_btype,
-                                 llvm::ArrayType *llat,
+Llvm_backend::makeDelayedArrayExpr(Btype *artype, llvm::ArrayType *llat,
+                                   const std::vector<unsigned long> &indexes,
+                                   const std::vector<Bexpression *> &vals,
+                                   Location location) {
+  unsigned long nel = llat->getNumElements();
+  unsigned long nvals = vals.size();
+  std::set<unsigned long> touched;
+  std::vector<Bexpression *> init_vals(nel);
+  for (unsigned ii = 0; ii < indexes.size(); ++ii) {
+    auto idx = indexes[ii];
+    if (nel != nvals)
+      touched.insert(idx);
+    init_vals[idx] = vals[ii];
+  }
+  if (nel != nvals) {
+    Btype *bElemTyp = elementType(artype);
+    for (unsigned long ii = 0; ii < nel; ++ii) {
+      if (touched.find(ii) == touched.end())
+        init_vals[ii] = zero_expression(bElemTyp);
+    }
+  }
+  llvm::Value *nilval = nullptr;
+  Bexpression *arcon = makeValueExpression(nilval, artype, LocalScope);
+  arcon->setCompositeInit(init_vals, artype);
+  return arcon;
+}
+
+Bexpression *
+Llvm_backend::makeConstArrayExpr(Btype *array_btype, llvm::ArrayType *llat,
                                  const std::vector<unsigned long> &indexes,
                                  const std::vector<Bexpression *> &vals,
-                                 Location location)
-{
+                                 Location location) {
   unsigned long nel = llat->getNumElements();
   unsigned long nvals = vals.size();
   std::set<unsigned long> touched;
@@ -1535,11 +1691,9 @@ Llvm_backend::makeConstArrayExpr(Btype *array_btype,
   return bcon;
 }
 
-Bexpression *
-Llvm_backend::array_constructor_expression(
+Bexpression *Llvm_backend::array_constructor_expression(
     Btype *array_btype, const std::vector<unsigned long> &indexes,
-    const std::vector<Bexpression *> &vals, Location location)
-{
+    const std::vector<Bexpression *> &vals, Location location) {
   if (array_btype == errorType_)
     return errorExpression_.get();
 
@@ -1555,20 +1709,15 @@ Llvm_backend::array_constructor_expression(
   for (auto val : vals) {
     if (val == errorExpression_.get())
       return errorExpression_.get();
-    if (! llvm::isa<llvm::Constant>(val->value())) {
+    if (!llvm::isa<llvm::Constant>(val->value())) {
       isConstant = false;
       break;
     }
   }
   if (isConstant)
     return makeConstArrayExpr(array_btype, llat, indexes, vals, location);
-
-  // Don't yet handle sparse init
-  assert(indexes.size() == llat->getNumElements());
-
-  // Non-constant case.
-  assert(false && "Not yet implemented.");
-  return nullptr;
+  else
+    return makeDelayedArrayExpr(array_btype, llat, indexes, vals, location);
 }
 
 // Return an expression for the address of BASE[INDEX].
@@ -1610,11 +1759,12 @@ Bstatement *Llvm_backend::error_statement() { return errorStatement_.get(); }
 
 // An expression as a statement.
 
-Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
+Bstatement *Llvm_backend::expression_statement(Bfunction *bfunction,
+                                               Bexpression *expr) {
   if (expr == errorExpression_.get())
     return errorStatement_.get();
   ExprListStatement *els = new ExprListStatement();
-  els->appendExpression(resolveVarContext(expr));
+  els->appendExpression(resolve(expr, bfunction));
   return els;
 }
 
@@ -1623,6 +1773,12 @@ Bstatement *Llvm_backend::expression_statement(Bexpression *expr) {
 Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
   if (var == errorVariable_.get() || init == errorExpression_.get())
     return errorStatement_.get();
+  if (init->compositeInitPending()) {
+    init = resolveCompositeInit(init, nullptr, var->value());
+    ExprListStatement *els = new ExprListStatement();
+    els->appendExpression(init);
+    return els;
+  }
   init = resolveVarContext(init);
   return makeAssignment(var->value(), nullptr, init, Location());
 }
@@ -1652,12 +1808,14 @@ Bstatement *Llvm_backend::makeAssignment(llvm::Value *lval, Bexpression *lhs,
   llvm::Value *rval = rhs->value();
   assert(rval->getType() == pt->getElementType());
 
+  assert(!rhs->varPending() && !rhs->compositeInitPending());
+
   // FIXME: alignment?
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
 
   Bexpression *stexp = makeExpression(si, rhs->btype(), rhs, lhs, nullptr);
   stexp->appendInstruction(si);
-  ExprListStatement *els = Bstatement::stmtFromExprs(stexp, nullptr);
+  ExprListStatement *els = Bstatement::stmtFromExpr(stexp);
   return els;
 }
 
@@ -1669,6 +1827,8 @@ Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
   if (lhs == errorExpression_.get() || rhs == errorExpression_.get())
     return errorStatement_.get();
   lhs = resolveVarContext(lhs);
+  if (rhs->compositeInitPending())
+    rhs = resolveCompositeInit(rhs, nullptr, lhs->value());
   rhs = resolveVarContext(rhs);
   return makeAssignment(lhs->value(), lhs, rhs, location);
 }
@@ -1691,11 +1851,11 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   // since Go functions can return multiple values).
   Btype *btype = nullptr;
 
-  Bexpression *toret = resolveVarContext(vals[0]);
+  Bexpression *toret = resolve(vals[0], bfunction);
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, toret->value());
   Bexpression *rexp = makeExpression(ri, btype, toret, nullptr);
   rexp->appendInstruction(ri);
-  ExprListStatement *els = Bstatement::stmtFromExprs(rexp, nullptr);
+  ExprListStatement *els = Bstatement::stmtFromExpr(rexp);
   return els;
 }
 
@@ -1715,12 +1875,13 @@ Bstatement *Llvm_backend::exception_handler_statement(Bstatement *bstat,
 
 // If.
 
-Bstatement *Llvm_backend::if_statement(Bexpression *condition,
+Bstatement *Llvm_backend::if_statement(Bfunction *bfunction,
+                                       Bexpression *condition,
                                        Bblock *then_block, Bblock *else_block,
                                        Location location) {
   if (condition == errorExpression_.get())
     return errorStatement_.get();
-  condition = resolveVarContext(condition);
+  condition = resolve(condition, bfunction);
   assert(then_block);
   IfPHStatement *ifst =
       new IfPHStatement(condition, then_block, else_block, location);

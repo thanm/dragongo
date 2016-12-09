@@ -294,8 +294,9 @@ void addStmtToBlock(Backend *be, Bblock *block, Bstatement *st) {
   be->block_add_statements(block, stlist);
 }
 
-void addExprToBlock(Backend *be, Bblock *block, Bexpression *e) {
-  Bstatement *es = be->expression_statement(e);
+void addExprToBlock(Backend *be, Bfunction *func,
+                    Bblock *block, Bexpression *e) {
+  Bstatement *es = be->expression_statement(func, e);
   std::vector<Bstatement *> stlist;
   stlist.push_back(es);
   be->block_add_statements(block, stlist);

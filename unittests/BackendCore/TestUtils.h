@@ -130,7 +130,7 @@ Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st);
 void addStmtToBlock(Backend *be, Bblock *block, Bstatement *st);
 
 // Adds expression to block as expr statement.
-void addExprToBlock(Backend *be, Bblock *block, Bexpression *e);
+void addExprToBlock(Backend *be, Bfunction *f, Bblock *bl, Bexpression *e);
 
 // Cleanup of statements and expressions created during unit testing.
 

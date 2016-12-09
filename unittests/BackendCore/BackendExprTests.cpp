@@ -177,21 +177,21 @@ TEST(BackendExprTests, MakeVarExpressions) {
   // var expressions.
   Bexpression *ve1 = be->var_expression(loc1, VE_rvalue, loc);
   EXPECT_EQ(repr(ve1), "%loc1 = alloca i64");
-  Bstatement *es = be->expression_statement(ve1);
+  Bstatement *es = be->expression_statement(func, ve1);
   Bblock *block = mkBlockFromStmt(be.get(), func, es);
   Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, loc);
   EXPECT_EQ(repr(ve2), "%loc1 = alloca i64");
   EXPECT_NE(ve1, ve2);
-  addExprToBlock(be.get(), block, ve2);
+  addExprToBlock(be.get(), func, block, ve2);
 
   // Same here.
   Bexpression *ve3 = be->var_expression(loc1, VE_lvalue, loc);
   EXPECT_EQ(repr(ve3), "%loc1 = alloca i64");
-  addExprToBlock(be.get(), block, ve3);
+  addExprToBlock(be.get(), func, block, ve3);
   Bexpression *ve4 = be->var_expression(loc1, VE_lvalue, loc);
   EXPECT_EQ(repr(ve4), "%loc1 = alloca i64");
   EXPECT_NE(ve3, ve4);
-  addExprToBlock(be.get(), block, ve4);
+  addExprToBlock(be.get(), func, block, ve4);
 
   be->function_set_body(func, block);
 }
@@ -229,7 +229,7 @@ TEST(BackendExprTests, TestCompareOps) {
     Bexpression *bright = valtotest[tidx].second;
     for (auto op : optotest) {
       Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
-      Bstatement *es = be->expression_statement(cmp);
+      Bstatement *es = be->expression_statement(func, cmp);
       addStmtToBlock(be.get(), block, es);
     }
   }
@@ -292,7 +292,7 @@ TEST(BackendExprTests, TestArithOps) {
     Bexpression *bright = valtotest[tidx].second;
     for (auto op : optotest) {
       Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
-      Bstatement *es = be->expression_statement(cmp);
+      Bstatement *es = be->expression_statement(func, cmp);
       addStmtToBlock(be.get(), block, es);
     }
   }
@@ -537,6 +537,17 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
   Bstatement *is2 = be->init_statement(ab, arcon2);
   addStmtToBlock(be.get(), block, is2);
 
+  // var ac [4]int64 = { 1:z }
+  Bvariable *z = be->local_variable(func, "z", bi64t, true, loc);
+  Bvariable *ac = be->local_variable(func, "ac", at4, true, loc);
+  std::vector<unsigned long> indexes3 = { 1 };
+  std::vector<Bexpression *> vals3;
+  vals3.push_back(be->var_expression(z, VE_rvalue, loc));
+  Bexpression *arcon3 =
+    be->array_constructor_expression(at4, indexes3, vals3, loc);
+  Bstatement *is3 = be->init_statement(ac, arcon3);
+  addStmtToBlock(be.get(), block, is3);
+
   // return 10101
   std::vector<Bexpression *> vals;
   vals.push_back(mkInt64Const(be.get(), 10101));
@@ -546,6 +557,15 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
   const char *exp = R"RAW_RESULT(
     store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
     store [4 x i64] [i64 0, i64 0, i64 3, i64 0], [4 x i64]* %ab
+    %index.0 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 0
+    store i64 0, i64* %index.0
+    %index.1 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 1
+    %z.ld.0 = load i64, i64* %z
+    store i64 %z.ld.0, i64* %index.1
+    %index.2 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 2
+    store i64 0, i64* %index.2
+    %index.3 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 3
+    store i64 0, i64* %index.3
     ret i64 10101
   )RAW_RESULT";
 
@@ -559,6 +579,5 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
   bool broken = llvm::verifyModule(be->module(), &dbgs());
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
-
 
 }
