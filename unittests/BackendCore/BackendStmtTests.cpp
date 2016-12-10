@@ -73,7 +73,7 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
             store i64 %loc1.ld.0, i64* %loc2
    )RAW_RESULT";
   std::string reason;
-  bool equal = difftokens(tokenize(exp), tokenize(repr(as2)), reason);
+  bool equal = difftokens(exp, repr(as2), reason);
   EXPECT_EQ("pass", equal ? "pass" : reason);
 
   // error handling

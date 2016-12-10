@@ -257,7 +257,7 @@ TEST(BackendExprTests, TestCompareOps) {
     )RAW_RESULT";
 
   std::string reason;
-  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  bool equal = difftokens(exp, repr(block), reason);
   EXPECT_EQ("pass", equal ? "pass" : reason);
 
   be->function_set_body(func, block);
@@ -304,7 +304,7 @@ TEST(BackendExprTests, TestArithOps) {
   )RAW_RESULT";
 
   std::string reason;
-  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  bool equal = difftokens(exp, repr(block), reason);
   EXPECT_EQ("pass", equal ? "pass" : reason);
 
   be->function_set_body(func, block);
@@ -356,7 +356,7 @@ TEST(BackendExprTests, TestMoreArith) {
   )RAW_RESULT";
 
   std::string reason;
-  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  bool equal = difftokens(exp, repr(block), reason);
   EXPECT_EQ("pass", equal ? "pass" : reason);
 
   be->function_set_body(func, block);
@@ -431,7 +431,7 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
     )RAW_RESULT";
 
   std::string reason;
-  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  bool equal = difftokens(exp, repr(block), reason);
   EXPECT_EQ("pass", equal ? "pass" : reason);
 
   be->function_set_body(func, block);
@@ -498,7 +498,7 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   )RAW_RESULT";
 
   std::string reason;
-  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  bool equal = difftokens(exp, repr(block), reason);
   EXPECT_EQ("pass", equal ? "pass" : reason);
 
   be->function_set_body(func, block);
@@ -572,7 +572,7 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
   std::cerr << repr(block);
 
   std::string reason;
-  bool equal = difftokens(tokenize(exp), tokenize(repr(block)), reason);
+  bool equal = difftokens(exp, repr(block), reason);
   EXPECT_EQ("pass", equal ? "pass" : reason);
 
   be->function_set_body(func, block);

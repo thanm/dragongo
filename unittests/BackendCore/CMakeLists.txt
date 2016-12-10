@@ -22,7 +22,9 @@ set(BackendCoreSources
   BackendFcnTests.cpp
   BackendStmtTests.cpp
   BackendVarTests.cpp
+  BackendTreeIntegrity.cpp
   LinemapTests.cpp
+  TestUtilsTest.cpp
   TestUtils.cpp
   )
 
