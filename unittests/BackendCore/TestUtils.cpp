@@ -41,8 +41,11 @@ std::string vectostr(const std::vector<std::string> &tv) {
   return ss.str();
 }
 
-bool difftokens(const std::vector<std::string> &expv,
-                const std::vector<std::string> &resv, std::string &diffreason) {
+bool difftokens(const std::string &expected, const std::string &result,
+                std::string &diffreason)
+{
+  std::vector<std::string> expv = tokenize(expected);
+  std::vector<std::string> resv = tokenize(result);
   std::stringstream ss;
   if (expv.size() != resv.size()) {
     ss << "lengths differ (" << expv.size() << " vs " << resv.size()
@@ -68,6 +71,25 @@ bool difftokens(const std::vector<std::string> &expv,
     }
   }
   return true;
+}
+
+bool containstokens(const std::string &text, const std::string &pat)
+{
+  std::vector<std::string> textToks = tokenize(text);
+  std::vector<std::string> patToks = tokenize(pat);
+  for (unsigned ti = 0; ti < textToks.size(); ++ti) {
+    bool failed = false;
+    for (unsigned tic = ti, pi = 0; pi < patToks.size(); ++pi, ++tic) {
+      if (tic >= textToks.size() || patToks[pi] != textToks[tic]) {
+        failed = true;
+        break;
+      }
+    }
+    if (failed)
+      continue;
+    return true;
+  }
+  return false;
 }
 
 std::string repr(llvm::Value *val) {

@@ -29,6 +29,9 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 
+#define CHKTREE(x) if (checkIntegrity_ && traceLevel()) \
+      enforce_tree_integrity(x)
+
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
 static void indent(unsigned ilevel) {
@@ -36,11 +39,24 @@ static void indent(unsigned ilevel) {
     std::cerr << " ";
 }
 
-void Btype::dump(unsigned ilevel) {
-  indent(ilevel);
+static void indent(llvm::raw_ostream &os, unsigned ilevel) {
+  for (unsigned i = 0; i < ilevel; ++i)
+    os << " ";
+}
+
+void Btype::dump()
+{
+  std::string s;
+  llvm::raw_string_ostream os(s);
+  osdump(os, 0);
+  std::cerr << os.str();
+}
+
+void Btype::osdump(llvm::raw_ostream &os, unsigned ilevel) {
+  indent(os, ilevel);
   if (isUnsigned())
-    std::cerr << "[uns] ";
-  type_->dump();
+    os << "[uns] ";
+  type_->print(os);
 }
 
 Bexpression::Bexpression(llvm::Value *value,
@@ -58,26 +74,43 @@ void Bexpression::destroy(Bexpression *expr, WhichDel which) {
     delete expr;
 }
 
-void Bexpression::dump(unsigned ilevel) {
-  indent(ilevel);
+void Bexpression::dump()
+{
+  std::string s;
+  llvm::raw_string_ostream os(s);
+  osdump(os, 0);
+  std::cerr << os.str();
+}
+
+void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel) {
   bool hitValue = false;
+  if (compositeInitPending()) {
+    indent(os, ilevel);
+    os << "composite init:\n";
+    for (auto exp : elementExpressions())
+      exp->osdump(os, ilevel+2);
+  }
   for (auto inst : instructions()) {
-    indent(ilevel);
+    indent(os, ilevel);
+    char c = ' ';
     if (inst == value()) {
-      std::cerr << "*";
+      c = '*';
       hitValue = true;
     }
-    inst->dump();
+    os << c;
+    inst->print(os);
+    os << "\n";
   }
   if (!hitValue) {
-    indent(ilevel);
+    indent(os, ilevel);
     if (value())
-      value()->dump();
+      value()->print(os);
     else
-      std::cerr << "<nil value>";
+      os << "<nil value>";
+    os << "\n";
   }
   if (varPending())
-    std::cerr << "pending: level=" << addrLevel() << "\n";
+    os << "pending: level=" << addrLevel() << "\n";
 }
 
 ExprListStatement *Bstatement::stmtFromExpr(Bexpression *expr) {
@@ -86,59 +119,71 @@ ExprListStatement *Bstatement::stmtFromExpr(Bexpression *expr) {
   return st;
 }
 
-void Bstatement::dump(unsigned ilevel) {
+void Bstatement::dump() {
+  std::string s;
+  llvm::raw_string_ostream os(s);
+  osdump(os, 0);
+  std::cerr << os.str();
+}
+
+void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel)
+{
   switch (flavor()) {
   case ST_Compound: {
     CompoundStatement *cst = castToCompoundStatement();
-    indent(ilevel);
-    std::cerr << "{\n";
+    indent(os, ilevel);
+    os << "{\n";
     for (auto st : cst->stlist())
-      st->dump(ilevel + 2);
-    indent(ilevel);
-    std::cerr << "}\n";
+      st->osdump(os, ilevel + 2);
+    indent(os, ilevel);
+    os << "}\n";
     break;
   }
   case ST_ExprList: {
     ExprListStatement *elst = castToExprListStatement();
+    indent(os, ilevel);
+    os << "[\n";
     for (auto expr : elst->expressions()) {
-      expr->dump(ilevel + 2);
+      expr->osdump(os, ilevel + 2);
     }
+    indent(ilevel);
+    os << "]\n";
     break;
   }
   case ST_IfPlaceholder: {
     IfPHStatement *ifst = castToIfPHStatement();
     indent(ilevel);
-    std::cerr << "if:\n";
+    os << "if:\n";
     indent(ilevel + 2);
-    std::cerr << "cond:\n";
-    ifst->cond()->dump(ilevel + 2);
+    os << "cond:\n";
+    ifst->cond()->osdump(os, ilevel + 2);
     if (ifst->trueStmt()) {
-      indent(ilevel + 2);
-      std::cerr << "then:\n";
-      ifst->trueStmt()->dump(ilevel + 2);
+      indent(os, ilevel + 2);
+      os << "then:\n";
+      ifst->trueStmt()->osdump(os, ilevel + 2);
     }
     if (ifst->falseStmt()) {
-      indent(ilevel + 2);
-      std::cerr << "else:\n";
-      ifst->falseStmt()->dump(ilevel + 2);
+      indent(os, ilevel + 2);
+      os << "else:\n";
+      ifst->falseStmt()->osdump(os, ilevel + 2);
     }
     break;
   }
   case ST_Goto: {
     GotoStatement *gst = castToGotoStatement();
-    indent(ilevel);
-    std::cerr << "goto L" << gst->targetLabel() << "\n";
+    indent(os, ilevel);
+    os << "goto L" << gst->targetLabel() << "\n";
     break;
   }
   case ST_Label: {
     LabelStatement *lbst = castToLabelStatement();
-    indent(ilevel);
-    std::cerr << "label L" << lbst->definedLabel() << "\n";
+    indent(os, ilevel);
+    os << "label L" << lbst->definedLabel() << "\n";
     break;
   }
 
   case ST_SwitchPlaceholder:
-    std::cerr << "not yet implemented\n";
+    os << "not yet implemented\n";
     break;
   }
 }
@@ -182,6 +227,229 @@ void Bstatement::destroy(Bstatement *stmt, WhichDel which) {
   }
   if (which != DelInstructions)
     delete stmt;
+}
+
+class IntegrityVisitor {
+ public:
+  IntegrityVisitor(const Llvm_backend *be, bool incPtrs)
+      : be_(be), ss_(str_), includePointers_(incPtrs) { }
+
+  bool visit(Bexpression *e);
+  bool visit(Bstatement *e);
+  std::string msg() { return ss_.str(); }
+
+ private:
+  const Llvm_backend *be_;
+  std::unordered_map<llvm::Instruction *, Bexpression *> iparent_;
+  std::unordered_map<Bstatement *, Bstatement *> sparent_;
+  typedef std::pair<Bexpression *, Bstatement *> eors;
+  std::unordered_map<Bexpression *, eors> eparent_;
+  std::string str_;
+  llvm::raw_string_ostream ss_;
+  bool includePointers_;
+
+ private:
+  bool setParent(Bexpression *child, const eors &parent);
+  bool setParent(llvm::Instruction *inst, Bexpression *exprParent);
+  bool setParent(Bstatement *child, Bstatement *parent);
+  eors makeExprParent(Bexpression *expr);
+  eors makeStmtParent(Bstatement *stmt);
+  void dumpTag(const char *tag, void *ptr);
+  void dump(Bexpression *expr);
+  void dump(Bstatement *stmt);
+  void dump(llvm::Instruction *inst);
+  void dump(const eors &pair);
+};
+
+IntegrityVisitor::eors IntegrityVisitor::makeExprParent(Bexpression *expr) {
+  Bstatement *stmt = nullptr;
+  eors rval(std::make_pair(expr, stmt));
+  return rval;
+}
+
+IntegrityVisitor::eors IntegrityVisitor::makeStmtParent(Bstatement *stmt) {
+  Bexpression *expr = nullptr;
+  eors rval(std::make_pair(expr, stmt));
+  return rval;
+}
+
+void IntegrityVisitor::dumpTag(const char *tag, void *ptr) {
+  ss_ << tag << ": ";
+  if (includePointers_)
+    ss_ << ptr;
+  ss_ << "\n";
+}
+
+void IntegrityVisitor::dump(Bexpression *expr) {
+  dumpTag("expr", (void*) expr);
+  expr->osdump(ss_, 0);
+}
+
+void IntegrityVisitor::dump(Bstatement *stmt) {
+  dumpTag("stmt", (void*) stmt);
+  stmt->osdump(ss_, 0);
+}
+
+void IntegrityVisitor::dump(llvm::Instruction *inst) {
+  dumpTag("inst", (void*) inst);
+  inst->print(ss_);
+  ss_ << "\n";
+}
+
+void IntegrityVisitor::dump(const IntegrityVisitor::eors &pair) {
+  Bexpression *expr = pair.first;
+  Bstatement *stmt = pair.second;
+  if (expr)
+    dump(expr);
+  else
+    dump(stmt);
+}
+
+bool IntegrityVisitor::setParent(Bstatement *child, Bstatement *parent)
+{
+  auto it = sparent_.find(child);
+  if (it != sparent_.end()) {
+    ss_ << "error: statement has multiple parents\n";
+    ss_ << "child stmt:\n";
+    dump(child);
+    ss_ << "parent 1:\n";
+    dump(it->second);
+    ss_ << "parent 2:\n";
+    dump(parent);
+    return false;
+  }
+  sparent_[child] = parent;
+  return true;
+}
+
+bool IntegrityVisitor::setParent(Bexpression *child, const eors &parent)
+{
+  if (be_->moduleScopeValue(child->value(), child->btype()))
+    return true;
+  auto it = eparent_.find(child);
+  if (it != eparent_.end()) {
+    ss_ << "error: expression has multiple parents\n";
+    ss_ << "child expr:\n";
+    dump(child);
+    ss_ << "parent 1:\n";
+    dump(it->second);
+    ss_ << "parent 2:\n";
+    dump(parent);
+    return false;
+  }
+  eparent_[child] = parent;
+  return true;
+}
+
+bool IntegrityVisitor::setParent(llvm::Instruction *inst,
+                                 Bexpression *exprParent)
+{
+  auto it = iparent_.find(inst);
+  if (it != iparent_.end() && exprParent != it->second) {
+    ss_ << "error: instruction has multiple parents\n";
+    dump(inst);
+    ss_ << "parent 1:\n";
+    dump(it->second);
+    ss_ << "parent 2:\n";
+    dump(exprParent);
+    return false;
+  }
+  iparent_[inst] = exprParent;
+  return true;
+}
+
+bool IntegrityVisitor::visit(Bexpression *expr)
+{
+  bool rval = true;
+  if (expr->compositeInitPending()) {
+    eors parthis = makeExprParent(expr);
+    for (auto initval : expr->elementExpressions())
+      rval = (setParent(initval, parthis) && rval);
+  }
+  for (auto inst : expr->instructions())
+    rval = (setParent(inst, expr) && rval);
+  return rval;
+}
+
+bool IntegrityVisitor::visit(Bstatement *stmt)
+{
+  bool rval = true;
+  switch (stmt->flavor()) {
+    case Bstatement::ST_Compound: {
+      CompoundStatement *cst = stmt->castToCompoundStatement();
+      for (auto st : cst->stlist())
+        rval = (visit(st) && rval);
+      for (auto st : cst->stlist())
+        rval = (setParent(st, cst) && rval);
+      break;
+    }
+    case Bstatement::ST_ExprList: {
+      ExprListStatement *elst = stmt->castToExprListStatement();
+      for (auto expr : elst->expressions()) {
+        rval = (visit(expr) && rval);
+        eors stparent(std::make_pair(nullptr, elst));
+        rval = (setParent(expr, stparent) && rval);
+      }
+      break;
+    }
+    case Bstatement::ST_IfPlaceholder: {
+      IfPHStatement *ifst = stmt->castToIfPHStatement();
+      eors stparent(std::make_pair(nullptr, ifst));
+      rval = (visit(ifst->cond()) && rval);
+      rval = (setParent(ifst->cond(), stparent) && rval);
+      if (ifst->trueStmt()) {
+        rval = (visit(ifst->trueStmt()) && rval);
+        rval = (setParent(ifst->trueStmt(), ifst) && rval);
+      }
+      if (ifst->falseStmt()) {
+        rval = (visit(ifst->falseStmt()) && rval);
+        rval = (setParent(ifst->falseStmt(), ifst) && rval);
+      }
+      break;
+    }
+    case Bstatement::ST_Label:
+    case Bstatement::ST_Goto:
+      // not interesting
+      break;
+    case Bstatement::ST_SwitchPlaceholder:
+      assert(false && "not yet implemented\n");
+      break;
+  }
+  return rval;
+}
+
+std::pair<bool, std::string>
+Llvm_backend::check_tree_integrity(Bexpression *e, bool includePointers)
+{
+  IntegrityVisitor iv(this, includePointers);
+  bool rval = iv.visit(e);
+  return std::make_pair(rval, iv.msg());
+}
+
+std::pair<bool, std::string>
+Llvm_backend::check_tree_integrity(Bstatement *s, bool includePointers)
+{
+  IntegrityVisitor iv(this, includePointers);
+  bool rval = iv.visit(s);
+  return std::make_pair(rval, iv.msg());
+}
+
+void Llvm_backend::enforce_tree_integrity(Bexpression *e)
+{
+  IntegrityVisitor iv(this, true);
+  if (! iv.visit(e)) {
+    std::cerr << iv.msg() << "\n";
+    assert(false);
+  }
+}
+
+void Llvm_backend::enforce_tree_integrity(Bstatement *s)
+{
+  IntegrityVisitor iv(this, true);
+  if (! iv.visit(s)) {
+    std::cerr << iv.msg() << "\n";
+    assert(false);
+  }
 }
 
 Bfunction::Bfunction(llvm::Function *f)
@@ -270,6 +538,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     , datalayout_(module_->getDataLayout())
     , addressSpace_(0)
     , traceLevel_(0)
+    , checkIntegrity_(true)
     , complexFloatType_(nullptr)
     , complexDoubleType_(nullptr)
     , errorType_(nullptr)
@@ -1031,6 +1300,20 @@ void Llvm_backend::defineSyncFetchAndAddBuiltins() {
   }
 }
 
+// Strictly for unit testing
+bool Llvm_backend::moduleScopeValue(llvm::Value *val, Btype *btype) const
+{
+  valbtype vbt(std::make_pair(val, btype));
+  return (valueExprmap_.find(vbt) != valueExprmap_.end());
+}
+
+// Strictly for unit testing
+void Llvm_backend::detachBexpression(Bexpression *victim)
+{
+  expressions_.erase(std::remove(expressions_.begin(),
+                                 expressions_.end(), victim));
+}
+
 Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val, Btype *btype,
                                                ValExprScope scope) {
   assert(val || scope == LocalScope);
@@ -1393,7 +1676,11 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
                                               Location location) {
   if (type == errorType_ || expr == errorExpression_.get())
     return errorExpression_.get();
+  if (expr->btype() == type)
+    return expr;
+
   // no real implementation yet
+  assert(expr->value());
   assert(type->type() == expr->value()->getType());
   return expr;
 }
@@ -1765,6 +2052,7 @@ Bstatement *Llvm_backend::expression_statement(Bfunction *bfunction,
     return errorStatement_.get();
   ExprListStatement *els = new ExprListStatement();
   els->appendExpression(resolve(expr, bfunction));
+  CHKTREE(els);
   return els;
 }
 
@@ -1777,10 +2065,13 @@ Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
     init = resolveCompositeInit(init, nullptr, var->value());
     ExprListStatement *els = new ExprListStatement();
     els->appendExpression(init);
+    CHKTREE(els);
     return els;
   }
   init = resolveVarContext(init);
-  return makeAssignment(var->value(), nullptr, init, Location());
+  Bstatement *st = makeAssignment(var->value(), nullptr, init, Location());
+  CHKTREE(st);
+  return st;
 }
 
 Bexpression *Llvm_backend::makeExpression(llvm::Instruction *value,
@@ -1830,7 +2121,9 @@ Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
   if (rhs->compositeInitPending())
     rhs = resolveCompositeInit(rhs, nullptr, lhs->value());
   rhs = resolveVarContext(rhs);
-  return makeAssignment(lhs->value(), lhs, rhs, location);
+  Bstatement *st = makeAssignment(lhs->value(), lhs, rhs, location);
+  CHKTREE(st);
+  return st;
 }
 
 Bstatement *
@@ -1885,6 +2178,7 @@ Bstatement *Llvm_backend::if_statement(Bfunction *bfunction,
   assert(then_block);
   IfPHStatement *ifst =
       new IfPHStatement(condition, then_block, else_block, location);
+  CHKTREE(ifst);
   return ifst;
 }
 
@@ -1905,6 +2199,7 @@ Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
   std::vector<Bstatement *> &stlist = st->stlist();
   stlist.push_back(s1);
   stlist.push_back(s2);
+  CHKTREE(st);
   return st;
 }
 
@@ -2464,6 +2759,10 @@ bool Llvm_backend::function_set_body(Bfunction *function,
     std::cerr << "Statement tree dump:\n";
     code_stmt->dump();
   }
+
+  // Sanity checks
+  if (checkIntegrity_)
+    enforce_tree_integrity(code_stmt);
 
   // Create and populate entry block
   llvm::BasicBlock *entryBlock = genEntryBlock(function);

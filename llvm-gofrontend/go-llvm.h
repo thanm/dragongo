@@ -34,6 +34,7 @@ class Module;
 class TargetLibraryInfo;
 class Type;
 class Value;
+class raw_ostream;
 }
 
 #include "llvm/IR/GlobalValue.h"
@@ -51,7 +52,10 @@ public:
   void setUnsigned() { isUnsigned_ = true; }
 
   // debugging
-  void dump(unsigned ilevel = 0);
+  void dump();
+
+  // dump to raw ostream buffer
+  void osdump(llvm::raw_ostream &os, unsigned ilevel);
 
  private:
   Btype() : type_(NULL) {}
@@ -222,7 +226,10 @@ public:
   static void destroy(Bexpression *expr, WhichDel which = DelWrappers);
 
   // debugging
-  void dump(unsigned ilevel = 0);
+  void dump();
+
+  // dump to raw_ostream
+  void osdump(llvm::raw_ostream &os, unsigned ilevel);
 
   void finishCompositeInit(llvm::Value *finalizedValue) {
     assert(value_ == nullptr);
@@ -302,9 +309,12 @@ public:
   static void destroy(Bstatement *subtree, WhichDel which = DelWrappers);
 
   // debugging
-  void dump(unsigned ident = 0);
+  void dump();
 
-private:
+  // dump to raw_ostream
+  void osdump(llvm::raw_ostream &os, unsigned ilevel);
+
+ private:
   StFlavor flavor_;
   Location location_;
 };
@@ -791,6 +801,32 @@ public:
   // Exposed for unit testing
   llvm::Module &module() { return *module_.get(); }
 
+  // Exposed for unit testing
+
+  // Helpers to check tree integrity. Checks to make sure that
+  // we don't have instructions that are parented by more than
+  // one Bexpression or stmt. Returns <TRUE,""> if tree is ok,
+  // otherwise returns <FALSE,descriptive_message>.
+  std::pair<bool, std::string>
+  check_tree_integrity(Bexpression *e, bool includePointers = true);
+  std::pair<bool, std::string>
+  check_tree_integrity(Bstatement *s,  bool includePointers = true);
+
+  // Similar to the above, but prints message to std::cerr and aborts if fail
+  void enforce_tree_integrity(Bexpression *e);
+  void enforce_tree_integrity(Bstatement *s);
+
+  // Disable tree integrity checking. This is mainly
+  // so that we can unit test the integrity checker.
+  void disableIntegrityChecks() { checkIntegrity_ = false; }
+
+  // Needed for unit testing integrity checks-- cleans duplicates
+  // from the internal expressions list.  Not for general-purpose use.
+  void detachBexpression(Bexpression *victm);
+
+  // Return true if this is a module-scope value such as a constant
+  bool moduleScopeValue(llvm::Value *val, Btype *btype) const;
+
   // For debugging
   void setTraceLevel(unsigned level) { traceLevel_ = level; }
   unsigned traceLevel() const { return traceLevel_; }
@@ -983,6 +1019,7 @@ private:
   const llvm::DataLayout &datalayout_;
   unsigned addressSpace_;
   unsigned traceLevel_;
+  bool checkIntegrity_;
 
   // Data structures to record types that are being manfactured.
 
