@@ -449,16 +449,52 @@ void Llvm_backend::enforce_tree_integrity(Bstatement *s)
 }
 
 Bfunction::Bfunction(llvm::Function *f)
-    : function_(f), labelcount_(0), splitstack_(YesSplit) {}
+    : function_(f), labelCount_(0), splitStack_(YesSplit) {}
 
 Bfunction::~Bfunction() {
-  // Needed mainly for unit testing
   for (auto ais : allocas_)
     delete ais;
-  for (auto &kv : argtoval_)
+  for (auto &kv : argToVal_)
     delete kv.second;
   for (auto &lab : labels_)
     delete lab;
+  for (auto &kv : valueVarMap_)
+    delete kv.second;
+}
+
+Bvariable *Bfunction::parameter_variable(const std::string &name,
+                                         Btype *btype, bool is_address_taken,
+                                         Location location) {
+  // Collect argument pointer
+  unsigned argIdx = paramsCreated();
+  llvm::Argument *arg = getNthArg(argIdx);
+  assert(arg);
+
+  // Set name
+  arg->setName(name);
+
+  // Create the alloca slot where we will spill this argument
+  llvm::Instruction *inst = argValue(arg);
+  assert(valueVarMap_.find(inst) == valueVarMap_.end());
+  Bvariable *bv =
+      new Bvariable(btype, location, name, ParamVar, is_address_taken, inst);
+  valueVarMap_[inst] = bv;
+  return bv;
+}
+
+Bvariable *Bfunction::local_variable(const std::string &name,
+                                     Btype *btype,
+                                     bool is_address_taken,
+                                     Location location) {
+  llvm::Instruction *inst = new llvm::AllocaInst(btype->type(), name);
+  // inst->setDebugLoc(location.debug_location());
+  addAlloca(inst);
+  Bvariable *bv =
+      new Bvariable(btype, location, name, LocalVar, is_address_taken, inst);
+
+  assert(valueVarMap_.find(bv->value()) == valueVarMap_.end());
+  valueVarMap_[bv->value()] = bv;
+  return bv;
 }
 
 llvm::Argument *Bfunction::getNthArg(unsigned argIdx) {
@@ -470,9 +506,23 @@ llvm::Argument *Bfunction::getNthArg(unsigned argIdx) {
   return arguments_[argIdx];
 }
 
+Bvariable *Bfunction::getBvarForValue(llvm::Value *val)
+{
+  auto it = valueVarMap_.find(val);
+  assert(it != valueVarMap_.end());
+  return it->second;
+}
+
+llvm::Value *Bfunction::getNthArgValue(unsigned argIdx)
+{
+  llvm::Argument *arg = getNthArg(argIdx);
+  llvm::Value *llval = argValue(arg);
+  return llval;
+}
+
 llvm::Instruction *Bfunction::argValue(llvm::Argument *arg) {
-  auto it = argtoval_.find(arg);
-  if (it != argtoval_.end())
+  auto it = argToVal_.find(arg);
+  if (it != argToVal_.end())
     return it->second;
 
   // Create alloca save area for argument, record that and return
@@ -480,8 +530,8 @@ llvm::Instruction *Bfunction::argValue(llvm::Argument *arg) {
   std::string aname(arg->getName());
   aname += ".addr";
   llvm::Instruction *inst = new llvm::AllocaInst(arg->getType(), aname);
-  assert(argtoval_.find(arg) == argtoval_.end());
-  argtoval_[arg] = inst;
+  assert(argToVal_.find(arg) == argToVal_.end());
+  argToVal_[arg] = inst;
   return inst;
 }
 
@@ -497,7 +547,7 @@ void Bfunction::genProlog(llvm::BasicBlock *entry) {
     llvm::Instruction *si = new llvm::StoreInst(arg, inst);
     spills.push_back(si);
   }
-  argtoval_.clear();
+  argToVal_.clear();
 
   // Append allocas for local variables
   for (auto aa : allocas_)
@@ -510,7 +560,7 @@ void Bfunction::genProlog(llvm::BasicBlock *entry) {
 }
 
 Blabel *Bfunction::newLabel() {
-  Blabel *lb = new Blabel(this, labelcount_++);
+  Blabel *lb = new Blabel(this, labelCount_++);
   labelmap_.push_back(nullptr);
   labels_.push_back(lb);
   return lb;
@@ -612,7 +662,7 @@ Llvm_backend::~Llvm_backend() {
     delete kv.second;
   for (auto &kv : valueExprmap_)
     delete kv.second;
-  for (auto &kv : valueVarmap_)
+  for (auto &kv : valueVarMap_)
     delete kv.second;
   for (auto &kv : namedTypemap_)
     delete kv.second;
@@ -752,9 +802,9 @@ Btype *Llvm_backend::struct_type(const std::vector<Btyped_identifier> &fields) {
   if (isNew) {
     for (unsigned i = 0; i < fields.size(); ++i) {
       structplusindextype spi(std::make_pair(st, i));
-      auto it = fieldmap_.find(spi);
-      assert(it == fieldmap_.end());
-      fieldmap_[spi] = fields[i].btype;
+      auto it = fieldTypeMap_.find(spi);
+      assert(it == fieldTypeMap_.end());
+      fieldTypeMap_[spi] = fields[i].btype;
     }
   }
   return st;
@@ -868,14 +918,22 @@ Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
   return ar_btype;
 }
 
-Btype *Llvm_backend::fieldTypeByIndex(Btype *type, unsigned field_index)
+Btype *Llvm_backend::elementTypeByIndex(Btype *btype, unsigned field_index)
 {
-  structplusindextype spi(std::make_pair(type, field_index));
-  auto it = fieldmap_.find(spi);
-  assert(it != fieldmap_.end());
-  return it->second;
+  assert(btype);
+  if (btype->type()->isStructTy()) {
+    structplusindextype spi(std::make_pair(btype, field_index));
+    auto it = fieldTypeMap_.find(spi);
+    assert(it != fieldTypeMap_.end());
+    return it->second;
+  } else {
+    auto it = arrayElemTypeMap_.find(btype);
+    assert(it != arrayElemTypeMap_.end());
+    return it->second;
+  }
 }
 
+#if 0
 Btype *Llvm_backend::elementType(Btype *artype)
 {
   assert(artype);
@@ -883,6 +941,7 @@ Btype *Llvm_backend::elementType(Btype *artype)
   assert(it != arrayElemTypeMap_.end());
   return it->second;
 }
+#endif
 
 // LLVM doesn't directly support placeholder types other than opaque
 // structs, so the general strategy for placeholders is to create an
@@ -1465,6 +1524,7 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
     expr->appendInstruction(gep);
 
     // Store value into gep
+    assert(fexprs[fidx]);
     Bexpression *valexp = resolveVarContext(fexprs[fidx]);
     for (auto inst : valexp->instructions()) {
       assert(inst->getParent() == nullptr);
@@ -1727,7 +1787,7 @@ Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
       makeFieldGEP(llst, index, bstruct->value());
 
   // Wrap in a Bexpression
-  Btype *bft = fieldTypeByIndex(bstruct->btype(), index);
+  Btype *bft = elementTypeByIndex(bstruct->btype(), index);
   Bexpression *rval = makeValueExpression(gep, bft, LocalScope);
   rval->appendInstruction(gep);
   if (bstruct->varPending())
@@ -1902,68 +1962,108 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
   return nullptr;
 }
 
+
 // Return an expression that constructs BTYPE with VALS.
 
 Bexpression *Llvm_backend::constructor_expression(
     Btype *btype, const std::vector<Bexpression *> &vals, Location location) {
-  assert(false && "Llvm_backend::constructor_expression not yet impl");
-  return nullptr;
+  if (btype == errorType_)
+    return errorExpression_.get();
+
+  llvm::Type *llt = btype->type();
+  assert(llt->isStructTy());
+  llvm::StructType *llst = llvm::cast<llvm::StructType>(llt);
+
+  // Not sure if we can count on this, may have to take it out
+  unsigned numElements = llst->getNumElements();
+  assert(vals.size() == numElements);
+
+  // Constant values?
+  bool isConstant = true;
+  std::vector<unsigned long> indexes;
+  for (auto val : vals) {
+    if (val == errorExpression_.get())
+      return errorExpression_.get();
+    if (!llvm::isa<llvm::Constant>(val->value())) {
+      isConstant = false;
+      break;
+    }
+  }
+  for (unsigned ii = 0; ii < vals.size(); ++ii)
+    indexes.push_back(ii);
+  if (isConstant)
+    return makeConstCompositeExpr(btype, llst, numElements,
+                                  indexes, vals, location);
+  else
+    return makeDelayedCompositeExpr(btype, llst, numElements,
+                                    indexes, vals, location);
+
 }
 
 Bexpression *
-Llvm_backend::makeDelayedArrayExpr(Btype *artype, llvm::ArrayType *llat,
-                                   const std::vector<unsigned long> &indexes,
-                                   const std::vector<Bexpression *> &vals,
-                                   Location location) {
-  unsigned long nel = llat->getNumElements();
+Llvm_backend::makeDelayedCompositeExpr(Btype *btype,
+                                       llvm::CompositeType *llct,
+                                       unsigned numElements,
+                                       const std::vector<unsigned long> &indexes,
+                                       const std::vector<Bexpression *> &vals,
+                                       Location location) {
   unsigned long nvals = vals.size();
   std::set<unsigned long> touched;
-  std::vector<Bexpression *> init_vals(nel);
+  std::vector<Bexpression *> init_vals(numElements);
   for (unsigned ii = 0; ii < indexes.size(); ++ii) {
     auto idx = indexes[ii];
-    if (nel != nvals)
+    if (numElements != nvals)
       touched.insert(idx);
     init_vals[idx] = vals[ii];
   }
-  if (nel != nvals) {
-    Btype *bElemTyp = elementType(artype);
-    for (unsigned long ii = 0; ii < nel; ++ii) {
+  if (numElements != nvals) {
+    for (unsigned long ii = 0; ii < numElements; ++ii) {
+      Btype *bElemTyp = elementTypeByIndex(btype, ii);
       if (touched.find(ii) == touched.end())
         init_vals[ii] = zero_expression(bElemTyp);
     }
   }
   llvm::Value *nilval = nullptr;
-  Bexpression *arcon = makeValueExpression(nilval, artype, LocalScope);
-  arcon->setCompositeInit(init_vals, artype);
-  return arcon;
+  Bexpression *ccon = makeValueExpression(nilval, btype, LocalScope);
+  ccon->setCompositeInit(init_vals, btype);
+  return ccon;
 }
 
 Bexpression *
-Llvm_backend::makeConstArrayExpr(Btype *array_btype, llvm::ArrayType *llat,
-                                 const std::vector<unsigned long> &indexes,
-                                 const std::vector<Bexpression *> &vals,
-                                 Location location) {
-  unsigned long nel = llat->getNumElements();
+Llvm_backend::makeConstCompositeExpr(Btype *btype,
+                                     llvm::CompositeType *llct,
+                                     unsigned numElements,
+                                     const std::vector<unsigned long> &indexes,
+                                     const std::vector<Bexpression *> &vals,
+                                     Location location) {
   unsigned long nvals = vals.size();
   std::set<unsigned long> touched;
-  llvm::SmallVector<llvm::Constant *, 64> llvals(nel);
+  llvm::SmallVector<llvm::Constant *, 64> llvals(numElements);
   for (unsigned ii = 0; ii < indexes.size(); ++ii) {
     auto idx = indexes[ii];
-    if (nel != nvals)
+    if (numElements != nvals)
       touched.insert(idx);
     Bexpression *bex = vals[ii];
     llvm::Constant *con = llvm::cast<llvm::Constant>(bex->value());
     llvals[idx] = con;
   }
-  if (nel != nvals) {
-    llvm::Type *elt = llat->getElementType();
-    for (unsigned long ii = 0; ii < nel; ++ii) {
-      if (touched.find(ii) == touched.end())
+  if (numElements != nvals) {
+    for (unsigned long ii = 0; ii < numElements; ++ii) {
+      if (touched.find(ii) == touched.end()) {
+        llvm::Type *elt = llct->getTypeAtIndex(ii);
         llvals[ii] = llvm::Constant::getNullValue(elt);
+      }
     }
   }
-  llvm::Value *arcon = llvm::ConstantArray::get(llat, llvals);
-  Bexpression *bcon = makeValueExpression(arcon, array_btype, GlobalScope);
+  llvm::Value *scon;
+  if (llct->isStructTy()) {
+    llvm::StructType *llst = llvm::cast<llvm::StructType>(llct);
+    scon = llvm::ConstantStruct::get(llst, llvals);
+  } else {
+    llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(llct);
+    scon = llvm::ConstantArray::get(llat, llvals);
+  }
+  Bexpression *bcon = makeValueExpression(scon, btype, GlobalScope);
   return bcon;
 }
 
@@ -1976,6 +2076,7 @@ Bexpression *Llvm_backend::array_constructor_expression(
   llvm::Type *llt = array_btype->type();
   assert(llt->isArrayTy());
   llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(llt);
+  unsigned numElements = llat->getNumElements();
 
   // frontend should be enforcing this
   assert(indexes.size() == vals.size());
@@ -1991,9 +2092,11 @@ Bexpression *Llvm_backend::array_constructor_expression(
     }
   }
   if (isConstant)
-    return makeConstArrayExpr(array_btype, llat, indexes, vals, location);
+    return makeConstCompositeExpr(array_btype, llat, numElements,
+                                  indexes, vals, location);
   else
-    return makeDelayedArrayExpr(array_btype, llat, indexes, vals, location);
+    return makeDelayedCompositeExpr(array_btype, llat, numElements,
+                                    indexes, vals, location);
 }
 
 // Return an expression for the address of BASE[INDEX].
@@ -2282,8 +2385,8 @@ Llvm_backend::makeModuleVar(Btype *btype,
   bool addressTaken = true; // for now
   Bvariable *bv =
       new Bvariable(btype, location, name, GlobalVar, addressTaken, glob);
-  assert(valueVarmap_.find(bv->value()) == valueVarmap_.end());
-  valueVarmap_[bv->value()] = bv;
+  assert(valueVarMap_.find(bv->value()) == valueVarMap_.end());
+  valueVarMap_[bv->value()] = bv;
   return bv;
 }
 
@@ -2335,14 +2438,7 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
   assert(function);
   if (btype == errorType_ || function == error_function())
     return errorVariable_.get();
-  llvm::Instruction *inst = new llvm::AllocaInst(btype->type(), name);
-  // inst->setDebugLoc(location.debug_location());
-  function->addAlloca(inst);
-  Bvariable *bv =
-      new Bvariable(btype, location, name, LocalVar, is_address_taken, inst);
-  assert(valueVarmap_.find(bv->value()) == valueVarmap_.end());
-  valueVarmap_[bv->value()] = bv;
-  return bv;
+  return function->local_variable(name, btype, is_address_taken, location);
 }
 
 // Make a function parameter variable.
@@ -2354,22 +2450,8 @@ Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
   assert(function);
   if (btype == errorType_ || function == error_function())
     return errorVariable_.get();
-
-  // Collect argument pointer
-  unsigned argIdx = function->paramsCreated();
-  llvm::Argument *arg = function->getNthArg(argIdx);
-  assert(arg);
-
-  // Set name
-  arg->setName(name);
-
-  // Create the alloca slot where we will spill this argument
-  llvm::Instruction *inst = function->argValue(arg);
-  assert(valueVarmap_.find(inst) == valueVarmap_.end());
-  Bvariable *bv =
-      new Bvariable(btype, location, name, ParamVar, is_address_taken, inst);
-  valueVarmap_[inst] = bv;
-  return bv;
+  return function->parameter_variable(name, btype,
+                                      is_address_taken, location);
 }
 
 // Make a static chain variable.
@@ -2521,8 +2603,8 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
       *module_.get(), btype->type(), isConstant, linkage, init, asmname);
   Bvariable *bv =
       new Bvariable(btype, location, name, GlobalVar, false, glob);
-  assert(valueVarmap_.find(bv->value()) == valueVarmap_.end());
-  valueVarmap_[bv->value()] = bv;
+  assert(valueVarMap_.find(bv->value()) == valueVarMap_.end());
+  valueVarMap_[bv->value()] = bv;
   return bv;
 }
 

@@ -25,12 +25,14 @@
 
 namespace llvm {
 class Argument;
+class ArrayType;
 class BasicBlock;
 class DataLayout;
 class Function;
 class Instruction;
 class LLVMContext;
 class Module;
+class StructType;
 class TargetLibraryInfo;
 class Type;
 class Value;
@@ -466,23 +468,23 @@ public:
   llvm::Function *function() const { return function_; }
 
   enum SplitStackDisposition { YesSplit, NoSplit };
-  void setSplitStack(SplitStackDisposition disp) { splitstack_ = disp; }
-  SplitStackDisposition splitStack() const { return splitstack_; }
+  void setSplitStack(SplitStackDisposition disp) { splitStack_ = disp; }
+  SplitStackDisposition splitStack() const { return splitStack_; }
 
-  // Record an alloca() instruction, to be added to entry block
-  void addAlloca(llvm::Instruction *inst) { allocas_.push_back(inst); }
+  // Add a local variable
+  Bvariable *local_variable(const std::string &name,
+                            Btype *btype,
+                            bool is_address_taken,
+                            Location location);
+
+  // Add a parameter variable
+  Bvariable *parameter_variable(const std::string &name,
+                                Btype *btype,
+                                bool is_address_taken,
+                                Location location);
 
   // Record a new Bblock for this function (do we need this?)
   void addBlock(Bblock *block) { blocks_.push_back(block); }
-
-  // Collect Return nth argument
-  llvm::Argument *getNthArg(unsigned argIdx);
-
-  // Record a new function argument (for which we'll also add an alloca)
-  llvm::Instruction *argValue(llvm::Argument *);
-
-  // Number of parameter vars registered so far
-  unsigned paramsCreated() { return argtoval_.size(); }
 
   // Create a new label
   Blabel *newLabel();
@@ -497,16 +499,38 @@ public:
   // allocas for local variables.
   void genProlog(llvm::BasicBlock *entry);
 
+  // Map back from an LLVM value (argument, alloca) to the Bvariable
+  // we created to wrap it. Exposed for unit testing.
+  Bvariable *getBvarForValue(llvm::Value *val);
+
+  // Return Nth argument as llvm value. Exposed for unit testing.
+  llvm::Value *getNthArgValue(unsigned argIdx);
+
 private:
+
+  // Record an alloca() instruction, to be added to entry block
+  void addAlloca(llvm::Instruction *inst) { allocas_.push_back(inst); }
+
+  // Return Nth argument
+  llvm::Argument *getNthArg(unsigned argIdx);
+
+  // Return alloca inst holding argument value (create if needed)
+  llvm::Instruction *argValue(llvm::Argument *arg);
+
+  // Number of parameter vars registered so far
+  unsigned paramsCreated() { return argToVal_.size(); }
+
+ private:
   std::vector<llvm::Instruction *> allocas_;
   std::vector<llvm::Argument *> arguments_;
   std::vector<Bblock *> blocks_;
-  std::unordered_map<llvm::Argument *, llvm::Instruction *> argtoval_;
+  std::unordered_map<llvm::Value *, Bvariable *> valueVarMap_;
+  std::unordered_map<llvm::Argument *, llvm::Instruction *> argToVal_;
   std::vector<Bstatement *> labelmap_;
   std::vector<Blabel *> labels_;
   llvm::Function *function_;
-  unsigned labelcount_;
-  SplitStackDisposition splitstack_;
+  unsigned labelCount_;
+  SplitStackDisposition splitStack_;
 };
 
 // Back end variable class
@@ -842,11 +866,8 @@ private:
   // Create an opaque type for use as part of a placeholder type.
   llvm::Type *makeOpaqueLlvmType();
 
-  // Returns field type from struct type and index
-  Btype *fieldTypeByIndex(Btype *type, unsigned field_index);
-
-  // Returns array element type from array type
-  Btype *elementType(Btype *artype);
+  // Returns field type from composite (struct/array) type and index
+  Btype *elementTypeByIndex(Btype *type, unsigned element_index);
 
   // add a builtin function definition
   void defineBuiltinFcn(const char *name, const char *libname,
@@ -914,18 +935,21 @@ private:
                               Btype *btype,
                               Bexpression *src, ...);
 
-  // Constant array creation helper
-  Bexpression *makeConstArrayExpr(Btype *array_btype,
-                                  llvm::ArrayType *llat,
-                                  const std::vector<unsigned long> &indexes,
-                                  const std::vector<Bexpression *> &vals,
-                                  Location location);
+  // Helper for creating a constant-valued array/struct expression.
+  Bexpression *makeConstCompositeExpr(Btype *btype,
+                                      llvm::CompositeType *llct,
+                                      unsigned numElements,
+                                      const std::vector<unsigned long> &indexes,
+                                      const std::vector<Bexpression *> &vals,
+                                      Location location);
 
-  // Non-constant array value creation helper
-  Bexpression *makeDelayedArrayExpr(Btype *array_btype, llvm::ArrayType *llat,
-                                    const std::vector<unsigned long> &indexes,
-                                    const std::vector<Bexpression *> &vals,
-                                    Location location);
+  // Helper for creating a non-constant-valued array or struct expression.
+  Bexpression *makeDelayedCompositeExpr(Btype *btype,
+                                        llvm::CompositeType *llct,
+                                        unsigned numElements,
+                                        const std::vector<unsigned long> &idxs,
+                                        const std::vector<Bexpression *> &vals,
+                                        Location location);
 
   // Field GEP helper
   llvm::Instruction *makeFieldGEP(llvm::StructType *llst,
@@ -1034,7 +1058,7 @@ private:
   named_type_maptyp namedTypemap_;
 
   // Maps <structType,index> => <fieldType>
-  fieldmaptype fieldmap_;
+  fieldmaptype fieldTypeMap_;
 
   // Maps array type to element type
   std::unordered_map<Btype *, Btype *> arrayElemTypeMap_;
@@ -1084,7 +1108,7 @@ private:
   btyped_value_expr_maptyp valueExprmap_;
 
   // Map from LLVM values to Bvariable.
-  std::unordered_map<llvm::Value *, Bvariable *> valueVarmap_;
+  std::unordered_map<llvm::Value *, Bvariable *> valueVarMap_;
 
   // For creation of useful block and inst names. Key is tag (ex: "add")
   // and val is counter to uniquify.

@@ -569,7 +569,73 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
     ret i64 10101
   )RAW_RESULT";
 
-  std::cerr << repr(block);
+  std::string reason;
+  bool equal = difftokens(exp, repr(block), reason);
+  EXPECT_EQ("pass", equal ? "pass" : reason);
+
+  be->function_set_body(func, block);
+  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+TEST(BackendExprTests, CreateStructConstructionExprs) {
+  LLVMContext C;
+
+  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+
+  // type X struct {
+  //    f1 *int32
+  //    f2 int32
+  // }
+  // func foo(param1, param2 int32) int64 {
+  // var loc1 X = { nil, 101 }
+  // var loc2 X = { &param1, loc1.f2 }
+
+  // var loc1 X = { nil, 101 }
+  Location loc;
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *pbi32t = be->pointer_type(bi32t);
+  Btype *s2t = mkTwoFieldStruct(be.get(), pbi32t, bi32t);
+  std::vector<Bexpression *> vals1;
+  vals1.push_back(be->zero_expression(pbi32t));
+  vals1.push_back(mkInt32Const(be.get(), int32_t(101)));
+  Bexpression *scon1 =
+      be->constructor_expression(s2t, vals1, loc);
+  Bvariable *loc1 = be->local_variable(func, "loc1", s2t, true, loc);
+  Bstatement *is1 = be->init_statement(loc1, scon1);
+  Bblock *block = mkBlockFromStmt(be.get(), func, is1);
+
+  // var loc2 X = { &param1, loc1.f2 }
+  Bvariable *p1 = func->getBvarForValue(func->getNthArgValue(0));
+  Bexpression *ve1 = be->var_expression(p1, VE_rvalue, loc);
+  Bexpression *adp = be->address_expression(ve1, loc);
+  Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, loc);
+  Bexpression *fex = be->struct_field_expression(ve2, 1, loc);
+  std::vector<Bexpression *> vals2;
+  vals2.push_back(adp);
+  vals2.push_back(fex);
+  Bexpression *scon2 = be->constructor_expression(s2t, vals2, loc);
+  Bvariable *loc2 = be->local_variable(func, "loc2", s2t, true, loc);
+  Bstatement *is2 = be->init_statement(loc2, scon2);
+  addStmtToBlock(be.get(), block, is2);
+
+  // return 10101
+  std::vector<Bexpression *> vals;
+  vals.push_back(mkInt64Const(be.get(), 10101));
+  Bstatement *ret = be->return_statement(func, vals, loc);
+  addStmtToBlock(be.get(), block, ret);
+
+  const char *exp = R"RAW_RESULT(
+    store { i32*, i32 } { i32* null, i32 101 }, { i32*, i32 }* %loc1
+    %field.1 = getelementptr { i32*, i32 }, { i32*, i32 }* %loc2, i32 0, i32 0
+    store i32* %param1.addr, i32** %field.1
+    %field.2 = getelementptr { i32*, i32 }, { i32*, i32 }* %loc2, i32 0, i32 1
+    %field.0 = getelementptr { i32*, i32 }, { i32*, i32 }* %loc1, i32 0, i32 1
+    %loc1.field.ld.0 = load i32, i32* %field.0
+    store i32 %loc1.field.ld.0, i32* %field.2
+    ret i64 10101
+  )RAW_RESULT";
 
   std::string reason;
   bool equal = difftokens(exp, repr(block), reason);
