@@ -164,7 +164,9 @@ TEST(BackendVarTests, MakeTemporaryVar) {
                                            false, loc, &inits);
   ASSERT_TRUE(tvar != nullptr);
   ASSERT_TRUE(inits != nullptr);
-  EXPECT_EQ(repr(inits), "store i64 64, i64* %tmp.0");
+  EXPECT_EQ(repr(inits), "store i64 64, i64* %tmpv.0");
+
+  addStmtToBlock(be.get(), block, inits);
 
   be->function_set_body(func, block);
 }

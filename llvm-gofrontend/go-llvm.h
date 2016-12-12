@@ -300,9 +300,6 @@ public:
   inline GotoStatement *castToGotoStatement();
   inline LabelStatement *castToLabelStatement();
 
-  // Create new Bstatement from an expression.
-  static ExprListStatement *stmtFromExpr(Bexpression *expr);
-
   // Perform deletions on the tree of Bstatements rooted at stmt.
   // Delete Bstatements/Bexpressions, instructions, or both (depending
   // on setting of 'which')
@@ -820,11 +817,6 @@ public:
   // so that we can unit test the integrity checker.
   void disableIntegrityChecks() { checkIntegrity_ = false; }
 
-#if 0
-  // for unit testing
-  void detachBexpression(Bexpression *victim);
-#endif
-
   // Return true if this is a module-scope value such as a constant
   bool moduleScopeValue(llvm::Value *val, Btype *btype) const;
 
@@ -944,6 +936,9 @@ private:
   llvm::Instruction *makeArrayIndexGEP(llvm::ArrayType *art,
                                        unsigned elemIndex,
                                        llvm::Value *sptr);
+
+  // Create new Bstatement from an expression.
+  ExprListStatement *stmtFromExpr(Bexpression *expr);
 
   // Assignment helper
   Bstatement *makeAssignment(llvm::Value *lvalue, Bexpression *lhs,

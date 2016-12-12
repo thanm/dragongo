@@ -34,11 +34,6 @@
 
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
-static void indent(unsigned ilevel) {
-  for (unsigned i = 0; i < ilevel; ++i)
-    std::cerr << " ";
-}
-
 static void indent(llvm::raw_ostream &os, unsigned ilevel) {
   for (unsigned i = 0; i < ilevel; ++i)
     os << " ";
@@ -113,9 +108,10 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel) {
     os << "pending: level=" << addrLevel() << "\n";
 }
 
-ExprListStatement *Bstatement::stmtFromExpr(Bexpression *expr) {
+ExprListStatement *Llvm_backend::stmtFromExpr(Bexpression *expr) {
   ExprListStatement *st = new ExprListStatement();
   st->appendExpression(expr);
+  CHKTREE(st);
   return st;
 }
 
@@ -132,7 +128,7 @@ void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel)
   case ST_Compound: {
     CompoundStatement *cst = castToCompoundStatement();
     indent(os, ilevel);
-    os << "{\n";
+    os << ((void*)this) << " {\n";
     for (auto st : cst->stlist())
       st->osdump(os, ilevel + 2);
     indent(os, ilevel);
@@ -142,19 +138,19 @@ void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel)
   case ST_ExprList: {
     ExprListStatement *elst = castToExprListStatement();
     indent(os, ilevel);
-    os << "[\n";
+    os << ((void*)this) << " [\n";
     for (auto expr : elst->expressions()) {
       expr->osdump(os, ilevel + 2);
     }
-    indent(ilevel);
+    indent(os, ilevel);
     os << "]\n";
     break;
   }
   case ST_IfPlaceholder: {
     IfPHStatement *ifst = castToIfPHStatement();
-    indent(ilevel);
+    indent(os, ilevel);
     os << "if:\n";
-    indent(ilevel + 2);
+    indent(os, ilevel + 2);
     os << "cond:\n";
     ifst->cond()->osdump(os, ilevel + 2);
     if (ifst->trueStmt()) {
@@ -594,7 +590,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
       new Bexpression(errorFunction_->function(), errorType_));
 
   // Error statement
-  errorStatement_.reset(Bstatement::stmtFromExpr(errorExpression_.get()));
+  errorStatement_.reset(stmtFromExpr(errorExpression_.get()));
 
   // Reuse the error function as the value for errorVariable_
   errorVariable_.reset(
@@ -1306,15 +1302,6 @@ bool Llvm_backend::moduleScopeValue(llvm::Value *val, Btype *btype) const
   valbtype vbt(std::make_pair(val, btype));
   return (valueExprmap_.find(vbt) != valueExprmap_.end());
 }
-
-#if 0
-// Strictly for unit testing
-void Llvm_backend::detachBexpression(Bexpression *victim)
-{
-  expressions_.erase(std::remove(expressions_.begin(),
-                                 expressions_.end(), victim));
-}
-#endif
 
 Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val, Btype *btype,
                                                ValExprScope scope) {
@@ -2108,7 +2095,7 @@ Bstatement *Llvm_backend::makeAssignment(llvm::Value *lval, Bexpression *lhs,
 
   Bexpression *stexp = makeExpression(si, rhs->btype(), rhs, lhs, nullptr);
   stexp->appendInstruction(si);
-  ExprListStatement *els = Bstatement::stmtFromExpr(stexp);
+  ExprListStatement *els = stmtFromExpr(stexp);
   return els;
 }
 
@@ -2150,7 +2137,7 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, toret->value());
   Bexpression *rexp = makeExpression(ri, btype, toret, nullptr);
   rexp->appendInstruction(ri);
-  ExprListStatement *els = Bstatement::stmtFromExpr(rexp);
+  ExprListStatement *els = stmtFromExpr(rexp);
   return els;
 }
 
@@ -2209,11 +2196,12 @@ Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
 
 Bstatement *
 Llvm_backend::statement_list(const std::vector<Bstatement *> &statements) {
-  CompoundStatement *st = new CompoundStatement();
-  std::vector<Bstatement *> &stlist = st->stlist();
+  CompoundStatement *cst = new CompoundStatement();
+  std::vector<Bstatement *> &stlist = cst->stlist();
   for (auto st : statements)
     stlist.push_back(st);
-  return st;
+  CHKTREE(cst);
+  return cst;
 }
 
 Bblock *Llvm_backend::block(Bfunction *function, Bblock *enclosing,
@@ -2245,14 +2233,14 @@ void Llvm_backend::block_add_statements(
   assert(bblock);
   for (auto st : statements)
     bblock->stlist().push_back(st);
+  CHKTREE(bblock);
 }
 
 // Return a block as a statement.
 
 Bstatement *Llvm_backend::block_statement(Bblock *bblock) {
-
-  // class Bblock inherits from CompoundStatement
-  return bblock;
+  CHKTREE(bblock);
+  return bblock; // class Bblock inherits from CompoundStatement
 }
 
 // Helper routine for creating module-scope variables (static, global, etc).
@@ -2405,13 +2393,12 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function,
                                             Bstatement **pstatement) {
   if (binit == errorExpression_.get())
     return errorVariable_.get();
-  std::string tname(namegen("tmp"));
+  std::string tname(namegen("tmpv"));
   Bvariable *tvar = local_variable(function, tname, btype,
                                    is_address_taken, location);
   if (tvar == errorVariable_.get())
     return tvar;
   Bstatement *is = init_statement(tvar, binit);
-  bblock->stlist().push_back(is);
   *pstatement = is;
   return tvar;
 }
