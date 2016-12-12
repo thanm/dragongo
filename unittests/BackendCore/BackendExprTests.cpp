@@ -646,4 +646,74 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendExprTests, CreateArrayIndexingExprs) {
+  LLVMContext C;
+
+  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+  Bfunction *func = mkFunci32o64(be.get(), "foo");
+
+  // var aa [4]int64 = { 4, 3, 2, 1 }
+  Location loc;
+  Bexpression *val4 = mkInt64Const(be.get(), int64_t(4));
+  Btype *bi64t = be->integer_type(false, 64);
+  Btype *at4 = be->array_type(bi64t, val4);
+  Bvariable *aa = be->local_variable(func, "aa", at4, true, loc);
+  std::vector<unsigned long> indexes1 = { 0, 1, 2, 3 };
+  std::vector<Bexpression *> vals1;
+  for (int64_t v : {4, 3, 2, 1})
+    vals1.push_back(mkInt64Const(be.get(), v));
+  Bexpression *arcon1 =
+    be->array_constructor_expression(at4, indexes1, vals1, loc);
+  Bstatement *is = be->init_statement(aa, arcon1);
+  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+
+  // aa[1]
+  Bexpression *bi32one = mkInt32Const(be.get(), 1);
+  Bexpression *vea1 = be->var_expression(aa, VE_rvalue, loc);
+  Bexpression *aa1 = be->array_index_expression(vea1, bi32one, loc);
+
+  // aa[3]
+  Bexpression *bi64three = mkInt64Const(be.get(), 3);
+  Bexpression *vea2 = be->var_expression(aa, VE_rvalue, loc);
+  Bexpression *aa2 = be->array_index_expression(vea2, bi64three, loc);
+
+  // aa[aa[3]]
+  Bexpression *vea3 = be->var_expression(aa, VE_rvalue, loc);
+  Bexpression *aa3 = be->array_index_expression(vea3, aa2, loc);
+
+  // aa[aa[1]]
+  Bexpression *vea4 = be->var_expression(aa, VE_lvalue, loc);
+  Bexpression *aa4 = be->array_index_expression(vea4, aa1, loc);
+
+  // aa[aa[1]] = aa[aa[5]]
+  Bstatement *as = be->assignment_statement(aa4, aa3, loc);
+  addStmtToBlock(be.get(), block, as);
+
+  const char *exp = R"RAW_RESULT(
+    store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
+    %index.1 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 3
+    %aa.index.ld.0 = load i64, i64* %index.1
+    %index.2 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 %aa.index.ld.0
+    %aa.index.ld.2 = load i64, i64* %index.2
+    %index.0 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i32 1
+    %aa.index.ld.1 = load i64, i64* %index.0
+    %index.3 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 %aa.index.ld.1
+    store i64 %aa.index.ld.2, i64* %index.3
+  )RAW_RESULT";
+
+  std::string reason;
+  bool equal = difftokens(exp, repr(block), reason);
+  EXPECT_EQ("pass", equal ? "pass" : reason);
+
+  // return 10101
+  std::vector<Bexpression *> vals;
+  vals.push_back(mkInt64Const(be.get(), 10101));
+  Bstatement *ret = be->return_statement(func, vals, loc);
+  addStmtToBlock(be.get(), block, ret);
+
+  be->function_set_body(func, block);
+  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 }

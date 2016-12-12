@@ -958,7 +958,7 @@ private:
 
   // Array indexing GEP helper
   llvm::Instruction *makeArrayIndexGEP(llvm::ArrayType *art,
-                                       unsigned elemIndex,
+                                       llvm::Value *idx,
                                        llvm::Value *sptr);
 
   // Create new Bstatement from an expression.

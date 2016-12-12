@@ -1489,7 +1489,8 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
   for (unsigned eidx = 0; eidx < nElements; ++eidx) {
 
     // Construct an appropriate GEP
-    llvm::Instruction *gep = makeArrayIndexGEP(llat, eidx, storage);
+    llvm::Value *idxval = llvm::ConstantInt::get(llvmInt32Type_, eidx);
+    llvm::Instruction *gep = makeArrayIndexGEP(llat, idxval, storage);
     expr->appendInstruction(gep);
 
     // Store value into gep
@@ -1743,13 +1744,12 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
 }
 
 llvm::Instruction *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
-                                                   unsigned elemIndex,
+                                                   llvm::Value *idxval,
                                                    llvm::Value *sptr)
 {
-  assert(elemIndex < llat->getNumElements());
   llvm::SmallVector<llvm::Value *, 2> elems(2);
   elems[0] = llvm::ConstantInt::get(llvmInt32Type_, 0);
-  elems[1] = llvm::ConstantInt::get(llvmInt32Type_, elemIndex);
+  elems[1] = idxval;
   std::string name = namegen("index");
   llvm::GetElementPtrInst *gep =
       llvm::GetElementPtrInst::Create(llat, sptr, elems, name);
@@ -2110,11 +2110,37 @@ Bexpression *Llvm_backend::pointer_offset_expression(Bexpression *base,
 
 // Return an expression representing ARRAY[INDEX]
 
-Bexpression *Llvm_backend::array_index_expression(Bexpression *array,
+Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
                                                   Bexpression *index,
                                                   Location location) {
-  assert(false && "Llvm_backend::array_index_expression not yet impl");
-  return nullptr;
+
+  if (barray == errorExpression_.get() || index == errorExpression_.get())
+    return errorExpression_.get();
+
+  // FIXME: add array bounds checking
+
+  index = resolveVarContext(index);
+
+  // Construct an appropriate GEP
+  llvm::Type *llt = barray->btype()->type();
+  assert(llt->isArrayTy());
+  llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(llt);
+  llvm::Instruction *gep =
+      makeArrayIndexGEP(llat, index->value(), barray->value());
+
+  // Wrap in a Bexpression
+  Btype *bet = elementTypeByIndex(barray->btype(), 0);
+  Bexpression *rval = makeValueExpression(gep, bet, LocalScope);
+  rval->appendInstructions(index->instructions());
+  rval->appendInstruction(gep);
+  if (barray->varPending())
+    rval->setVarExprPending(barray->addrLevel());
+  std::string tag(barray->tag());
+  tag += ".index";
+  rval->setTag(tag);
+
+  // We're done
+  return rval;
 }
 
 // Create an expression for a call to FN_EXPR with FN_ARGS.
