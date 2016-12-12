@@ -1307,12 +1307,14 @@ bool Llvm_backend::moduleScopeValue(llvm::Value *val, Btype *btype) const
   return (valueExprmap_.find(vbt) != valueExprmap_.end());
 }
 
+#if 0
 // Strictly for unit testing
 void Llvm_backend::detachBexpression(Bexpression *victim)
 {
   expressions_.erase(std::remove(expressions_.begin(),
                                  expressions_.end(), victim));
 }
+#endif
 
 Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val, Btype *btype,
                                                ValExprScope scope) {

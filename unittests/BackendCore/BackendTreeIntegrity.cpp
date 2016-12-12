@@ -17,7 +17,6 @@ using namespace goBackendUnitTests;
 namespace {
 
 TEST(BackendCoreTests, CheckTreeIntegrity1) {
-
   // Add the same instruction to more than one Bexpression
   LLVMContext C;
   Location loc;
@@ -61,6 +60,7 @@ TEST(BackendCoreTests, CheckTreeIntegrity2) {
   LLVMContext C;
   std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
   be->disableIntegrityChecks();
+
   Location loc;
   Bfunction *func = mkFunci32o64(be.get(), "foo");
   Btype *bi64t = be->integer_type(false, 64);

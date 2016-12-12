@@ -820,9 +820,10 @@ public:
   // so that we can unit test the integrity checker.
   void disableIntegrityChecks() { checkIntegrity_ = false; }
 
-  // Needed for unit testing integrity checks-- cleans duplicates
-  // from the internal expressions list.  Not for general-purpose use.
-  void detachBexpression(Bexpression *victm);
+#if 0
+  // for unit testing
+  void detachBexpression(Bexpression *victim);
+#endif
 
   // Return true if this is a module-scope value such as a constant
   bool moduleScopeValue(llvm::Value *val, Btype *btype) const;
