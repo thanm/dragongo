@@ -1079,6 +1079,14 @@ bool Llvm_backend::set_placeholder_struct_type(
     return false;
   Btype *stype = struct_type(fields);
   updatePlaceholderUnderlyingType(placeholder, stype->type());
+  // update the field type map to insure that the placeholder has the same info
+  for (unsigned i = 0; i < fields.size(); ++i) {
+    structplusindextype spi(std::make_pair(stype, i));
+    auto it = fieldTypeMap_.find(spi);
+    assert(it != fieldTypeMap_.end());
+    structplusindextype ppi(std::make_pair(placeholder, i));
+    fieldTypeMap_[ppi] = it->second;
+  }
   return true;
 }
 
