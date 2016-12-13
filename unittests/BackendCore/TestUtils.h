@@ -135,29 +135,6 @@ void addStmtToBlock(Backend *be, Bblock *block, Bstatement *st);
 // Adds expression to block as expr statement.
 void addExprToBlock(Backend *be, Bfunction *f, Bblock *bl, Bexpression *e);
 
-// Cleanup of statements and expressions created during unit testing.
-
-class IRCleanup {
-public:
-  IRCleanup(Backend *be) : be_(be) {}
-  ~IRCleanup() {
-    for (auto s : statements_)
-      if (s != be_->error_statement())
-        Bstatement::destroy(s, DelBoth);
-    for (auto e : expressions_)
-      if (e != be_->error_expression())
-        Bexpression::destroy(e, DelBoth);
-  }
-
-  void add(Bstatement *s) { statements_.push_back(s); }
-  void add(Bexpression *e) { expressions_.push_back(e); }
-
-private:
-  std::vector<Bstatement *> statements_;
-  std::vector<Bexpression *> expressions_;
-  Backend *be_;
-};
-
 } // end namespace goBackendUnitTests
 
 #endif // !defined(#define DRAGONGO_UNITTESTS_BACKENDCORE_TESTUTILS_H)

@@ -57,9 +57,63 @@ void Btype::osdump(llvm::raw_ostream &os, unsigned ilevel) {
 Bexpression::Bexpression(llvm::Value *value,
                          Btype *btype,
                          const std::string &tag)
-    : value_(value), btype_(btype), tag_(tag) {}
+    : value_(value), btype_(btype), tag_(tag)
+{
+}
 
-Bexpression::~Bexpression() {}
+Bexpression::~Bexpression()
+{
+}
+
+bool Bexpression::varExprPending() const
+{
+  return varContext_.get() != nullptr;
+}
+
+VarContext &Bexpression::varContext() const
+{
+  assert(varContext_.get());
+  return *varContext_.get();
+}
+
+void Bexpression::setVarExprPending(bool lvalue, unsigned addrLevel)
+{
+  varContext_.reset(new VarContext(lvalue, addrLevel));
+}
+
+void Bexpression::setVarExprPending(const VarContext &src)
+{
+  varContext_.reset(new VarContext(src));
+}
+
+void Bexpression::resetVarExprContext()
+{
+  varContext_.reset(nullptr);
+}
+
+bool Bexpression::compositeInitPending() const
+{
+  return compositeInitContext_.get() != nullptr;
+}
+
+CompositeInitContext &Bexpression::compositeInitContext() const
+{
+  assert(compositeInitContext_.get());
+  return *compositeInitContext_.get();
+}
+
+void Bexpression::setCompositeInit(const std::vector<Bexpression *> &vals)
+{
+  compositeInitContext_.reset(new CompositeInitContext(vals));
+}
+
+void Bexpression::finishCompositeInit(llvm::Value *finalizedValue)
+{
+  assert(value_ == nullptr);
+  assert(finalizedValue);
+  value_ = finalizedValue;
+  compositeInitContext_.reset(nullptr);
+}
 
 void Bexpression::destroy(Bexpression *expr, WhichDel which) {
   if (which != DelWrappers)
@@ -81,8 +135,8 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel) {
   bool hitValue = false;
   if (compositeInitPending()) {
     indent(os, ilevel);
-    os << "composite init:\n";
-    for (auto exp : elementExpressions())
+    os << "composite init pending:\n";
+    for (auto exp : compositeInitContext().elementExpressions())
       exp->osdump(os, ilevel+2);
   }
   for (auto inst : instructions()) {
@@ -104,8 +158,11 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel) {
       os << "<nil value>";
     os << "\n";
   }
-  if (varPending())
-    os << "pending: level=" << addrLevel() << "\n";
+  if (varExprPending()) {
+    const VarContext &vc = varContext();
+    os << "var pending: lvalue=" <<  (vc.lvalue() ? "yes" : "no")
+       << " addrLevel=" << vc.addrLevel() << "\n";
+  }
 }
 
 ExprListStatement *Llvm_backend::stmtFromExpr(Bexpression *expr) {
@@ -359,7 +416,7 @@ bool IntegrityVisitor::visit(Bexpression *expr)
   bool rval = true;
   if (expr->compositeInitPending()) {
     eors parthis = makeExprParent(expr);
-    for (auto initval : expr->elementExpressions())
+    for (auto initval : expr->compositeInitContext().elementExpressions())
       rval = (setParent(initval, parthis) && rval);
   }
   for (auto inst : expr->instructions())
@@ -844,7 +901,12 @@ Btype *Llvm_backend::pointer_type(Btype *to_type) {
   llvm::Type *lltot =
       (to_type->type() == llvmVoidType_ ? llvmInt8Type_ : to_type->type());
 
-  return makeAnonType(llvm::PointerType::get(lltot, addressSpace_));
+  llvm::Type *llpt = llvm::PointerType::get(lltot, addressSpace_);
+  bool isNew = (anonTypemap_.find(llpt) == anonTypemap_.end());
+  Btype *result = makeAnonType(llvm::PointerType::get(lltot, addressSpace_));
+  if (isNew)
+    pointerTypeMap_[result] = to_type;
+  return result;
 }
 
 // Make a function type.
@@ -1423,20 +1485,22 @@ Bexpression *Llvm_backend::indirect_expression(Btype *btype,
                                                Bexpression *expr,
                                                bool known_valid,
                                                Location location) {
-  if (expr->varPending()) {
-    if (expr->addrLevel() > 0) {
-      unsigned addrLevel = expr->addrLevel() - 1;
-      Bexpression *rval = new Bexpression(expr->value(), btype, expr->tag());
-      rval->setVarExprPending(addrLevel);
-      std::string tag(expr->tag());
-      tag += ".deref";
-      rval->setTag(tag);
-      expressions_.push_back(rval);
-      return rval;
-    }
+  if (expr == errorExpression_.get() || btype == errorType_)
+    return errorExpression_.get();
+
+  assert(expr->btype()->type()->isPointerTy());
+
+  // FIXME: add check for nil pointer
+
+  Bexpression *loadExpr = loadFromExpr(expr, btype);
+
+  if (expr->varExprPending()) {
+    const VarContext &vc = expr->varContext();
+    unsigned addrLevel = (vc.addrLevel() ? vc.addrLevel() - 1 : 0);
+    loadExpr->setVarExprPending(vc.lvalue(), addrLevel);
   }
-  expr = resolveVarContext(expr);
-  return loadFromExpr(expr, btype);
+
+  return loadExpr;
 }
 
 // Get the address of an expression.
@@ -1444,30 +1508,35 @@ Bexpression *Llvm_backend::indirect_expression(Btype *btype,
 Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
                                               Location location) {
   Btype *pt = pointer_type(bexpr->btype());
-  unsigned addrLevel = 0;
-  if (bexpr->varPending())
-    addrLevel = bexpr->addrLevel();
+
+  // we should not be taking the address of something not variable
+  assert(bexpr->varExprPending());
+
   Bexpression *rval = new Bexpression(bexpr->value(), pt, bexpr->tag());
-  rval->setVarExprPending(addrLevel+1);
+  const VarContext &vc = bexpr->varContext();
+  rval->setVarExprPending(vc.lvalue(), vc.addrLevel() + 1);
   expressions_.push_back(rval);
   return rval;
 }
 
 Bexpression *Llvm_backend::resolve(Bexpression *expr, Bfunction *func)
 {
+  assert(!(expr->compositeInitPending() && expr->varExprPending()));
   if (expr->compositeInitPending())
     expr = resolveCompositeInit(expr, func, nullptr);
-  else if (expr->varPending())
+  else if (expr->varExprPending())
     expr = resolveVarContext(expr);
   return expr;
 }
 
 Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
 {
-  if (expr->varPending()) {
-    assert(expr->addrLevel() == 0 || expr->addrLevel() == 1);
-    if (expr->addrLevel() == 1) {
-      expr->resetVarExprPending();
+  if (expr->varExprPending()) {
+    const VarContext &vc = expr->varContext();
+    assert(vc.addrLevel() == 0 || vc.addrLevel() == 1);
+    if (vc.addrLevel() == 1 || vc.lvalue()) {
+      assert(vc.addrLevel() == 0 || expr->btype()->type()->isPointerTy());
+      expr->resetVarExprContext();
       return expr;
     }
     return loadFromExpr(expr, expr->btype());
@@ -1482,7 +1551,8 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
                                         Bexpression *expr,
                                         llvm::Value *storage)
 {
-  const std::vector<Bexpression *> &aexprs = expr->elementExpressions();
+  CompositeInitContext &cic = expr->compositeInitContext();
+  const std::vector<Bexpression *> &aexprs = cic.elementExpressions();
   unsigned nElements = llat->getNumElements();
   assert(nElements == aexprs.size());
 
@@ -1514,7 +1584,8 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
                                          Bexpression *expr,
                                          llvm::Value *storage)
 {
-  const std::vector<Bexpression *> &fexprs = expr->elementExpressions();
+  CompositeInitContext &cic = expr->compositeInitContext();
+  const std::vector<Bexpression *> &fexprs = cic.elementExpressions();
   unsigned nFields = llst->getNumElements();
   assert(nFields == fexprs.size());
 
@@ -1573,11 +1644,10 @@ Bexpression *Llvm_backend::var_expression(Bvariable *var,
 
   // FIXME: record debug location
 
-  unsigned addrLevel = (in_lvalue_pos == VE_lvalue ? 1 : 0);
   Bexpression *varexp =
       makeValueExpression(var->value(), var->getType(), LocalScope);
   varexp->setTag(var->getName().c_str());
-  varexp->setVarExprPending(addrLevel);
+  varexp->setVarExprPending(in_lvalue_pos == VE_lvalue, 0);
   return varexp;
 }
 
@@ -1789,9 +1859,10 @@ Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
   // Wrap in a Bexpression
   Btype *bft = elementTypeByIndex(bstruct->btype(), index);
   Bexpression *rval = makeValueExpression(gep, bft, LocalScope);
+  rval->appendInstructions(bstruct->instructions());
   rval->appendInstruction(gep);
-  if (bstruct->varPending())
-    rval->setVarExprPending(bstruct->addrLevel());
+  if (bstruct->varExprPending())
+    rval->setVarExprPending(bstruct->varContext());
   std::string tag(bstruct->tag());
   tag += ".field";
   rval->setTag(tag);
@@ -2025,7 +2096,7 @@ Llvm_backend::makeDelayedCompositeExpr(Btype *btype,
   }
   llvm::Value *nilval = nullptr;
   Bexpression *ccon = makeValueExpression(nilval, btype, LocalScope);
-  ccon->setCompositeInit(init_vals, btype);
+  ccon->setCompositeInit(init_vals);
   return ccon;
 }
 
@@ -2131,10 +2202,11 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
   // Wrap in a Bexpression
   Btype *bet = elementTypeByIndex(barray->btype(), 0);
   Bexpression *rval = makeValueExpression(gep, bet, LocalScope);
+  rval->appendInstructions(barray->instructions());
   rval->appendInstructions(index->instructions());
   rval->appendInstruction(gep);
-  if (barray->varPending())
-    rval->setVarExprPending(barray->addrLevel());
+  if (barray->varExprPending())
+    rval->setVarExprPending(barray->varContext());
   std::string tag(barray->tag());
   tag += ".index";
   rval->setTag(tag);
@@ -2217,7 +2289,8 @@ Bstatement *Llvm_backend::makeAssignment(llvm::Value *lval, Bexpression *lhs,
   llvm::Value *rval = rhs->value();
   assert(rval->getType() == pt->getElementType());
 
-  assert(!rhs->varPending() && !rhs->compositeInitPending());
+  // These cases should have been handled in the caller
+  assert(!rhs->varExprPending() && !rhs->compositeInitPending());
 
   // FIXME: alignment?
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
@@ -2427,7 +2500,7 @@ Bvariable *Llvm_backend::global_variable(const std::string &var_name,
                                          Location location) {
 
   llvm::GlobalValue::LinkageTypes linkage =
-      (is_external ? llvm::GlobalValue::ExternalLinkage
+      (is_external || is_hidden ? llvm::GlobalValue::ExternalLinkage
        : llvm::GlobalValue::InternalLinkage);
   bool isConstant = false;
   bool isComdat = false;

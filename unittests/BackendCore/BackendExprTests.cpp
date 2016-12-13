@@ -363,6 +363,7 @@ TEST(BackendExprTests, TestMoreArith) {
 }
 
 TEST(BackendExprTests, TestAddrAndIndirection) {
+  {
   LLVMContext C;
 
   std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
@@ -392,21 +393,19 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
   }
 
   {
-    // y = **&x
+    // y = *x
     Bexpression *vey = be->var_expression(y, VE_lvalue, loc);
     Bexpression *vex = be->var_expression(x, VE_rvalue, loc);
-    Bexpression *adx = be->address_expression(vex, loc);
     bool knValid = false;
-    Bexpression *indx1 = be->indirect_expression(bpi64t, adx, knValid, loc);
-    Bexpression *indx2 = be->indirect_expression(bi64t, indx1, knValid, loc);
-    Bstatement *as = be->assignment_statement(vey, indx2, loc);
+    Bexpression *indx1 = be->indirect_expression(bi64t, vex, knValid, loc);
+    Bstatement *as = be->assignment_statement(vey, indx1, loc);
     addStmtToBlock(be.get(), block, as);
   }
 
   {
     // *x = 3
     Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
-    Bexpression *indx = be->indirect_expression(bpi64t, vex, false, loc);
+    Bexpression *indx = be->indirect_expression(bi64t, vex, false, loc);
     Bexpression *beic3 = mkInt64Const(be.get(), 3);
     Bstatement *as = be->assignment_statement(indx, beic3, loc);
     addStmtToBlock(be.get(), block, as);
@@ -422,11 +421,11 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
     store i64 10, i64* %y
     store i64* null, i64** %x
     store i64* %y, i64** %x
-    %x.deref.ld.0 = load i64*, i64** %x
-    %.ld.0 = load i64, i64* %x.deref.ld.0
+    %x.ld.0 = load i64*, i64** %x
+    %.ld.0 = load i64, i64* %x.ld.0
     store i64 %.ld.0, i64* %y
-    %x.deref.ld.1 = load i64*, i64** %x
-    store i64 3, i64* %x.deref.ld.1
+    %x.ld.1 = load i64*, i64** %x
+    store i64 3, i64* %x.ld.1
     ret i64 10101
     )RAW_RESULT";
 
@@ -438,6 +437,8 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
 
   bool broken = llvm::verifyModule(be->module(), &dbgs());
   EXPECT_FALSE(broken && "Module failed to verify.");
+  }
+  std::cerr << "done\n";
 }
 
 TEST(BackendExprTests, TestStructFieldExprs) {
@@ -463,6 +464,14 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   Bstatement *is = be->init_statement(loc1, bszero);
   Bblock *block = mkBlockFromStmt(be.get(), func, is);
 
+  // var loc2 *X = &loc1
+  Btype *ps2t = be->pointer_type(s2t);
+  Bvariable *loc2 = be->local_variable(func, "loc2", ps2t, true, loc);
+  Bexpression *bl1vex = be->var_expression(loc1, VE_rvalue, loc);
+  Bexpression *adl1 = be->address_expression(bl1vex, loc);
+  Bstatement *isx = be->init_statement(loc2, adl1);
+  addStmtToBlock(be.get(), block, isx);
+
   // x := loc1.f2
   Bvariable *x = be->local_variable(func, "x", bi32t, true, loc);
   Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
@@ -481,6 +490,16 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   Bstatement *as2 = be->assignment_statement(bfex, adb2, loc);
   addStmtToBlock(be.get(), block, as2);
 
+  // var b2 bool
+  // loc2.f2 = 2 (equivalent to (*loc2).f2 = 2)
+  Bexpression *lvexi = be->var_expression(loc2, VE_lvalue, loc);
+  bool knValid = false;
+  Bexpression *lindx = be->indirect_expression(s2t, lvexi, knValid, loc);
+  Bexpression *bfex2 = be->struct_field_expression(lindx, 1, loc);
+  Bexpression *bc2 = mkInt32Const(be.get(), 2);
+  Bstatement *as3 = be->assignment_statement(bfex2, bc2, loc);
+  addStmtToBlock(be.get(), block, as3);
+
   // return 10101
   std::vector<Bexpression *> vals;
   vals.push_back(mkInt64Const(be.get(), 10101));
@@ -488,13 +507,17 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   addStmtToBlock(be.get(), block, ret);
 
   const char *exp = R"RAW_RESULT(
-    store { i1*, i32 } zeroinitializer, { i1*, i32 }* %loc1
-    %field.0 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc1, i32 0, i32 1
-    %loc1.field.ld.0 = load i32, i32* %field.0
-    store i32 %loc1.field.ld.0, i32* %x
-    %field.1 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc1, i32 0, i32 0
-    store i1* %b2, i1** %field.1
-    ret i64 10101
+   store { i1*, i32 } zeroinitializer, { i1*, i32 }* %loc1
+   store { i1*, i32 }* %loc1, { i1*, i32 }** %loc2
+   %field.0 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc1, i32 0, i32 1
+   %loc1.field.ld.0 = load i32, i32* %field.0
+   store i32 %loc1.field.ld.0, i32* %x
+   %field.1 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc1, i32 0, i32 0
+   store i1* %b2, i1** %field.1
+   %loc2.ld.0 = load { i1*, i32 }*, { i1*, i32 }** %loc2
+   %field.2 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc2.ld.0, i32 0, i32 1
+   store i32 2, i32* %field.2
+   ret i64 10101
   )RAW_RESULT";
 
   std::string reason;

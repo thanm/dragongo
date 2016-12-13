@@ -139,10 +139,9 @@ TEST(BackendFcnTests, MakeBlocks) {
 
   std::unique_ptr<Backend> be(go_get_backend(C));
   Bfunction *bfcn = mkFunci32o64(be.get(), "foo");
-  IRCleanup cl(be.get());
   const std::vector<Bvariable *> vars;
   Bblock *bb = be->block(bfcn, nullptr, vars, Location(), Location());
-  cl.add(bb);
   ASSERT_TRUE(bb != nullptr);
+  delete bb;
 }
 }

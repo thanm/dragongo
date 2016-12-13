@@ -107,20 +107,24 @@ enum WhichDel {
 // llvm::BinaryOperator object and return a new Bexpression that
 // encapsulates that object.
 //
-// This eager strategy works well in general but has to be relaxed a
-// bit in some instances, notably variable references and composite
-// initializers.  For example, consider the following Go code:
+// This eager strategy works well for the most part, but has to be
+// relaxed in some instances, notably variable references and
+// composite initializers.  For example, consider the following Go
+// code:
 //
-//        func foo(q int64, ip *int64) int64 {
-//           y := q
-//           x := **&ip
+//        struct X { a, b int64 }
+//        func foo(q, r int64, ip *int64, px *X) int64 {
+//            r = q
+//           r = **&ip
 //           ip = &q
+//         px.a = px.b
 //
 // The right hand side expression trees for these statements would look like:
 //
 //        stmt 1:   varexpr("q")
 //        stmt 2:   deref(deref(address(varexpr("ip")))).
 //        stmt 3:   address(varexpr("q"))
+//        stmt 4:   field(deref(varexpr("px"),'b')
 //
 // At the point where Llvm_backend::var_expression is called, we don't
 // know the context for the consuming instruction. For statement 1, we
@@ -131,32 +135,29 @@ enum WhichDel {
 // To deal with this, we use this mix-in class below (Bexpression
 // inherits from it) to record whether the subtree in question
 // contains a root variable expression, and if so, the number of
-// "address" operators that have been applied. Once we reach a point
-// where we have concrete consumer for the subtree of
-// (var/address/indrect) ops, we can then use this information to
-// decide whether to materialize an address or perform a load.
+// "address" operators that have been applied, and whether the
+// original varexpr appears in an assignment (lvalue) context. Once we
+// reach a point where we have concrete consumer for the subtree of
+// (var/address/indrect/field/indexing) ops, we can then use this
+// information to decide whether to materialize an address or perform
+// a load.
 //
 
 class VarContext {
  public:
-  VarContext() : addrLevel_(0), pending_(false) { }
-  VarContext(unsigned addrLevel, bool pending)
-      : addrLevel_(addrLevel), pending_(pending) { }
+  VarContext(bool lvalue, unsigned addrLevel)
+      : addrLevel_(addrLevel), lvalue_(lvalue) { }
+  VarContext(const VarContext &src)
+      : addrLevel_(src.addrLevel_), lvalue_(src.lvalue_)
+  { }
 
-  bool varPending() const { return pending_; }
-  bool addrLevel() const { return addrLevel_; }
-
-  void setVarExprPending(unsigned addrLevel) {
-    addrLevel_ = addrLevel;
-    pending_ = true;
-  }
-  void resetVarExprPending() {
-    pending_ = false;
-  }
+  unsigned addrLevel() const { return addrLevel_; }
+  unsigned lvalue() const { return lvalue_; }
+  void incrementAddrLevel() { addrLevel_ += 1; }
 
  private:
   unsigned addrLevel_;
-  bool pending_;
+  bool lvalue_;
 };
 
 // Mix-in helper class for composite init expresions. Consider the following
@@ -183,26 +184,12 @@ class VarContext {
 
 class CompositeInitContext {
  public:
-  CompositeInitContext() : pending_(false) { }
-
-  bool compositeInitPending() const { return pending_; }
-  void setCompositeInit(const std::vector<Bexpression *> &vals,
-                        Btype *compositeType) {
-    vals_.reset(new std::vector<Bexpression *>(vals));
-    pending_ = true;
-  }
-  std::vector<Bexpression *> &elementExpressions() {
-    assert(pending_);
-    return *vals_.get();
-  }
-  void resetCompositeInit() {
-    vals_.reset(nullptr);
-    pending_ = false;
-  }
+  CompositeInitContext(const std::vector<Bexpression *> &vals)
+      : vals_(vals) { }
+  std::vector<Bexpression *> &elementExpressions() { return vals_; }
 
  private:
-  std::unique_ptr<std::vector<Bexpression *> > vals_;
-  bool pending_;
+   std::vector<Bexpression *> vals_;
 };
 
 // Here Bexpression is largely a wrapper around llvm::Value, however
@@ -212,7 +199,7 @@ class CompositeInitContext {
 // roughly equivalent to the C++ comma operator, e.g. evaluate some
 // set of expressions E1, E2, .. EK, then produce result EK.
 
-class Bexpression : public Binstructions, public VarContext, public CompositeInitContext {
+class Bexpression : public Binstructions {
 public:
   Bexpression(llvm::Value *value, Btype *btype, const std::string &tag = "");
   ~Bexpression();
@@ -221,6 +208,17 @@ public:
   Btype *btype() { return btype_; }
   const std::string &tag() const { return tag_; }
   void setTag(const std::string &tag) { tag_ = tag; }
+
+  bool varExprPending() const;
+  VarContext &varContext() const;
+  void setVarExprPending(bool lvalue, unsigned addrLevel);
+  void setVarExprPending(const VarContext &vc);
+  void resetVarExprContext();
+
+  bool compositeInitPending() const;
+  CompositeInitContext &compositeInitContext() const;
+  void setCompositeInit(const std::vector<Bexpression *> &vals);
+  void finishCompositeInit(llvm::Value *finalizedValue);
 
   // Delete some or all or this Bexpression. Deallocates just the
   // Bexpression, its contained instructions, or both (depending
@@ -233,18 +231,14 @@ public:
   // dump to raw_ostream
   void osdump(llvm::raw_ostream &os, unsigned ilevel);
 
-  void finishCompositeInit(llvm::Value *finalizedValue) {
-    assert(value_ == nullptr);
-    assert(finalizedValue);
-    value_ = finalizedValue;
-    resetCompositeInit();
-  }
 
 private:
   Bexpression() : value_(NULL) {}
   llvm::Value *value_;
   Btype *btype_;
   std::string tag_;
+  std::unique_ptr<VarContext> varContext_;
+  std::unique_ptr<CompositeInitContext> compositeInitContext_;
 };
 
 // In the current gofrontend implementation, there is an extremely
@@ -1062,6 +1056,9 @@ private:
 
   // Maps array type to element type
   std::unordered_map<Btype *, Btype *> arrayElemTypeMap_;
+
+  // Maps pointer type to pointed-to type
+  std::unordered_map<Btype *, Btype *> pointerTypeMap_;
 
   // Placeholder types created by the front end.
   std::unordered_set<Btype *> placeholders_;
