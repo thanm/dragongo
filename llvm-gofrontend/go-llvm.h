@@ -229,8 +229,7 @@ public:
   void dump();
 
   // dump to raw_ostream
-  void osdump(llvm::raw_ostream &os, unsigned ilevel);
-
+  void osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse = false);
 
 private:
   Bexpression() : value_(NULL) {}
@@ -305,7 +304,7 @@ public:
   void dump();
 
   // dump to raw_ostream
-  void osdump(llvm::raw_ostream &os, unsigned ilevel);
+  void osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse = false);
 
  private:
   StFlavor flavor_;

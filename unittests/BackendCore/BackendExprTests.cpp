@@ -134,7 +134,7 @@ TEST(BackendExprTests, MakeZeroValueExpr) {
   Bexpression *bpzero = be->zero_expression(pbt);
   ASSERT_TRUE(bpzero != nullptr);
   Btype *bi32t = be->integer_type(false, 32);
-  Btype *s2t = mkTwoFieldStruct(be.get(), pbt, bi32t);
+  Btype *s2t = mkBackendStruct(be.get(), pbt, "f1", bi32t, "f2", nullptr);
   Bexpression *bszero = be->zero_expression(s2t);
   ASSERT_TRUE(bszero != nullptr);
 
@@ -173,23 +173,23 @@ TEST(BackendExprTests, MakeVarExpressions) {
   Location loc;
   Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
 
-  // We should get a distinct value  two separate values when creating
-  // var expressions.
+  // We should get a distinct Bexpression each time we create a new
+  // var expression.
   Bexpression *ve1 = be->var_expression(loc1, VE_rvalue, loc);
-  EXPECT_EQ(repr(ve1), "%loc1 = alloca i64");
+  EXPECT_EQ(repr(ve1->value()), "%loc1 = alloca i64");
   Bstatement *es = be->expression_statement(func, ve1);
   Bblock *block = mkBlockFromStmt(be.get(), func, es);
   Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, loc);
-  EXPECT_EQ(repr(ve2), "%loc1 = alloca i64");
+  EXPECT_EQ(repr(ve2->value()), "%loc1 = alloca i64");
   EXPECT_NE(ve1, ve2);
   addExprToBlock(be.get(), func, block, ve2);
 
   // Same here.
   Bexpression *ve3 = be->var_expression(loc1, VE_lvalue, loc);
-  EXPECT_EQ(repr(ve3), "%loc1 = alloca i64");
+  EXPECT_EQ(repr(ve3->value()), "%loc1 = alloca i64");
   addExprToBlock(be.get(), func, block, ve3);
   Bexpression *ve4 = be->var_expression(loc1, VE_lvalue, loc);
-  EXPECT_EQ(repr(ve4), "%loc1 = alloca i64");
+  EXPECT_EQ(repr(ve4->value()), "%loc1 = alloca i64");
   EXPECT_NE(ve3, ve4);
   addExprToBlock(be.get(), func, block, ve4);
 
@@ -255,6 +255,8 @@ TEST(BackendExprTests, TestCompareOps) {
     %fcmp.4 = fcmp ogt double 9.000000e+00, 3.000000e+00
     %fcmp.5 = fcmp oge double 9.000000e+00, 3.000000e+00
     )RAW_RESULT";
+
+
 
   std::string reason;
   bool equal = difftokens(exp, repr(block), reason);
@@ -363,7 +365,6 @@ TEST(BackendExprTests, TestMoreArith) {
 }
 
 TEST(BackendExprTests, TestAddrAndIndirection) {
-  {
   LLVMContext C;
 
   std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
@@ -437,8 +438,6 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
 
   bool broken = llvm::verifyModule(be->module(), &dbgs());
   EXPECT_FALSE(broken && "Module failed to verify.");
-  }
-  std::cerr << "done\n";
 }
 
 TEST(BackendExprTests, TestStructFieldExprs) {
@@ -458,7 +457,7 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   Btype *bt = be->bool_type();
   Btype *pbt = be->pointer_type(bt);
   Btype *bi32t = be->integer_type(false, 32);
-  Btype *s2t = mkTwoFieldStruct(be.get(), pbt, bi32t);
+  Btype *s2t = mkBackendStruct(be.get(), pbt, "f1", bi32t, "f2", nullptr);
   Bvariable *loc1 = be->local_variable(func, "loc1", s2t, true, loc);
   Bexpression *bszero = be->zero_expression(s2t);
   Bstatement *is = be->init_statement(loc1, bszero);
@@ -530,56 +529,44 @@ TEST(BackendExprTests, TestStructFieldExprs) {
 }
 
 TEST(BackendExprTests, CreateArrayConstructionExprs) {
-  LLVMContext C;
 
-  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
 
   // var aa [4]int64 = { 4, 3, 2, 1 }
   Location loc;
-  Bexpression *val4 = mkInt64Const(be.get(), int64_t(4));
+  Bexpression *val4 = mkInt64Const(be, int64_t(4));
   Btype *bi64t = be->integer_type(false, 64);
   Btype *at4 = be->array_type(bi64t, val4);
-  Bvariable *aa = be->local_variable(func, "aa", at4, true, loc);
   std::vector<unsigned long> indexes1 = { 0, 1, 2, 3 };
   std::vector<Bexpression *> vals1;
   for (int64_t v : {4, 3, 2, 1})
-    vals1.push_back(mkInt64Const(be.get(), v));
+    vals1.push_back(mkInt64Const(be, v));
   Bexpression *arcon1 =
-    be->array_constructor_expression(at4, indexes1, vals1, loc);
-  Bstatement *is = be->init_statement(aa, arcon1);
-  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+      be->array_constructor_expression(at4, indexes1, vals1, loc);
+  h.mkLocal("aa", at4, arcon1);
 
   // var ab [4]int64 = { 2:3 }
-  Bvariable *ab = be->local_variable(func, "ab", at4, true, loc);
   std::vector<unsigned long> indexes2 = { 2 };
   std::vector<Bexpression *> vals2;
-  vals2.push_back(mkInt64Const(be.get(), int64_t(3)));
+  vals2.push_back(mkInt64Const(be, int64_t(3)));
   Bexpression *arcon2 =
     be->array_constructor_expression(at4, indexes2, vals2, loc);
-  Bstatement *is2 = be->init_statement(ab, arcon2);
-  addStmtToBlock(be.get(), block, is2);
+  h.mkLocal("ab", at4, arcon2);
 
   // var ac [4]int64 = { 1:z }
-  Bvariable *z = be->local_variable(func, "z", bi64t, true, loc);
-  Bvariable *ac = be->local_variable(func, "ac", at4, true, loc);
+  Bvariable *z = h.mkLocal("z", bi64t);
   std::vector<unsigned long> indexes3 = { 1 };
   std::vector<Bexpression *> vals3;
   vals3.push_back(be->var_expression(z, VE_rvalue, loc));
   Bexpression *arcon3 =
-    be->array_constructor_expression(at4, indexes3, vals3, loc);
-  Bstatement *is3 = be->init_statement(ac, arcon3);
-  addStmtToBlock(be.get(), block, is3);
-
-  // return 10101
-  std::vector<Bexpression *> vals;
-  vals.push_back(mkInt64Const(be.get(), 10101));
-  Bstatement *ret = be->return_statement(func, vals, loc);
-  addStmtToBlock(be.get(), block, ret);
+      be->array_constructor_expression(at4, indexes3, vals3, loc);
+  h.mkLocal("ac", at4, arcon3);
 
   const char *exp = R"RAW_RESULT(
     store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
     store [4 x i64] [i64 0, i64 0, i64 3, i64 0], [4 x i64]* %ab
+    store i64 0, i64* %z
     %index.0 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 0
     store i64 0, i64* %index.0
     %index.1 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 1
@@ -589,15 +576,12 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
     store i64 0, i64* %index.2
     %index.3 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 3
     store i64 0, i64* %index.3
-    ret i64 10101
   )RAW_RESULT";
 
-  std::string reason;
-  bool equal = difftokens(exp, repr(block), reason);
-  EXPECT_EQ("pass", equal ? "pass" : reason);
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  be->function_set_body(func, block);
-  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -619,7 +603,7 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   Location loc;
   Btype *bi32t = be->integer_type(false, 32);
   Btype *pbi32t = be->pointer_type(bi32t);
-  Btype *s2t = mkTwoFieldStruct(be.get(), pbi32t, bi32t);
+  Btype *s2t = mkBackendStruct(be.get(), pbi32t, "f1", bi32t, "f2", nullptr);
   std::vector<Bexpression *> vals1;
   vals1.push_back(be->zero_expression(pbi32t));
   vals1.push_back(mkInt32Const(be.get(), int32_t(101)));
@@ -670,33 +654,30 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
 }
 
 TEST(BackendExprTests, CreateArrayIndexingExprs) {
-  LLVMContext C;
 
-  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
 
   // var aa [4]int64 = { 4, 3, 2, 1 }
   Location loc;
-  Bexpression *val4 = mkInt64Const(be.get(), int64_t(4));
+  Bexpression *val4 = mkInt64Const(be, int64_t(4));
   Btype *bi64t = be->integer_type(false, 64);
   Btype *at4 = be->array_type(bi64t, val4);
-  Bvariable *aa = be->local_variable(func, "aa", at4, true, loc);
   std::vector<unsigned long> indexes1 = { 0, 1, 2, 3 };
   std::vector<Bexpression *> vals1;
   for (int64_t v : {4, 3, 2, 1})
-    vals1.push_back(mkInt64Const(be.get(), v));
+    vals1.push_back(mkInt64Const(be, v));
   Bexpression *arcon1 =
     be->array_constructor_expression(at4, indexes1, vals1, loc);
-  Bstatement *is = be->init_statement(aa, arcon1);
-  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+  Bvariable *aa = h.mkLocal("aa", at4, arcon1);
 
   // aa[1]
-  Bexpression *bi32one = mkInt32Const(be.get(), 1);
+  Bexpression *bi32one = mkInt32Const(be, 1);
   Bexpression *vea1 = be->var_expression(aa, VE_rvalue, loc);
   Bexpression *aa1 = be->array_index_expression(vea1, bi32one, loc);
 
   // aa[3]
-  Bexpression *bi64three = mkInt64Const(be.get(), 3);
+  Bexpression *bi64three = mkInt64Const(be, 3);
   Bexpression *vea2 = be->var_expression(aa, VE_rvalue, loc);
   Bexpression *aa2 = be->array_index_expression(vea2, bi64three, loc);
 
@@ -709,8 +690,7 @@ TEST(BackendExprTests, CreateArrayIndexingExprs) {
   Bexpression *aa4 = be->array_index_expression(vea4, aa1, loc);
 
   // aa[aa[1]] = aa[aa[5]]
-  Bstatement *as = be->assignment_statement(aa4, aa3, loc);
-  addStmtToBlock(be.get(), block, as);
+  h.mkAssign(aa4, aa3);
 
   const char *exp = R"RAW_RESULT(
     store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
@@ -724,18 +704,123 @@ TEST(BackendExprTests, CreateArrayIndexingExprs) {
     store i64 %aa.index.ld.2, i64* %index.3
   )RAW_RESULT";
 
-  std::string reason;
-  bool equal = difftokens(exp, repr(block), reason);
-  EXPECT_EQ("pass", equal ? "pass" : reason);
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  // return 10101
-  std::vector<Bexpression *> vals;
-  vals.push_back(mkInt64Const(be.get(), 10101));
-  Bstatement *ret = be->return_statement(func, vals, loc);
-  addStmtToBlock(be.get(), block, ret);
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
 
-  be->function_set_body(func, block);
-  bool broken = llvm::verifyModule(be->module(), &dbgs());
+TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
+
+  FcnTestHarness h("foo");
+
+  // Create type that incorporates structures, arrays, and pointers:
+  //
+  //   type sA struct {
+  //      x, y int64
+  //   }
+  //   type asA [4]*sA
+  //   type sB struct {
+  //      y  bool
+  //      ar asA
+  //      n  bool
+  //   }
+  //   type psB *sB
+  //   type t [10]psB
+  //
+  Llvm_backend *be = h.be();
+  Btype *bi64t = be->integer_type(false, 64);
+  Btype *sA = mkBackendStruct(be, bi64t, "x", bi64t, "y", nullptr);
+  Btype *psA = be->pointer_type(sA);
+  Bexpression *val4 = mkInt64Const(be, int64_t(4));
+  Btype *asA = be->array_type(psA, val4);
+  Btype *bt = be->bool_type();
+  Btype *sB = mkBackendStruct(be, bt, "y", asA, "ar", bt, "n", nullptr);
+  Btype *psB = be->pointer_type(sB);
+  Bexpression *val10 = mkInt64Const(be, int64_t(10));
+  Btype *t = be->array_type(psB, val10);
+  Location loc;
+
+  // var t1 t
+  Bvariable *t1 = h.mkLocal("t1", t);
+
+  // t1[7].ar[3].x = 5
+  {
+    Bexpression *vt = be->var_expression(t1, VE_lvalue, loc);
+    Bexpression *bi32sev = mkInt32Const(be, 7);
+    Bexpression *ti7 = be->array_index_expression(vt, bi32sev, loc);
+    bool knValid = true;
+    Bexpression *iti7 = be->indirect_expression(sB, ti7, knValid, loc);
+    Bexpression *far = be->struct_field_expression(iti7, 1, loc);
+    Bexpression *bi32three = mkInt32Const(be, 3);
+    Bexpression *ar3 = be->array_index_expression(far, bi32three, loc);
+    Bexpression *iar3 = be->indirect_expression(sA, ar3, knValid, loc);
+    Bexpression *fx = be->struct_field_expression(iar3, 0, loc);
+    Bexpression *bi64five = mkInt64Const(be, 5);
+    h.mkAssign(fx, bi64five);
+
+  const char *exp = R"RAW_RESULT(
+    store [10 x { i1, [4 x { i64, i64 }*], i1 }*] zeroinitializer,
+      [10 x { i1, [4 x { i64, i64 }*], i1 }*]* %t1
+    %index.0 = getelementptr [10 x { i1, [4 x { i64, i64 }*], i1 }*],
+        [10 x { i1, [4 x { i64, i64 }*], i1 }*]* %t1, i32 0, i32 7
+    %t1.index.ld.0 = load { i1, [4 x { i64, i64 }*], i1 }*,
+        { i1, [4 x { i64, i64 }*], i1 }** %index.0
+    %field.0 = getelementptr { i1, [4 x { i64, i64 }*], i1 },
+        { i1, [4 x { i64, i64 }*], i1 }* %t1.index.ld.0, i32 0, i32 1
+    %index.1 = getelementptr [4 x { i64, i64 }*],
+         [4 x { i64, i64 }*]* %field.0, i32 0, i32 3
+    %.field.index.ld.0 = load { i64, i64 }*,
+          { i64, i64 }** %index.1
+    %field.1 = getelementptr { i64, i64 },
+      { i64, i64 }* %.field.index.ld.0, i32 0, i32 0
+    store i64 5, i64* %field.1
+  )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  }
+
+  h.newBlock();
+
+  // q := t1[0].ar[0].y
+  {
+    Bexpression *vt = be->var_expression(t1, VE_rvalue, loc);
+    Bexpression *bi32zero = mkInt32Const(be, 0);
+    Bexpression *ti0 = be->array_index_expression(vt, bi32zero, loc);
+    bool knValid = true;
+    Bexpression *iti0 = be->indirect_expression(sB, ti0, knValid, loc);
+    Bexpression *far = be->struct_field_expression(iti0, 1, loc);
+    Bexpression *ar3 = be->array_index_expression(far, bi32zero, loc);
+    Bexpression *iar3 = be->indirect_expression(sA, ar3, knValid, loc);
+    Bexpression *fx = be->struct_field_expression(iar3, 1, loc);
+    h.mkLocal("q", bi64t, fx);
+
+  const char *exp = R"RAW_RESULT(
+      %index.2 = getelementptr [10 x { i1, [4 x { i64, i64 }*], i1 }*],
+           [10 x { i1, [4 x { i64, i64 }*], i1 }*]* %t1, i32 0, i32 0
+      %t1.index.ld.1 = load { i1, [4 x { i64, i64 }*], i1 }*,
+           { i1, [4 x { i64, i64 }*], i1 }** %index.2
+      %field.2 = getelementptr { i1, [4 x { i64, i64 }*], i1 },
+           { i1, [4 x { i64, i64 }*], i1 }* %t1.index.ld.1, i32 0, i32 1
+      %index.3 = getelementptr [4 x { i64, i64 }*],
+         [4 x { i64, i64 }*]* %field.2, i32 0, i32 0
+      %.field.index.ld.1 = load { i64, i64 }*,
+         { i64, i64 }** %index.3
+      %field.3 = getelementptr { i64, i64 },
+          { i64, i64 }* %.field.index.ld.1, i32 0, i32 1
+      %.field.ld.0 = load i64, i64* %field.3
+      store i64 %.field.ld.0, i64* %q
+  )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  }
+
+  bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 

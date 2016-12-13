@@ -127,17 +127,17 @@ void Bexpression::dump()
 {
   std::string s;
   llvm::raw_string_ostream os(s);
-  osdump(os, 0);
+  osdump(os, 0, false);
   std::cerr << os.str();
 }
 
-void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel) {
+void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse) {
   bool hitValue = false;
-  if (compositeInitPending()) {
+  if (! terse && compositeInitPending()) {
     indent(os, ilevel);
     os << "composite init pending:\n";
     for (auto exp : compositeInitContext().elementExpressions())
-      exp->osdump(os, ilevel+2);
+      exp->osdump(os, ilevel+2, terse);
   }
   for (auto inst : instructions()) {
     indent(os, ilevel);
@@ -146,11 +146,12 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel) {
       c = '*';
       hitValue = true;
     }
-    os << c;
+    if (! terse)
+      os << c;
     inst->print(os);
     os << "\n";
   }
-  if (!hitValue) {
+  if (!terse && !hitValue) {
     indent(os, ilevel);
     if (value())
       value()->print(os);
@@ -158,7 +159,7 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel) {
       os << "<nil value>";
     os << "\n";
   }
-  if (varExprPending()) {
+  if (!terse && varExprPending()) {
     const VarContext &vc = varContext();
     os << "var pending: lvalue=" <<  (vc.lvalue() ? "yes" : "no")
        << " addrLevel=" << vc.addrLevel() << "\n";
@@ -175,32 +176,39 @@ ExprListStatement *Llvm_backend::stmtFromExpr(Bexpression *expr) {
 void Bstatement::dump() {
   std::string s;
   llvm::raw_string_ostream os(s);
-  osdump(os, 0);
+  osdump(os, 0, false);
   std::cerr << os.str();
 }
 
-void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel)
+void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse)
 {
   switch (flavor()) {
   case ST_Compound: {
     CompoundStatement *cst = castToCompoundStatement();
-    indent(os, ilevel);
-    os << ((void*)this) << " {\n";
+    if (! terse) {
+      indent(os, ilevel);
+      os << ((void*)this) << " {\n";
+    }
     for (auto st : cst->stlist())
-      st->osdump(os, ilevel + 2);
-    indent(os, ilevel);
-    os << "}\n";
+      st->osdump(os, ilevel + 2, terse);
+    if (! terse) {
+      indent(os, ilevel);
+      os << "}\n";
+    }
     break;
   }
   case ST_ExprList: {
     ExprListStatement *elst = castToExprListStatement();
-    indent(os, ilevel);
-    os << ((void*)this) << " [\n";
-    for (auto expr : elst->expressions()) {
-      expr->osdump(os, ilevel + 2);
+    if (! terse) {
+      indent(os, ilevel);
+      os << ((void*)this) << " [\n";
     }
-    indent(os, ilevel);
-    os << "]\n";
+    for (auto expr : elst->expressions())
+      expr->osdump(os, ilevel + 2, terse);
+    if (! terse) {
+      indent(os, ilevel);
+      os << "]\n";
+    }
     break;
   }
   case ST_IfPlaceholder: {
@@ -209,16 +217,16 @@ void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel)
     os << "if:\n";
     indent(os, ilevel + 2);
     os << "cond:\n";
-    ifst->cond()->osdump(os, ilevel + 2);
+    ifst->cond()->osdump(os, ilevel + 2, terse);
     if (ifst->trueStmt()) {
       indent(os, ilevel + 2);
       os << "then:\n";
-      ifst->trueStmt()->osdump(os, ilevel + 2);
+      ifst->trueStmt()->osdump(os, ilevel + 2, terse);
     }
     if (ifst->falseStmt()) {
       indent(os, ilevel + 2);
       os << "else:\n";
-      ifst->falseStmt()->osdump(os, ilevel + 2);
+      ifst->falseStmt()->osdump(os, ilevel + 2, terse);
     }
     break;
   }
@@ -335,12 +343,12 @@ void IntegrityVisitor::dumpTag(const char *tag, void *ptr) {
 
 void IntegrityVisitor::dump(Bexpression *expr) {
   dumpTag("expr", (void*) expr);
-  expr->osdump(ss_, 0);
+  expr->osdump(ss_, 0, false);
 }
 
 void IntegrityVisitor::dump(Bstatement *stmt) {
   dumpTag("stmt", (void*) stmt);
-  stmt->osdump(ss_, 0);
+  stmt->osdump(ss_, 0, false);
 }
 
 void IntegrityVisitor::dump(llvm::Instruction *inst) {

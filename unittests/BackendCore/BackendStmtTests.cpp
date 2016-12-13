@@ -88,30 +88,35 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
 }
 
 TEST(BackendStmtTests, TestReturnStmt) {
-  LLVMContext C;
-  std::unique_ptr<Backend> be(go_get_backend(C));
 
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+
   Btype *bi64t = be->integer_type(false, 64);
+  Bvariable *loc1 = h.mkLocal("loc1", bi64t, mkInt64Const(be, 10));
+
+  // return loc1
   Location loc;
-  Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
-  Bstatement *is = be->init_statement(loc1, mkInt64Const(be.get(), 10));
-  std::vector<Bexpression *> vals;
   Bexpression *ve1 = be->var_expression(loc1, VE_rvalue, loc);
-  vals.push_back(ve1);
-  Bstatement *ret = be->return_statement(func, vals, loc);
-  EXPECT_EQ(repr(ret), "%loc1.ld.0 = load i64, i64* %loc1\n"
-            "ret i64 %loc1.ld.0");
-  Bstatement *cs = be->compound_statement(is, ret);
-  Bblock *block = mkBlockFromStmt(be.get(), func, cs);
+  Bstatement *ret = h.mkReturn(ve1);
+
+  const char *exp = R"RAW_RESULT(
+     %loc1.ld.0 = load i64, i64* %loc1
+     ret i64 %loc1.ld.0
+   )RAW_RESULT";
+  std::string reason;
+  bool equal = difftokens(exp, repr(ret), reason);
+  EXPECT_EQ("pass", equal ? "pass" : reason);
 
   // error handling
   std::vector<Bexpression *> bvals;
-  vals.push_back(be->error_expression());
-  Bstatement *bret = be->return_statement(func, vals, loc);
+  bvals.push_back(be->error_expression());
+  Bstatement *bret = be->return_statement(func, bvals, loc);
   EXPECT_EQ(bret, be->error_statement());
 
-  be->function_set_body(func, block);
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendStmtTests, TestLabelGotoStmts) {

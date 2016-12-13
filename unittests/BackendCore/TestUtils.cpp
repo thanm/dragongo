@@ -12,10 +12,10 @@
 namespace goBackendUnitTests {
 
 std::string trimsp(const std::string &s) {
-  size_t firstsp = s.find_first_not_of(' ');
+  size_t firstsp = s.find_first_not_of(" \n");
   if (firstsp == std::string::npos)
     return s;
-  size_t lastsp = s.find_last_not_of(' ');
+  size_t lastsp = s.find_last_not_of(" \n");
   return s.substr(firstsp, (lastsp - firstsp + 1));
 }
 
@@ -113,37 +113,65 @@ std::string repr(llvm::Type *t) {
   return trimsp(os.str());
 }
 
-Btype *mkBackendThreeFieldStruct(Backend *be) {
-  Btype *pfloat = be->pointer_type(be->float_type(32));
-  Btype *u64 = be->integer_type(true, 64);
-  std::vector<Backend::Btyped_identifier> fields = {
-      Backend::Btyped_identifier("f1", be->bool_type(), Location()),
-      Backend::Btyped_identifier("f2", pfloat, Location()),
-      Backend::Btyped_identifier("f3", u64, Location())};
+Btype *mkBackendStruct(Backend *be, ...)
+{
+  va_list ap;
+  va_start(ap, be);
+
+  std::vector<Backend::Btyped_identifier> fields;
+  Btype *ct = va_arg(ap, Btype *);
+  assert(ct);
+  while (ct != nullptr) {
+    Location loc;
+    const char *fieldName = va_arg(ap, const char *);
+    assert(fieldName);
+    fields.push_back(Backend::Btyped_identifier(fieldName, ct, loc));
+    ct = va_arg(ap, Btype *);
+  }
   return be->struct_type(fields);
+}
+
+Btype *mkBackendThreeFieldStruct(Backend *be) {
+  return mkBackendStruct(be,
+                         be->bool_type(), "f1",
+                         be->pointer_type(be->float_type(32)), "f2",
+                         be->integer_type(true, 64), "f3",
+                         nullptr);
+}
+
+llvm::StructType *mkLlvmStruct(llvm::LLVMContext *context, ...)
+{
+  va_list ap;
+  va_start(ap, context);
+
+  llvm::SmallVector<llvm::Type *, 64> smv;
+  llvm::Type *typ = va_arg(ap, llvm::Type *);
+  assert(typ);
+  while (typ != nullptr) {
+    smv.push_back(typ);
+    typ = va_arg(ap, llvm::Type *);
+  }
+  return llvm::StructType::get(*context, smv);
 }
 
 llvm::StructType *mkLlvmThreeFieldStruct(llvm::LLVMContext &context) {
-  llvm::SmallVector<llvm::Type *, 3> smv(3);
-  smv[0] = llvm::Type::getInt1Ty(context);
-  smv[1] = llvm::PointerType::get(llvm::Type::getFloatTy(context), 0);
-  smv[2] = llvm::IntegerType::get(context, 64);
-  return llvm::StructType::get(context, smv);
+  llvm::Type *flt = llvm::Type::getFloatTy(context);
+  return mkLlvmStruct(&context,
+                      llvm::Type::getInt1Ty(context),
+                      llvm::PointerType::get(flt, 0),
+                      llvm::IntegerType::get(context, 64),
+                      nullptr);
 }
 
-Btype *mkTwoFieldStruct(Backend *be, Btype *t1, Btype *t2) {
-  std::vector<Backend::Btyped_identifier> fields = {
-      Backend::Btyped_identifier("f1", t1, Location()),
-      Backend::Btyped_identifier("f2", t2, Location())};
-  return be->struct_type(fields);
+Btype *mkTwoFieldStruct(Backend *be, Btype *t1, Btype *t2)
+{
+  return mkBackendStruct(be, t1, "f1", t2, "f2", nullptr);
 }
 
-llvm::Type *mkTwoFieldLLvmStruct(llvm::LLVMContext &context, llvm::Type *t1,
-                                 llvm::Type *t2) {
-  llvm::SmallVector<llvm::Type *, 2> smv(2);
-  smv[0] = t1;
-  smv[1] = t2;
-  return llvm::StructType::get(context, smv);
+llvm::Type *mkTwoFieldLLvmStruct(llvm::LLVMContext &context,
+                                 llvm::Type *t1, llvm::Type *t2)
+{
+  return mkLlvmStruct(&context, t1, t2, nullptr);
 }
 
 Backend::Btyped_identifier mkid(Btype *t) {
@@ -327,42 +355,130 @@ void addExprToBlock(Backend *be, Bfunction *func,
 std::string repr(Bstatement *statement) {
   if (!statement)
     return "<null Bstatement>";
-  ExprListStatement *elst = statement->castToExprListStatement();
-  if (elst) {
-    std::stringstream ss;
-    bool first = true;
-    for (auto expr : elst->expressions()) {
-      if (!first)
-        ss << "\n";
-      first = false;
-      ss << repr(expr);
-    }
-    return ss.str();
-  }
-  CompoundStatement *cst = statement->castToCompoundStatement();
-  if (cst) {
-    std::stringstream ss;
-    for (auto st : cst->stlist())
-      ss << repr(st) << "\n";
-    return ss.str();
-  }
-  return "<unsupported stmt type>";
+  std::string res;
+  llvm::raw_string_ostream os(res);
+  bool terse = true;
+  statement->osdump(os, 0, terse);
+  return trimsp(os.str());
 }
 
 std::string repr(Bexpression *expr) {
   if (!expr)
     return "<null Bexpression>";
-  std::stringstream ss;
-  bool first = true;
-  for (auto inst : expr->instructions()) {
-    if (!first)
-      ss << "\n";
-    first = false;
-    ss << repr(inst);
+  std::string res;
+  llvm::raw_string_ostream os(res);
+  bool terse = true;
+  expr->osdump(os, 0, terse);
+  return trimsp(os.str());
+}
+
+FcnTestHarness::FcnTestHarness(const char *fcnName)
+    : context_()
+    , be_(new Llvm_backend(context_))
+    , func_(mkFunci32o64(be(), fcnName))
+    , entryBlock_(be()->block(func_, nullptr, emptyVarList_, loc_, loc_))
+    , curBlock_(be()->block(func_, nullptr, emptyVarList_, loc_, loc_))
+    , nextLabel_(nullptr)
+    , finished_(false)
+    , returnAdded_(false)
+{
+}
+
+FcnTestHarness::~FcnTestHarness()
+{
+  assert(finished_);
+}
+
+Bvariable *FcnTestHarness::mkLocal(const char *name,
+                              Btype *typ,
+                              Bexpression *init)
+{
+  Bvariable *v = be()->local_variable(func_, name, typ, true, loc_);
+  if (!init)
+    init = be()->zero_expression(typ);
+  Bstatement *is = be()->init_statement(v, init);
+  addStmtToBlock(be(), curBlock_, is);
+  return v;
+}
+
+void FcnTestHarness::mkAssign(Bexpression *lhs, Bexpression *rhs)
+{
+  Bstatement *as = be()->assignment_statement(lhs, rhs, loc_);
+  addStmtToBlock(be(), curBlock_, as);
+}
+
+Bstatement *FcnTestHarness::mkReturn(Bexpression *expr)
+{
+  std::vector<Bexpression *> vals;
+  vals.push_back(expr);
+  Bstatement *ret = be()->return_statement(func_, vals, loc_);
+  addStmtToBlock(be(), curBlock_, ret);
+  returnAdded_ = true;
+  return ret;
+}
+
+void FcnTestHarness::newBlock()
+{
+  // Create label for new block and append jump to current block
+  std::string lab = be()->namegen("_lab");
+  Blabel *blab = be()->label(func_, lab, loc_);
+  Bstatement *gots = be()->goto_statement(blab, loc_);
+  addStmtToBlock(be(), curBlock_, gots);
+
+  // Turn current block into statement and tack onto entry block. Weird,
+  // but this is the pardigm for gofrontend.
+  Bstatement *bst = be()->block_statement(curBlock_);
+  if (nextLabel_) {
+    Bstatement *ldef = be()->label_definition_statement(nextLabel_);
+    bst = be()->compound_statement(ldef, bst);
   }
-  if (first)
-    ss << repr(expr->value());
-  return ss.str();
+  addStmtToBlock(be(), entryBlock_, bst);
+  nextLabel_ = blab;
+  returnAdded_ = false;
+
+  // New block
+  curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
+}
+
+bool FcnTestHarness::expectBlock(const std::string &expected)
+{
+  std::string reason;
+  bool equal = difftokens(expected, repr(curBlock_), reason);
+  if (! equal) {
+    std::cerr << reason << "\n";
+    std::cerr << "expected dump:\n" << expected << "\n";
+    std::cerr << "block dump:\n" << repr(curBlock_) << "\n";
+  }
+  return equal;
+}
+
+bool FcnTestHarness::finish()
+{
+  // Tack on a return statement to the final block
+  if (! returnAdded_)
+    mkReturn(mkInt64Const(be(), 10101));
+
+  // Emit a label def for the pending block if needed
+  Bstatement *bst = be()->block_statement(curBlock_);
+  if (nextLabel_) {
+    Bstatement *ldef = be()->label_definition_statement(nextLabel_);
+    bst = be()->compound_statement(ldef, bst);
+  }
+
+  // Add current block as stmt to entry block
+  addStmtToBlock(be(), entryBlock_, bst);
+
+  // Set function body
+  be()->function_set_body(func_, entryBlock_);
+
+  // Verify module
+  bool broken = llvm::verifyModule(be()->module(), &llvm::dbgs());
+
+  // Mark finished
+  finished_ = true;
+
+  return broken;
+
 }
 
 } // end namespace goBackEndUnitTests

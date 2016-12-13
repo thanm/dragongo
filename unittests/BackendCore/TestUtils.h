@@ -43,7 +43,8 @@ std::string vectostr(const std::vector<std::string> &tv);
 // Tokenize the two strings, then diff the resulting token vectors,
 // returning TRUE if they are identical or FALSE if different (and
 // setting 'diffreason' to explanation of diff)
-bool difftokens(const std::string &expected, const std::string &result,
+bool difftokens(const std::string &expected,
+                const std::string &result,
                 std::string &diffreason);
 
 // Return TRUE if string 'text' contains instead of string 'pat'.
@@ -62,6 +63,13 @@ std::string repr(Bstatement *statement);
 
 // Return string representation of Bexpression (handling null ptr)
 std::string repr(Bexpression *expr);
+
+// Varargs helper for struct creation. Pass in pairs of
+// type/name fields, ending with null ptr.
+Btype *mkBackendStruct(Backend *be, ...);
+
+// Similar to the above but with LLVM types (no field names)
+llvm::StructType *mkLlvmStruct(llvm::LLVMContext *context, ...);
 
 // Create this struct using backend interfaces:
 //
@@ -134,6 +142,52 @@ void addStmtToBlock(Backend *be, Bblock *block, Bstatement *st);
 
 // Adds expression to block as expr statement.
 void addExprToBlock(Backend *be, Bfunction *f, Bblock *bl, Bexpression *e);
+
+class FcnTestHarness {
+ public:
+  // Create test harness, set up function with specified name
+  FcnTestHarness(const char *fcnName);
+  ~FcnTestHarness();
+
+  // Return pointer to backend
+  Llvm_backend *be() { return be_.get(); }
+
+  // Return current function
+  Bfunction *func() const { return func_; }
+
+  // Create a local variable in the function.
+  Bvariable *mkLocal(const char *name, Btype *typ, Bexpression *init = nullptr);
+
+  // Create an assignment LHS = RHS and append to block
+  void mkAssign(Bexpression *lhs, Bexpression *rhs);
+
+  // Append a return stmt to block
+  Bstatement *mkReturn(Bexpression *expr);
+
+  // Create a new block (prev block will jump to new one)
+  void newBlock();
+
+  // Verify that block contains specified contents. Return false
+  // and emit diagnostics if not.
+  bool expectBlock(const std::string &expected);
+
+  // Finish function:
+  // - attach current block to function
+  // - verify module, returning TRUE if module fails to verify
+  bool finish();
+
+ private:
+  llvm::LLVMContext context_;
+  std::unique_ptr<Llvm_backend> be_;
+  Bfunction *func_;
+  std::vector<Bvariable *> emptyVarList_;
+  Location loc_;
+  Bblock *entryBlock_;
+  Bblock *curBlock_;
+  Blabel *nextLabel_;
+  bool finished_;
+  bool returnAdded_;
+};
 
 } // end namespace goBackendUnitTests
 
