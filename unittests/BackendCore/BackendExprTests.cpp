@@ -1,4 +1,4 @@
-//===- llvm/tools/dragongo/unittests/BackendCore/BackendFcnTests.cpp ------===//
+//===- llvm/tools/dragongo/unittests/BackendCore/BackendExprTests.cpp ------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -824,7 +824,7 @@ TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendFcnTests, CreateFunctionCodeExpression) {
+TEST(BackendExprTests, CreateFunctionCodeExpression) {
 
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
@@ -843,12 +843,28 @@ TEST(BackendFcnTests, CreateFunctionCodeExpression) {
 
   const char *exp = R"RAW_RESULT(
     store i64 (i32, i32)* @foo, i64 (i32, i32)** %fploc
-    %bitcast.0 = ptrtoint i64 (i32, i32)* @foo to i64
-    store i64 %bitcast.0, i64* %ui
+    store i64 ptrtoint (i64 (i32, i32)* @foo to i64), i64* %ui
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+TEST(BackendExprTests, CreateNilPointerExpression) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bexpression *npe = be->nil_pointer_expression();
+
+  const char *exp = R"RAW_RESULT(
+    i64* null
+  )RAW_RESULT";
+
+  bool isOK = h.expectValue(npe->value(), exp);
+  EXPECT_TRUE(isOK && "Value does not have expected contents");
 
   bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");

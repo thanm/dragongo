@@ -277,4 +277,39 @@ TEST(BackendVarTests, MakeImmutableStructReference) {
   EXPECT_TRUE(ierr == be->error_variable());
 }
 
+TEST(BackendVarTests, ImmutableStructSetInit) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+
+  Location loc;
+  Btype *bt = be->bool_type();
+  Btype *pbt = be->pointer_type(bt);
+  Btype *uintptrt = be->integer_type(true, be->type_size(pbt));
+  Btype *desct = mkBackendStruct(be, uintptrt, "x", nullptr);
+  Bvariable *ims = be->immutable_struct("desc", "desc",
+                                        false, false, desct, loc);
+  Bexpression *fp = be->function_code_expression(func, loc);
+  Bexpression *confp = be->convert_expression(uintptrt, fp, loc);
+
+  std::vector<Bexpression *> vals;
+  vals.push_back(confp);
+  Bexpression *scon = be->constructor_expression(desct, vals, loc);
+  be->immutable_struct_set_init(ims, "", false, false,
+                                desct, loc, scon);
+
+  // Q: do we want weak_odr here?
+  const char *exp = R"RAW_RESULT(
+    @desc = weak_odr constant { i64 } { i64 ptrtoint
+    (i64 (i32, i32)* @foo to i64) }
+  )RAW_RESULT";
+
+  bool isOK = h.expectValue(ims->value(), exp);
+  EXPECT_TRUE(isOK && "Value does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 }

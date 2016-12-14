@@ -1469,8 +1469,12 @@ Bexpression *Llvm_backend::zero_expression(Btype *btype) {
 Bexpression *Llvm_backend::error_expression() { return errorExpression_.get(); }
 
 Bexpression *Llvm_backend::nil_pointer_expression() {
-  assert(false && "LLvm_backend::nil_pointer_expression not yet implemented");
-  return nullptr;
+
+  // What type should we assign a NIL pointer expression? This
+  // is something of a head-scratcher. For now use uintptr.
+  llvm::Type *pti = llvm::PointerType::get(llvmIntegerType_, addressSpace_);
+  Btype *uintptrt = makeAnonType(pti);
+  return zero_expression(uintptrt);
 }
 
 Bexpression *Llvm_backend::loadFromExpr(Bexpression *expr,
@@ -1810,12 +1814,12 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
 
   // Converting function pointer to function descriptor
   if (llvm::isa<llvm::Function>(val)) {
-    //assert(type->type() == llvmIntegerType_);
-    std::string n(namegen("bitcast"));
-    llvm::PtrToIntInst *pticast = new llvm::PtrToIntInst(val, type->type(), n);
-    Bexpression *rval = makeValueExpression(pticast, type, LocalScope);
+    llvm::Function *func = llvm::cast<llvm::Function>(val);
+    assert(type->type() == llvmIntegerType_);
+    llvm::Constant *pticast =
+        llvm::ConstantExpr::getPtrToInt(func, type->type());
+    Bexpression *rval = makeValueExpression(pticast, type, GlobalScope);
     rval->appendInstructions(expr->instructions());
-    rval->appendInstruction(pticast);
     return rval;
   }
 
@@ -1831,6 +1835,8 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
                                                     Location location) {
   if (bfunc == errorFunction_.get())
     return errorExpression_.get();
+
+  assert(llvm::isa<llvm::Constant>(bfunc->function()));
 
   // Look up pointer-to-function type
   Btype *fpBtype = makeAnonType(bfunc->function()->getType());
@@ -2703,7 +2709,14 @@ void Llvm_backend::immutable_struct_set_init(Bvariable *var,
                                              Btype *,
                                              Location,
                                              Bexpression *initializer) {
-  assert(false && "Llvm_backend::immutable_struct_set_init not yet impl");
+  if (var == errorVariable_.get() || initializer == errorExpression_.get())
+    return;
+
+  assert(llvm::isa<llvm::GlobalVariable>(var->value()));
+  llvm::GlobalVariable *gvar = llvm::cast<llvm::GlobalVariable>(var->value());
+  assert(llvm::isa<llvm::Constant>(var->value()));
+  llvm::Constant *econ = llvm::cast<llvm::Constant>(initializer->value());
+  gvar->setInitializer(econ);
 }
 
 // Return a reference to an immutable initialized data structure

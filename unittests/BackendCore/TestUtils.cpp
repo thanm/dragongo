@@ -440,6 +440,18 @@ void FcnTestHarness::newBlock()
   curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
 }
 
+bool FcnTestHarness::expectValue(llvm::Value *val, const std::string &expected)
+{
+  std::string reason;
+  bool equal = difftokens(expected, repr(val), reason);
+  if (! equal) {
+    std::cerr << reason << "\n";
+    std::cerr << "expected dump:\n" << expected << "\n";
+    std::cerr << "value dump:\n" << repr(val) << "\n";
+  }
+  return equal;
+}
+
 bool FcnTestHarness::expectBlock(const std::string &expected)
 {
   std::string reason;

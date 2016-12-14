@@ -171,6 +171,10 @@ class FcnTestHarness {
   // and emit diagnostics if not.
   bool expectBlock(const std::string &expected);
 
+  // Verify that value contains specified contents. Return false
+  // and emit diagnostics if not.
+  bool expectValue(llvm::Value *val, const std::string &expected);
+
   // Finish function:
   // - attach current block to function
   // - verify module, returning TRUE if module fails to verify
