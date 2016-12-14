@@ -308,6 +308,71 @@ TEST(BackendVarTests, ImmutableStructSetInit) {
   bool isOK = h.expectValue(ims->value(), exp);
   EXPECT_TRUE(isOK && "Value does not have expected contents");
 
+  // check that these don't crash
+  be->immutable_struct_set_init(be->error_variable(), "", false, false,
+                                desct, loc, scon);
+  be->immutable_struct_set_init(ims, "", false, false,
+                                desct, loc, be->error_expression());
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+TEST(BackendVarTests, ImplicitVariableSetInit) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+
+  Location loc;
+
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bst = mkTwoFieldStruct(be, bi32t, bi32t);
+
+  // Case 1: non-common, concrete init value.
+  bool isConst = false;
+  bool isHidden = false;
+  bool isCommon = false;
+
+  Bvariable *ims1 =
+      be->implicit_variable("first", "v1", bst,
+                            isHidden, isConst, isCommon, 8);
+  std::vector<Bexpression *> vals1;
+  vals1.push_back(mkInt32Const(be, 101));
+  vals1.push_back(mkInt32Const(be, 202));
+  Bexpression *con1 = be->constructor_expression(bst, vals1, loc);
+  be->implicit_variable_set_init(ims1, "x", bst,
+                                 isHidden, isConst, isCommon, con1);
+
+  const char *exp1 = R"RAW_RESULT(
+     @v1 = weak_odr global { i32, i32 } { i32 101, i32 202 }, align 8
+    )RAW_RESULT";
+
+  bool isOK1 = h.expectValue(ims1->value(), exp1);
+  EXPECT_TRUE(isOK1 && "Value does not have expected contents");
+
+  // Case 2: common, no init value.
+  isConst = true;
+  isCommon = true;
+  Bvariable *ims2 =
+      be->implicit_variable("second", "v2", bst,
+                            isHidden, isConst, isCommon, 8);
+  be->implicit_variable_set_init(ims2, "x", bst,
+                                 isHidden, isConst, isCommon, nullptr);
+
+  const char *exp2 = R"RAW_RESULT(
+    @v2 = weak_odr constant { i32, i32 } zeroinitializer, align 8
+    )RAW_RESULT";
+
+  bool isOK2 = h.expectValue(ims2->value(), exp2);
+  EXPECT_TRUE(isOK2 && "Value does not have expected contents");
+
+  // check that these don't crash
+  be->implicit_variable_set_init(be->error_variable(), "x", bst,
+                                 isHidden, isConst, isCommon, nullptr);
+  be->implicit_variable_set_init(be->error_variable(), "x", bst,
+                                 isHidden, isConst, isCommon,
+                                 be->error_expression());
+
   bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
 }

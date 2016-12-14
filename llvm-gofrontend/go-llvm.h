@@ -27,6 +27,7 @@ namespace llvm {
 class Argument;
 class ArrayType;
 class BasicBlock;
+class Constant;
 class DataLayout;
 class Function;
 class Instruction;
@@ -909,16 +910,22 @@ private:
                                    Btype *btype,
                                    ValExprScope scope);
 
+  enum ModVarConstant { MV_Constant, MV_NonConstant };
+  enum ModVarSec { MV_UniqueSection, MV_DefaultSection };
+  enum ModVarComdat { MV_InComdat, MV_NotInComdat };
+  enum ModVarVis { MV_HiddenVisibility, MV_DefaultVisibility };
+
   // Make a module-scope variable (static, global, or external).
   Bvariable *makeModuleVar(Btype *btype,
                            const std::string &name,
                            const std::string &asm_name,
                            Location location,
-                           bool isConstant,
-                           bool inUniqueSection,
-                           bool inComdat,
-                           bool isHiddenVisibility,
+                           ModVarConstant constant,
+                           ModVarSec inUniqueSection,
+                           ModVarComdat inComdat,
+                           ModVarVis isHiddenVisibility,
                            llvm::GlobalValue::LinkageTypes linkage,
+                           llvm::Constant *initializer,
                            unsigned alignmentInBytes = 0);
 
   // Create a Bexpression to hold a value being computed by the
@@ -1070,6 +1077,7 @@ private:
   Btype *complexFloatType_;
   Btype *complexDoubleType_;
   Btype *errorType_;
+  Btype *stringType_;
   llvm::Type *llvmVoidType_;
   llvm::Type *llvmPtrType_;
   llvm::Type *llvmSizeType_;

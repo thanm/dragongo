@@ -654,6 +654,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     , complexFloatType_(nullptr)
     , complexDoubleType_(nullptr)
     , errorType_(nullptr)
+    , stringType_(nullptr)
     , llvmVoidType_(nullptr)
     , llvmPtrType_(nullptr)
     , llvmSizeType_(nullptr)
@@ -688,6 +689,10 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   llvmFloatType_ = llvm::Type::getFloatTy(context_);
   llvmDoubleType_ = llvm::Type::getDoubleTy(context_);
   llvmLongDoubleType_ = llvm::Type::getFP128Ty(context_);
+
+  // Predefined string type
+  llvm::Type *st = llvm::PointerType::get(llvmInt8Type_, addressSpace_);
+  stringType_ = makeAnonType(st);
 
   // Create and record an error function. By marking it as varargs this will
   // avoid any collisions with things that the front end might create, since
@@ -1762,9 +1767,28 @@ Bexpression *Llvm_backend::complex_constant_expression(Btype *btype,
 
 // Make a constant string expression.
 
-Bexpression *Llvm_backend::string_constant_expression(const std::string &val) {
-  assert(false && "Llvm_backend::string_constant_expression not yet impl");
-  return nullptr;
+Bexpression *Llvm_backend::string_constant_expression(const std::string &val)
+{
+  if (val.size() == 0) {
+    llvm::Value *zer = llvm::Constant::getNullValue(stringType_->type());
+    return makeValueExpression(zer, stringType_, GlobalScope);
+  }
+
+  // At the moment strings are not commoned.
+  bool doAddNull = true;
+  llvm::Constant *scon =
+      llvm::ConstantDataArray::getString(context_,
+                                         llvm::StringRef(val),
+                                         doAddNull);
+  Bvariable *svar =
+      makeModuleVar(makeAnonType(scon->getType()),
+                    "", "", Location(), MV_Constant, MV_DefaultSection,
+                    MV_NotInComdat, MV_DefaultVisibility,
+                    llvm::GlobalValue::PrivateLinkage, scon, 1);
+  llvm::Constant *varval = llvm::cast<llvm::Constant>(svar->value());
+  llvm::Constant *bitcast =
+      llvm::ConstantExpr::getBitCast(varval, stringType_->type());
+  return makeValueExpression(bitcast, stringType_, LocalScope);
 }
 
 // Make a constant boolean expression.
@@ -2484,11 +2508,12 @@ Llvm_backend::makeModuleVar(Btype *btype,
                             const std::string &name,
                             const std::string &asm_name,
                             Location location,
-                            bool isConstant,
-                            bool inUniqueSection,
-                            bool inComdat,
-                            bool isHiddenVisibility,
+                            ModVarConstant isConstant,
+                            ModVarSec inUniqueSection,
+                            ModVarComdat inComdat,
+                            ModVarVis isHiddenVisibility,
                             llvm::GlobalValue::LinkageTypes linkage,
+                            llvm::Constant *initializer,
                             unsigned alignment)
 
 {
@@ -2499,20 +2524,23 @@ Llvm_backend::makeModuleVar(Btype *btype,
   assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
 
   // FIXME: add support for this
-  assert(inUniqueSection == false);
+  assert(inUniqueSection == MV_DefaultSection);
 
   // FIXME: add support for this
-  assert(inComdat == false);
+  assert(inComdat == MV_NotInComdat);
 
   // FIXME: add DIGlobalVariable to debug info for this variable
 
   llvm::Constant *init = nullptr;
   llvm::GlobalVariable *glob = new llvm::GlobalVariable(
-      *module_.get(), btype->type(), isConstant, linkage, init, asm_name);
-  if (isHiddenVisibility)
+      *module_.get(), btype->type(), isConstant == MV_Constant,
+      linkage, init, asm_name);
+  if (isHiddenVisibility == MV_HiddenVisibility)
     glob->setVisibility(llvm::GlobalValue::HiddenVisibility);
   if (alignment)
     glob->setAlignment(alignment);
+  if (initializer)
+    glob->setInitializer(initializer);
   bool addressTaken = true; // for now
   Bvariable *bv =
       new Bvariable(btype, location, name, GlobalVar, addressTaken, glob);
@@ -2534,12 +2562,14 @@ Bvariable *Llvm_backend::global_variable(const std::string &var_name,
   llvm::GlobalValue::LinkageTypes linkage =
       (is_external || is_hidden ? llvm::GlobalValue::ExternalLinkage
        : llvm::GlobalValue::InternalLinkage);
-  bool isConstant = false;
-  bool isComdat = false;
+  ModVarSec inUniqSec =
+      (in_unique_section ? MV_UniqueSection : MV_DefaultSection);
+  ModVarVis varVis =
+      (is_hidden ? MV_HiddenVisibility : MV_DefaultVisibility);
   Bvariable *gvar =
       makeModuleVar(btype, var_name, asm_name, location,
-                    isConstant, in_unique_section, isComdat,
-                    is_hidden, linkage);
+                    MV_NonConstant, inUniqSec, MV_NotInComdat,
+                    varVis, linkage, nullptr);
   return gvar;
 }
 
@@ -2642,13 +2672,16 @@ Bvariable *Llvm_backend::implicit_variable(const std::string &name,
        : llvm::GlobalValue::WeakODRLinkage);
 
   // bool isComdat = is_common;
-  bool isComdat = false; // for now
-  // bool inUniqueSection = true;
-  bool inUniqueSection = false; // for now
+  ModVarComdat inComdat = MV_NotInComdat; // for now
+  ModVarSec inUniqSec = MV_DefaultSection; // override for now
+  ModVarVis varVis =
+      (is_hidden ? MV_HiddenVisibility : MV_DefaultVisibility);
+  ModVarConstant isConst = (is_constant ? MV_Constant : MV_NonConstant);
+
   Bvariable *gvar =
       makeModuleVar(btype, name, asm_name, Location(),
-                    is_constant, inUniqueSection, isComdat,
-                    is_hidden, linkage, alignment);
+                    isConst, inUniqSec, inComdat,
+                    varVis, linkage, nullptr, alignment);
   return gvar;
 }
 
@@ -2656,10 +2689,18 @@ Bvariable *Llvm_backend::implicit_variable(const std::string &name,
 // This is where we finish compiling the variable.
 
 void Llvm_backend::implicit_variable_set_init(Bvariable *var,
-                                              const std::string &, Btype *,
+                                              const std::string &,
+                                              Btype *type,
                                               bool, bool, bool is_common,
                                               Bexpression *init) {
-  assert(false && "Llvm_backend::implicit_variable_set_init not yet impl");
+
+  if (init != nullptr && init == errorExpression_.get())
+    return;
+  if (var == errorVariable_.get())
+    return;
+  if (!init)
+    init = zero_expression(type);
+  global_variable_set_init(var, init);
 }
 
 // Return a reference to an implicit variable defined in another package.
@@ -2688,14 +2729,15 @@ Bvariable *Llvm_backend::immutable_struct(const std::string &name,
   llvm::GlobalValue::LinkageTypes linkage =
       (is_hidden ? llvm::GlobalValue::ExternalLinkage
        : llvm::GlobalValue::WeakODRLinkage);
-  bool isConstant = true;
-  // bool isComdat = is_common;
-  bool isComdat = false; // for now
-  bool inUniqueSection = false; // for now
+
+  ModVarComdat inComdat = MV_NotInComdat; // for now
+  ModVarSec inUniqueSec = MV_DefaultSection; // override for now
+  ModVarVis varVis =
+      (is_hidden ? MV_HiddenVisibility : MV_DefaultVisibility);
   Bvariable *gvar =
       makeModuleVar(btype, name, asm_name, location,
-                    isConstant, inUniqueSection, isComdat,
-                    is_hidden, linkage);
+                    MV_Constant, inUniqueSec, inComdat,
+                    varVis, linkage, nullptr);
   return gvar;
 }
 

@@ -870,4 +870,31 @@ TEST(BackendExprTests, CreateNilPointerExpression) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendExprTests, CreateStringConstantExpressions) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+
+  {
+    Bexpression *snil = be->string_constant_expression("");
+    const char *exp = R"RAW_RESULT(
+    i8* null
+    )RAW_RESULT";
+    bool isOK = h.expectValue(snil->value(), exp);
+    EXPECT_TRUE(isOK && "Value does not have expected contents");
+  }
+
+  {
+    Bexpression *sblah = be->string_constant_expression("blah");
+    const char *exp = R"RAW_RESULT(
+    i8* getelementptr inbounds ([5 x i8], [5 x i8]* @0, i32 0, i32 0)
+    )RAW_RESULT";
+    bool isOK = h.expectValue(sblah->value(), exp);
+    EXPECT_TRUE(isOK && "Value does not have expected contents");
+  }
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 }
