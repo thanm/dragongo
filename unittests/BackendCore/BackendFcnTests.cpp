@@ -144,4 +144,5 @@ TEST(BackendFcnTests, MakeBlocks) {
   ASSERT_TRUE(bb != nullptr);
   delete bb;
 }
+
 }

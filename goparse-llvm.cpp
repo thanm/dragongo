@@ -125,8 +125,9 @@ static Llvm_backend *init_gogo(TargetMachine *Target,
 #endif
 
   struct go_create_gogo_args args;
-  args.int_type_size = 4; // FIXME: get from target
-  args.pointer_size = Target->getPointerSize();
+  unsigned bpi = Target->getPointerSize() * 8;
+  args.int_type_size = bpi;
+  args.pointer_size = bpi;
   args.pkgpath = PackagePath.empty() ? NULL : PackagePath.c_str();
   args.prefix = PackagePrefix.empty() ? NULL : PackagePrefix.c_str();
   args.relative_import_path = RelativeImportPath.empty() ? NULL : RelativeImportPath.c_str();

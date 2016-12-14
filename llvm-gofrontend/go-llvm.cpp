@@ -44,7 +44,7 @@ void Btype::dump()
   std::string s;
   llvm::raw_string_ostream os(s);
   osdump(os, 0);
-  std::cerr << os.str();
+  std::cerr << os.str() << "\n";
 }
 
 void Btype::osdump(llvm::raw_ostream &os, unsigned ilevel) {
@@ -513,8 +513,9 @@ void Llvm_backend::enforce_tree_integrity(Bstatement *s)
   }
 }
 
-Bfunction::Bfunction(llvm::Function *f)
-    : function_(f), labelCount_(0), splitStack_(YesSplit) {}
+Bfunction::Bfunction(llvm::Function *f, const std::string &asmName)
+    : function_(f), asmName_(asmName), labelCount_(0),
+      splitStack_(YesSplit) {}
 
 Bfunction::~Bfunction() {
   for (auto ais : allocas_)
@@ -697,8 +698,9 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   llvm::FunctionType *eft = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context_), elems, isVarargs);
   llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
-  errorFunction_.reset(
-      new Bfunction(llvm::Function::Create(eft, plinkage, "", module_.get())));
+  llvm::Function *ef = llvm::Function::Create(eft, plinkage, "",
+                                              module_.get());
+  errorFunction_.reset(new Bfunction(ef, ""));
 
   // Reuse the error function as the value for error_expression
   errorExpression_.reset(
@@ -1003,16 +1005,6 @@ Btype *Llvm_backend::elementTypeByIndex(Btype *btype, unsigned field_index)
   }
 }
 
-#if 0
-Btype *Llvm_backend::elementType(Btype *artype)
-{
-  assert(artype);
-  auto it = arrayElemTypeMap_.find(artype);
-  assert(it != arrayElemTypeMap_.end());
-  return it->second;
-}
-#endif
-
 // LLVM doesn't directly support placeholder types other than opaque
 // structs, so the general strategy for placeholders is to create an
 // opaque struct (corresponding to the thing being pointed to) and then
@@ -1024,8 +1016,6 @@ Btype *Llvm_backend::elementType(Btype *artype)
 llvm::Type *Llvm_backend::makeOpaqueLlvmType() {
   return llvm::StructType::create(context_);
 }
-
-
 
 // Create a placeholder for a pointer type.
 
@@ -1280,11 +1270,11 @@ void Llvm_backend::defineIntrinsicBuiltin(const char *name, const char *libname,
 
 void Llvm_backend::defineBuiltinFcn(const char *name, const char *libname,
                                     llvm::Function *fcn) {
-  Bfunction *bfunc = new Bfunction(fcn);
+  Bfunction *bfunc = new Bfunction(fcn, name);
   assert(builtinMap_.find(name) == builtinMap_.end());
   builtinMap_[name] = bfunc;
   if (libname) {
-    Bfunction *bfunc = new Bfunction(fcn);
+    Bfunction *bfunc = new Bfunction(fcn, libname);
     assert(builtinMap_.find(libname) == builtinMap_.end());
     builtinMap_[libname] = bfunc;
   }
@@ -1815,9 +1805,23 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   if (expr->btype() == type)
     return expr;
 
+  llvm::Value *val = expr->value();
+  assert(val);
+
+  // Converting function pointer to function descriptor
+  if (llvm::isa<llvm::Function>(val)) {
+    //assert(type->type() == llvmIntegerType_);
+    std::string n(namegen("bitcast"));
+    llvm::PtrToIntInst *pticast = new llvm::PtrToIntInst(val, type->type(), n);
+    Bexpression *rval = makeValueExpression(pticast, type, LocalScope);
+    rval->appendInstructions(expr->instructions());
+    rval->appendInstruction(pticast);
+    return rval;
+  }
+
   // no real implementation yet
-  assert(expr->value());
   assert(type->type() == expr->value()->getType());
+
   return expr;
 }
 
@@ -1825,8 +1829,14 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
 
 Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
                                                     Location location) {
-  assert(false && "Llvm_backend::function_code_expression not yet impl");
-  return nullptr;
+  if (bfunc == errorFunction_.get())
+    return errorExpression_.get();
+
+  // Look up pointer-to-function type
+  Btype *fpBtype = makeAnonType(bfunc->function()->getType());
+
+  // Return a pointer-to-function value expression
+  return makeValueExpression(bfunc->function(), fpBtype, GlobalScope);
 }
 
 llvm::Instruction *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
@@ -2774,7 +2784,7 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   if (!is_inlinable)
     fcn->addFnAttr(llvm::Attribute::NoInline);
 
-  Bfunction *bfunc = new Bfunction(fcn);
+  Bfunction *bfunc = new Bfunction(fcn, asm_name);
 
   // TODO: unique section support. llvm::GlobalObject has support for
   // setting COMDAT groups and section names, but nothing to manage how

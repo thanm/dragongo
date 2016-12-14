@@ -824,4 +824,34 @@ TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendFcnTests, CreateFunctionCodeExpression) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+  Location loc;
+
+  // Assign function address to local variable
+  Bexpression *fp = be->function_code_expression(func, loc);
+  h.mkLocal("fploc", fp->btype(), fp);
+
+  // Cast function to pointer-sized int and store to local
+  Btype *bt = be->bool_type();
+  Btype *pbt = be->pointer_type(bt);
+  Btype *uintptrt = be->integer_type(true, be->type_size(pbt));
+  h.mkLocal("ui", uintptrt, be->convert_expression(uintptrt, fp, loc));
+
+  const char *exp = R"RAW_RESULT(
+    store i64 (i32, i32)* @foo, i64 (i32, i32)** %fploc
+    %bitcast.0 = ptrtoint i64 (i32, i32)* @foo to i64
+    store i64 %bitcast.0, i64* %ui
+  )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 }

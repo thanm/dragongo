@@ -455,14 +455,16 @@ class Bblock : public CompoundStatement {};
 
 class Bfunction {
 public:
-  Bfunction(llvm::Function *f);
+  Bfunction(llvm::Function *f, const std::string &asmName);
   ~Bfunction();
 
   llvm::Function *function() const { return function_; }
+  const std::string &asmName() const { return asmName_; }
 
   enum SplitStackDisposition { YesSplit, NoSplit };
   void setSplitStack(SplitStackDisposition disp) { splitStack_ = disp; }
   SplitStackDisposition splitStack() const { return splitStack_; }
+
 
   // Add a local variable
   Bvariable *local_variable(const std::string &name,
@@ -522,6 +524,7 @@ private:
   std::vector<Bstatement *> labelmap_;
   std::vector<Blabel *> labels_;
   llvm::Function *function_;
+  std::string asmName_;
   unsigned labelCount_;
   SplitStackDisposition splitStack_;
 };
