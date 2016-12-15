@@ -2523,13 +2523,14 @@ Llvm_backend::makeModuleVar(Btype *btype,
                             llvm::GlobalValue::LinkageTypes linkage,
                             llvm::Constant *initializer,
                             unsigned alignment)
-
 {
   if (btype == errorType_)
     return errorVariable_.get();
 
+#if 0
   // FIXME: add code to insure non-zero size
   assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
+#endif
 
   // FIXME: add support for this
   assert(inUniqueSection == MV_DefaultSection);
