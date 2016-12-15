@@ -1522,11 +1522,19 @@ Bexpression *Llvm_backend::indirect_expression(Btype *btype,
 
 Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
                                               Location location) {
+  if (bexpr == errorExpression_.get())
+    return errorExpression_.get();
+
+  // String_expression::do_get_backend() in gofrontend
+  // seems to want to take the address of a string constant--
+  // for now just treat the "&" operator as a no-op.
+  if (! bexpr->varExprPending()) {
+    assert(bexpr->value()->getType() == stringType_->type() &&
+           llvm::isa<llvm::Constant>(bexpr->value()));
+    return bexpr;
+  }
+
   Btype *pt = pointer_type(bexpr->btype());
-
-  // we should not be taking the address of something not variable
-  assert(bexpr->varExprPending());
-
   Bexpression *rval = new Bexpression(bexpr->value(), pt, bexpr->tag());
   const VarContext &vc = bexpr->varContext();
   rval->setVarExprPending(vc.lvalue(), vc.addrLevel() + 1);
