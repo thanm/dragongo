@@ -197,21 +197,19 @@ TEST(BackendExprTests, MakeVarExpressions) {
 }
 
 TEST(BackendExprTests, TestCompareOps) {
-  LLVMContext C;
-
-  std::unique_ptr<Backend> be(go_get_backend(C));
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
 
   Operator optotest[] = {OPERATOR_EQEQ, OPERATOR_NOTEQ, OPERATOR_LT,
                          OPERATOR_LE,   OPERATOR_GT,    OPERATOR_GE};
 
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
-
-  Bexpression *beic = mkInt64Const(be.get(), 9);
-  Bexpression *beic2 = mkInt64Const(be.get(), 3);
-  Bexpression *beuc = mkUint64Const(be.get(), 9);
-  Bexpression *beuc2 = mkUint64Const(be.get(), 3);
-  Bexpression *befc = mkFloat64Const(be.get(), 9.0);
-  Bexpression *befc2 = mkFloat64Const(be.get(), 3.0);
+  Bexpression *beic = mkInt64Const(be, 9);
+  Bexpression *beic2 = mkInt64Const(be, 3);
+  Bexpression *beuc = mkUint64Const(be, 9);
+  Bexpression *beuc2 = mkUint64Const(be, 3);
+  Bexpression *befc = mkFloat64Const(be, 9.0);
+  Bexpression *befc2 = mkFloat64Const(be, 3.0);
   std::vector<std::pair<Bexpression *, Bexpression *>> valtotest;
   valtotest.push_back(std::make_pair(beic, beic2));
   valtotest.push_back(std::make_pair(beuc, beuc2));
@@ -219,10 +217,8 @@ TEST(BackendExprTests, TestCompareOps) {
 
   Location loc;
   Btype *boolt = be->bool_type();
-  Bvariable *loc1 = be->local_variable(func, "loc1", boolt, true, loc);
   Bexpression *trueval = be->boolean_constant_expression(true);
-  Bstatement *is = be->init_statement(loc1, trueval);
-  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+  h.mkLocal("loc1", boolt, trueval);
 
   for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
     Bexpression *bleft = valtotest[tidx].first;
@@ -230,7 +226,7 @@ TEST(BackendExprTests, TestCompareOps) {
     for (auto op : optotest) {
       Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
       Bstatement *es = be->expression_statement(func, cmp);
-      addStmtToBlock(be.get(), block, es);
+      h.addStmt(es);
     }
   }
 
@@ -256,96 +252,74 @@ TEST(BackendExprTests, TestCompareOps) {
     %fcmp.5 = fcmp oge double 9.000000e+00, 3.000000e+00
     )RAW_RESULT";
 
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-
-  std::string reason;
-  bool equal = difftokens(exp, repr(block), reason);
-  EXPECT_EQ("pass", equal ? "pass" : reason);
-
-  be->function_set_body(func, block);
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendExprTests, TestArithOps) {
-  LLVMContext C;
-
-  std::unique_ptr<Backend> be(go_get_backend(C));
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
 
   Operator optotest[] = {OPERATOR_PLUS};
 
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
-
-  Bexpression *beic = mkInt64Const(be.get(), 9);
-  Bexpression *beic2 = mkInt64Const(be.get(), 3);
-  Bexpression *befc = mkFloat64Const(be.get(), 9.0);
-  Bexpression *befc2 = mkFloat64Const(be.get(), 3.0);
+  Bexpression *beic = mkInt64Const(be, 9);
+  Bexpression *beic2 = mkInt64Const(be, 3);
+  Bexpression *befc = mkFloat64Const(be, 9.0);
+  Bexpression *befc2 = mkFloat64Const(be, 3.0);
   std::vector<std::pair<Bexpression *, Bexpression *>> valtotest;
   valtotest.push_back(std::make_pair(beic, beic2));
   valtotest.push_back(std::make_pair(befc, befc2));
 
   Location loc;
-  Btype *boolt = be->bool_type();
-  Bvariable *loc1 = be->local_variable(func, "loc1", boolt, true, loc);
-  Bexpression *trueval = be->boolean_constant_expression(true);
-  Bstatement *is = be->init_statement(loc1, trueval);
-  Bblock *block = mkBlockFromStmt(be.get(), func, is);
-
   for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
     Bexpression *bleft = valtotest[tidx].first;
     Bexpression *bright = valtotest[tidx].second;
     for (auto op : optotest) {
-      Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
+      Bexpression *cmp = be->binary_expression(op, bleft, bright, loc);
       Bstatement *es = be->expression_statement(func, cmp);
-      addStmtToBlock(be.get(), block, es);
+      h.addStmt(es);
     }
   }
 
   const char *exp = R"RAW_RESULT(
-    store i1 true, i1* %loc1
     %add.0 = add i64 9, 3
     %fadd.0 = fadd double 9.000000e+00, 3.000000e+00
   )RAW_RESULT";
 
-  std::string reason;
-  bool equal = difftokens(exp, repr(block), reason);
-  EXPECT_EQ("pass", equal ? "pass" : reason);
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  be->function_set_body(func, block);
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendExprTests, TestMoreArith) {
-  LLVMContext C;
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
 
-  std::unique_ptr<Backend> be(go_get_backend(C));
-
-  // var x int64, y = 10, z = 11, w = 12
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  // var x int64, y = 9, z = 10, w = 11
   Btype *bi64t = be->integer_type(false, 64);
-  Location loc;
-  Bvariable *x = be->local_variable(func, "x", bi64t, true, loc);
-  Bvariable *y = be->local_variable(func, "y", bi64t, true, loc);
-  Bvariable *z = be->local_variable(func, "z", bi64t, true, loc);
-  Bvariable *w = be->local_variable(func, "w", bi64t, true, loc);
-  Bexpression *beic9 = mkInt64Const(be.get(), 9);
-  Bstatement *isy = be->init_statement(y, beic9);
-  Bblock *block = mkBlockFromStmt(be.get(), func, isy);
-  Bexpression *beic10 = mkInt64Const(be.get(), 10);
-  Bstatement *isz = be->init_statement(z, beic10);
-  addStmtToBlock(be.get(), block, isz);
-  Bexpression *beic11 = mkInt64Const(be.get(), 11);
-  Bstatement *isw = be->init_statement(w, beic11);
-  addStmtToBlock(be.get(), block, isw);
+  Bvariable *x = h.mkLocal("x", bi64t);
+  Bvariable *y = h.mkLocal("y", bi64t, mkInt64Const(be, 9));
+  Bvariable *z = h.mkLocal("z", bi64t, mkInt64Const(be, 10));
+  Bvariable *w = h.mkLocal("w", bi64t, mkInt64Const(be, 11));
 
   // x = y + z + w
+  Location loc;
   Bexpression *vey = be->var_expression(y, VE_rvalue, loc);
   Bexpression *vez = be->var_expression(z, VE_rvalue, loc);
   Bexpression *vew = be->var_expression(w, VE_rvalue, loc);
   Bexpression *ypz = be->binary_expression(OPERATOR_PLUS, vey, vez, loc);
   Bexpression *ypzpw = be->binary_expression(OPERATOR_PLUS, ypz, vew, loc);
   Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
-  Bstatement *as = be->assignment_statement(vex, ypzpw, loc);
-  addStmtToBlock(be.get(), block, as);
+  h.mkAssign(vex, ypzpw);
 
   const char *exp = R"RAW_RESULT(
+  store i64 0, i64* %x
   store i64 9, i64* %y
   store i64 10, i64* %z
   store i64 11, i64* %w
@@ -357,11 +331,11 @@ TEST(BackendExprTests, TestMoreArith) {
   store i64 %add.1, i64* %x
   )RAW_RESULT";
 
-  std::string reason;
-  bool equal = difftokens(exp, repr(block), reason);
-  EXPECT_EQ("pass", equal ? "pass" : reason);
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  be->function_set_body(func, block);
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendExprTests, TestAddrAndIndirection) {
@@ -375,13 +349,13 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
   Location loc;
   Bvariable *y = be->local_variable(func, "y", bi64t, true, loc);
   Bexpression *beic11 = mkInt64Const(be.get(), 10);
-  Bstatement *isy = be->init_statement(y, beic11);
+  Bstatement *isy = be->init_statement(func, y, beic11);
   Bblock *block = mkBlockFromStmt(be.get(), func, isy);
 
   // var x *int64 = nil
   Btype *bpi64t = be->pointer_type(bi64t);
   Bvariable *x = be->local_variable(func, "x", bpi64t, true, loc);
-  Bstatement *isx = be->init_statement(x, be->zero_expression(bpi64t));
+  Bstatement *isx = be->init_statement(func, x, be->zero_expression(bpi64t));
   addStmtToBlock(be.get(), block, isx);
 
   {
@@ -389,7 +363,7 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
     Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
     Bexpression *vey = be->var_expression(y, VE_rvalue, loc);
     Bexpression *ady = be->address_expression(vey, loc);
-    Bstatement *as = be->assignment_statement(vex, ady, loc);
+    Bstatement *as = be->assignment_statement(func, vex, ady, loc);
     addStmtToBlock(be.get(), block, as);
   }
 
@@ -399,7 +373,7 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
     Bexpression *vex = be->var_expression(x, VE_rvalue, loc);
     bool knValid = false;
     Bexpression *indx1 = be->indirect_expression(bi64t, vex, knValid, loc);
-    Bstatement *as = be->assignment_statement(vey, indx1, loc);
+    Bstatement *as = be->assignment_statement(func, vey, indx1, loc);
     addStmtToBlock(be.get(), block, as);
   }
 
@@ -408,7 +382,7 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
     Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
     Bexpression *indx = be->indirect_expression(bi64t, vex, false, loc);
     Bexpression *beic3 = mkInt64Const(be.get(), 3);
-    Bstatement *as = be->assignment_statement(indx, beic3, loc);
+    Bstatement *as = be->assignment_statement(func, indx, beic3, loc);
     addStmtToBlock(be.get(), block, as);
   }
 
@@ -460,7 +434,7 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   Btype *s2t = mkBackendStruct(be.get(), pbt, "f1", bi32t, "f2", nullptr);
   Bvariable *loc1 = be->local_variable(func, "loc1", s2t, true, loc);
   Bexpression *bszero = be->zero_expression(s2t);
-  Bstatement *is = be->init_statement(loc1, bszero);
+  Bstatement *is = be->init_statement(func, loc1, bszero);
   Bblock *block = mkBlockFromStmt(be.get(), func, is);
 
   // var loc2 *X = &loc1
@@ -468,7 +442,7 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   Bvariable *loc2 = be->local_variable(func, "loc2", ps2t, true, loc);
   Bexpression *bl1vex = be->var_expression(loc1, VE_rvalue, loc);
   Bexpression *adl1 = be->address_expression(bl1vex, loc);
-  Bstatement *isx = be->init_statement(loc2, adl1);
+  Bstatement *isx = be->init_statement(func, loc2, adl1);
   addStmtToBlock(be.get(), block, isx);
 
   // x := loc1.f2
@@ -476,7 +450,7 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
   Bexpression *sex = be->var_expression(loc1, VE_rvalue, loc);
   Bexpression *fex = be->struct_field_expression(sex, 1, loc);
-  Bstatement *as = be->assignment_statement(vex, fex, loc);
+  Bstatement *as = be->assignment_statement(func, vex, fex, loc);
   addStmtToBlock(be.get(), block, as);
 
   // var b2 bool
@@ -486,7 +460,7 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   Bexpression *bfex = be->struct_field_expression(lvex, 0, loc);
   Bexpression *b2ex = be->var_expression(b2, VE_rvalue, loc);
   Bexpression *adb2 = be->address_expression(b2ex, loc);
-  Bstatement *as2 = be->assignment_statement(bfex, adb2, loc);
+  Bstatement *as2 = be->assignment_statement(func, bfex, adb2, loc);
   addStmtToBlock(be.get(), block, as2);
 
   // var b2 bool
@@ -496,7 +470,7 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   Bexpression *lindx = be->indirect_expression(s2t, lvexi, knValid, loc);
   Bexpression *bfex2 = be->struct_field_expression(lindx, 1, loc);
   Bexpression *bc2 = mkInt32Const(be.get(), 2);
-  Bstatement *as3 = be->assignment_statement(bfex2, bc2, loc);
+  Bstatement *as3 = be->assignment_statement(func, bfex2, bc2, loc);
   addStmtToBlock(be.get(), block, as3);
 
   // return 10101
@@ -610,7 +584,7 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   Bexpression *scon1 =
       be->constructor_expression(s2t, vals1, loc);
   Bvariable *loc1 = be->local_variable(func, "loc1", s2t, true, loc);
-  Bstatement *is1 = be->init_statement(loc1, scon1);
+  Bstatement *is1 = be->init_statement(func, loc1, scon1);
   Bblock *block = mkBlockFromStmt(be.get(), func, is1);
 
   // var loc2 X = { &param1, loc1.f2 }
@@ -624,7 +598,7 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   vals2.push_back(fex);
   Bexpression *scon2 = be->constructor_expression(s2t, vals2, loc);
   Bvariable *loc2 = be->local_variable(func, "loc2", s2t, true, loc);
-  Bstatement *is2 = be->init_statement(loc2, scon2);
+  Bstatement *is2 = be->init_statement(func, loc2, scon2);
   addStmtToBlock(be.get(), block, is2);
 
   // return 10101

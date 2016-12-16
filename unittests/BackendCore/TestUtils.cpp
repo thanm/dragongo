@@ -390,20 +390,20 @@ FcnTestHarness::~FcnTestHarness()
 }
 
 Bvariable *FcnTestHarness::mkLocal(const char *name,
-                              Btype *typ,
-                              Bexpression *init)
+                                   Btype *typ,
+                                   Bexpression *init)
 {
   Bvariable *v = be()->local_variable(func_, name, typ, true, loc_);
   if (!init)
     init = be()->zero_expression(typ);
-  Bstatement *is = be()->init_statement(v, init);
+  Bstatement *is = be()->init_statement(func_, v, init);
   addStmtToBlock(be(), curBlock_, is);
   return v;
 }
 
 void FcnTestHarness::mkAssign(Bexpression *lhs, Bexpression *rhs)
 {
-  Bstatement *as = be()->assignment_statement(lhs, rhs, loc_);
+  Bstatement *as = be()->assignment_statement(func_, lhs, rhs, loc_);
   addStmtToBlock(be(), curBlock_, as);
 }
 
@@ -415,6 +415,11 @@ Bstatement *FcnTestHarness::mkReturn(Bexpression *expr)
   addStmtToBlock(be(), curBlock_, ret);
   returnAdded_ = true;
   return ret;
+}
+
+void FcnTestHarness::addStmt(Bstatement *stmt)
+{
+  addStmtToBlock(be(), curBlock_, stmt);
 }
 
 void FcnTestHarness::newBlock()

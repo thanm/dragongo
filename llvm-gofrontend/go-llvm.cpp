@@ -1018,15 +1018,15 @@ Btype *Llvm_backend::elementTypeByIndex(Btype *btype, unsigned field_index)
 // out the name/location information passed into the placeholder type
 // creation routines.
 
-llvm::Type *Llvm_backend::makeOpaqueLlvmType() {
-  return llvm::StructType::create(context_);
+llvm::Type *Llvm_backend::makeOpaqueLlvmType(const char *tag) {
+  return llvm::StructType::create(context_, namegen(tag));
 }
 
 // Create a placeholder for a pointer type.
 
 Btype *Llvm_backend::placeholder_pointer_type(const std::string &name,
                                               Location location, bool) {
-  llvm::Type *opaque = makeOpaqueLlvmType();
+  llvm::Type *opaque = makeOpaqueLlvmType("PT");
   llvm::Type *ph_ptr_typ = llvm::PointerType::get(opaque, addressSpace_);
   return makePlaceholderType(ph_ptr_typ);
 }
@@ -1063,7 +1063,7 @@ bool Llvm_backend::set_placeholder_function_type(Btype *placeholder,
 
 Btype *Llvm_backend::placeholder_struct_type(const std::string &name,
                                              Location location) {
-  return makePlaceholderType(makeOpaqueLlvmType());
+  return makePlaceholderType(makeOpaqueLlvmType("ST"));
 }
 
 // Fill in the fields of a placeholder struct type.
@@ -1453,15 +1453,6 @@ Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val, Btype *btype,
   return rval;
 }
 
-Bexpression *Llvm_backend::makeInstExpression(llvm::Instruction *inst,
-                                              Btype *btype) {
-  assert(inst);
-  Bexpression *rval = new Bexpression(inst, btype);
-  rval->appendInstruction(inst);
-  expressions_.push_back(rval);
-  return rval;
-}
-
 // Return the zero value for a type.
 
 Bexpression *Llvm_backend::zero_expression(Btype *btype) {
@@ -1525,20 +1516,28 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
   if (bexpr == errorExpression_.get())
     return errorExpression_.get();
 
-  // String_expression::do_get_backend() in gofrontend
-  // seems to want to take the address of a string constant--
-  // for now just treat the "&" operator as a no-op.
-  if (! bexpr->varExprPending()) {
-    assert(bexpr->value()->getType() == stringType_->type() &&
-           llvm::isa<llvm::Constant>(bexpr->value()));
+  // Gofrontend tends to take the address of things like strings
+  // and arrays, which is an issue here since an array type in LLVM
+  // is already effectively a pointer (you can feed it directly into
+  // a GEP as opposed to having to take the address of it first).
+  // Bypass the effects of the address operator here if this is the
+  // case. This is hacky, maybe I can come up with a better solution
+  // for this issue(?).
+  if (llvm::isa<llvm::ConstantArray>(bexpr->value()))
     return bexpr;
-  }
+  if (bexpr->value()->getType() == stringType_->type() &&
+      llvm::isa<llvm::Constant>(bexpr->value()))
+    return bexpr;
 
+  // Create new expression with proper type.
   Btype *pt = pointer_type(bexpr->btype());
-  Bexpression *rval = new Bexpression(bexpr->value(), pt, bexpr->tag());
+  Bexpression *rval =
+      makeValueExpression(bexpr->value(), pt, LocalScope);
+  std::string adtag(bexpr->tag());
+  adtag += ".ad";
+  rval->setTag(adtag);
   const VarContext &vc = bexpr->varContext();
   rval->setVarExprPending(vc.lvalue(), vc.addrLevel() + 1);
-  expressions_.push_back(rval);
   return rval;
 }
 
@@ -1637,7 +1636,6 @@ Bexpression *Llvm_backend::resolveCompositeInit(Bexpression *expr,
                                                 Bfunction *func,
                                                 llvm::Value *storage)
 {
-  assert(!func || !storage);
   if (expr == errorExpression_.get() || func == errorFunction_.get())
     return errorExpression_.get();
   if (!storage) {
@@ -1844,19 +1842,27 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   llvm::Value *val = expr->value();
   assert(val);
 
-  // Converting function pointer to function descriptor
-  if (llvm::isa<llvm::Function>(val)) {
-    llvm::Function *func = llvm::cast<llvm::Function>(val);
+  // No-op casts are ok
+  if (type->type() == expr->value()->getType())
+    return expr;
+
+  // Converting function pointer to function descriptor (during
+  // creation of function descriptor vals) or constant array to
+  // uintptr (as part of GC symbol initializer creation).
+  if (llvm::isa<llvm::Constant>(val)) {
+    llvm::Constant *constval = llvm::cast<llvm::Constant>(val);
     assert(type->type() == llvmIntegerType_);
     llvm::Constant *pticast =
-        llvm::ConstantExpr::getPtrToInt(func, type->type());
+        llvm::ConstantExpr::getPtrToInt(constval, type->type());
     Bexpression *rval = makeValueExpression(pticast, type, GlobalScope);
     rval->appendInstructions(expr->instructions());
     return rval;
   }
 
-  // no real implementation yet
-  assert(type->type() == expr->value()->getType());
+  // This case not handled yet. In particular code needs to be
+  // written to handle signed/unsigned, conversions between scalars
+  // of various sizes and types.
+  assert(false && "this flavor of conversion not yet handled");
 
   return expr;
 }
@@ -2312,11 +2318,13 @@ Bstatement *Llvm_backend::expression_statement(Bfunction *bfunction,
 
 // Variable initialization.
 
-Bstatement *Llvm_backend::init_statement(Bvariable *var, Bexpression *init) {
-  if (var == errorVariable_.get() || init == errorExpression_.get())
+Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
+                                         Bvariable *var, Bexpression *init) {
+  if (var == errorVariable_.get() || init == errorExpression_.get() ||
+      bfunction == errorFunction_.get())
     return errorStatement_.get();
   if (init->compositeInitPending()) {
-    init = resolveCompositeInit(init, nullptr, var->value());
+    init = resolveCompositeInit(init, bfunction, var->value());
     ExprListStatement *els = new ExprListStatement();
     els->appendExpression(init);
     CHKTREE(els);
@@ -2367,14 +2375,16 @@ Bstatement *Llvm_backend::makeAssignment(llvm::Value *lval, Bexpression *lhs,
 
 // Assignment.
 
-Bstatement *Llvm_backend::assignment_statement(Bexpression *lhs,
+Bstatement *Llvm_backend::assignment_statement(Bfunction *bfunction,
+                                               Bexpression *lhs,
                                                Bexpression *rhs,
                                                Location location) {
-  if (lhs == errorExpression_.get() || rhs == errorExpression_.get())
+  if (lhs == errorExpression_.get() || rhs == errorExpression_.get() ||
+      bfunction == errorFunction_.get())
     return errorStatement_.get();
   lhs = resolveVarContext(lhs);
   if (rhs->compositeInitPending())
-    rhs = resolveCompositeInit(rhs, nullptr, lhs->value());
+    rhs = resolveCompositeInit(rhs, bfunction, lhs->value());
   rhs = resolveVarContext(rhs);
   Bstatement *st = makeAssignment(lhs->value(), lhs, rhs, location);
   CHKTREE(st);
@@ -2650,7 +2660,7 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function,
                                    is_address_taken, location);
   if (tvar == errorVariable_.get())
     return tvar;
-  Bstatement *is = init_statement(tvar, binit);
+  Bstatement *is = init_statement(function, tvar, binit);
   *pstatement = is;
   return tvar;
 }

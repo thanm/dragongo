@@ -17,37 +17,36 @@ using namespace goBackendUnitTests;
 namespace {
 
 TEST(BackendStmtTests, TestInitStmt) {
-  LLVMContext C;
-  std::unique_ptr<Backend> be(go_get_backend(C));
 
-  // func:  foo(i1, i2 int32) int64 { }
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+
   Btype *bi64t = be->integer_type(false, 64);
   Location loc;
 
   // local variable with init
   Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
-  Bstatement *is = be->init_statement(loc1, mkInt64Const(be.get(), 10));
-  Bblock *block = mkBlockFromStmt(be.get(), func, is);
-
+  Bstatement *is = be->init_statement(func, loc1, mkInt64Const(be, 10));
   ASSERT_TRUE(is != nullptr);
+  h.addStmt(is);
   EXPECT_EQ(repr(is), "store i64 10, i64* %loc1");
 
   // error handling
   Bvariable *loc2 = be->local_variable(func, "loc1", bi64t, true, loc);
-  Bstatement *bad = be->init_statement(loc2, be->error_expression());
+  Bstatement *bad = be->init_statement(func, loc2, be->error_expression());
   ASSERT_TRUE(bad != nullptr);
   EXPECT_EQ(bad, be->error_statement());
 
-  be->function_set_body(func, block);
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendStmtTests, TestAssignmentStmt) {
-  LLVMContext C;
-  std::unique_ptr<Backend> be(go_get_backend(C));
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
 
-  // func:  foo(i1, i2 int32) int64 { }
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
   Btype *bi64t = be->integer_type(false, 64);
   Location loc;
 
@@ -55,36 +54,36 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
   Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
   Bexpression *ve1 = be->var_expression(loc1, VE_lvalue, loc);
   Bstatement *as =
-      be->assignment_statement(ve1, mkInt64Const(be.get(), 123), loc);
+      be->assignment_statement(func, ve1, mkInt64Const(be, 123), loc);
   ASSERT_TRUE(as != nullptr);
-  EXPECT_EQ(repr(as), "store i64 123, i64* %loc1");
-  Bblock *block = mkBlockFromStmt(be.get(), func, as);
+  h.addStmt(as);
 
   // assign a variable to a variable
   Bvariable *loc2 = be->local_variable(func, "loc2", bi64t, true, loc);
   Bexpression *ve2 = be->var_expression(loc2, VE_lvalue, loc);
   Bexpression *ve3 = be->var_expression(loc1, VE_rvalue, loc);
-  Bstatement *as2 = be->assignment_statement(ve2, ve3, loc);
+  Bstatement *as2 = be->assignment_statement(func, ve2, ve3, loc);
   ASSERT_TRUE(as2 != nullptr);
-  addStmtToBlock(be.get(), block, as2);
+  h.addStmt(as2);
 
   const char *exp = R"RAW_RESULT(
+            store i64 123, i64* %loc1
             %loc1.ld.0 = load i64, i64* %loc1
             store i64 %loc1.ld.0, i64* %loc2
    )RAW_RESULT";
-  std::string reason;
-  bool equal = difftokens(exp, repr(as2), reason);
-  EXPECT_EQ("pass", equal ? "pass" : reason);
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
 
   // error handling
   Bvariable *loc3 = be->local_variable(func, "loc3", bi64t, true, loc);
   Bexpression *ve4 = be->var_expression(loc3, VE_lvalue, loc);
   Bstatement *badas =
-      be->assignment_statement(ve4, be->error_expression(), loc);
+      be->assignment_statement(func, ve4, be->error_expression(), loc);
   ASSERT_TRUE(badas != nullptr);
   EXPECT_EQ(badas, be->error_statement());
 
-  be->function_set_body(func, block);
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendStmtTests, TestReturnStmt) {
@@ -120,34 +119,31 @@ TEST(BackendStmtTests, TestReturnStmt) {
 }
 
 TEST(BackendStmtTests, TestLabelGotoStmts) {
-  LLVMContext C;
-  std::unique_ptr<Backend> be(go_get_backend(C));
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
 
   // loc1 = 10
   Location loc;
   Btype *bi64t = be->integer_type(false, 64);
-  Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
-  Bstatement *is = be->init_statement(loc1, mkInt64Const(be.get(), 10));
-  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+  Bvariable *loc1 = h.mkLocal("loc1", bi64t, mkInt64Const(be, 10));
 
   // goto labeln
   Blabel *lab1 = be->label(func, "foolab", loc);
   Bstatement *gots = be->goto_statement(lab1, loc);
-  addStmtToBlock(be.get(), block, gots);
+  h.addStmt(gots);
 
   // dead stmt: loc1 = 11
-  Bexpression *ved = be->var_expression(loc1, VE_lvalue, loc);
-  Bexpression *c11 = mkInt64Const(be.get(), 11);
-  Bstatement *asd = be->assignment_statement(ved, c11, loc);
-  addStmtToBlock(be.get(), block, asd);
+  h.mkAssign(be->var_expression(loc1, VE_lvalue, loc),
+             mkInt64Const(be, 11));
 
   // labeldef
   Bstatement *ldef = be->label_definition_statement(lab1);
-  addStmtToBlock(be.get(), block, ldef);
+  h.addStmt(ldef);
 
-  bool ok = be->function_set_body(func, block);
-  EXPECT_TRUE(ok);
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendStmtTests, TestIfStmt) {
@@ -162,19 +158,19 @@ TEST(BackendStmtTests, TestIfStmt) {
   // loc1 = 123
   Bexpression *ve1 = be->var_expression(loc1, VE_lvalue, loc);
   Bexpression *c123 = mkInt64Const(be.get(), 123);
-  Bstatement *as1 = be->assignment_statement(ve1, c123, loc);
+  Bstatement *as1 = be->assignment_statement(func, ve1, c123, loc);
   Bblock *b1 = mkBlockFromStmt(be.get(), func, as1);
 
   // loc1 = 987
   Bexpression *ve2 = be->var_expression(loc1, VE_lvalue, loc);
   Bexpression *c987 = mkInt64Const(be.get(), 987);
-  Bstatement *as2 = be->assignment_statement(ve2, c987, loc);
+  Bstatement *as2 = be->assignment_statement(func, ve2, c987, loc);
   Bblock *b2 = mkBlockFromStmt(be.get(), func, as2);
 
   // loc1 = 456
   Bexpression *ve3 = be->var_expression(loc1, VE_lvalue, loc);
   Bexpression *c456 = mkInt64Const(be.get(), 456);
-  Bstatement *as3 = be->assignment_statement(ve3, c456, loc);
+  Bstatement *as3 = be->assignment_statement(func, ve3, c456, loc);
   Bblock *b3 = mkBlockFromStmt(be.get(), func, as3);
 
   // if true b1 else b2

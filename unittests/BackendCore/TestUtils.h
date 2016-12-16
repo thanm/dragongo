@@ -164,6 +164,9 @@ class FcnTestHarness {
   // Append a return stmt to block
   Bstatement *mkReturn(Bexpression *expr);
 
+  // Add a previously created statement to the current block
+  void addStmt(Bstatement *stmt);
+
   // Create a new block (prev block will jump to new one)
   void newBlock();
 

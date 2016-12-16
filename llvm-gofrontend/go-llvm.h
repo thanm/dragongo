@@ -705,9 +705,10 @@ public:
 
   Bstatement *expression_statement(Bfunction *, Bexpression *);
 
-  Bstatement *init_statement(Bvariable *var, Bexpression *init);
+  Bstatement *init_statement(Bfunction*, Bvariable *var, Bexpression *init);
 
-  Bstatement *assignment_statement(Bexpression *lhs, Bexpression *rhs,
+  Bstatement *assignment_statement(Bfunction*,
+                                   Bexpression *lhs, Bexpression *rhs,
                                    Location);
 
   Bstatement *return_statement(Bfunction *, const std::vector<Bexpression *> &,
@@ -861,7 +862,9 @@ private:
   void updatePlaceholderUnderlyingType(Btype *plt, llvm::Type *newtyp);
 
   // Create an opaque type for use as part of a placeholder type.
-  llvm::Type *makeOpaqueLlvmType();
+  // Type will be named according to the tag passed in (name is relevant
+  // only for debugging).
+  llvm::Type *makeOpaqueLlvmType(const char *tag);
 
   // Returns field type from composite (struct/array) type and index
   Btype *elementTypeByIndex(Btype *type, unsigned element_index);
@@ -927,10 +930,6 @@ private:
                            llvm::GlobalValue::LinkageTypes linkage,
                            llvm::Constant *initializer,
                            unsigned alignmentInBytes = 0);
-
-  // Create a Bexpression to hold a value being computed by the
-  // instruction "inst".
-  Bexpression *makeInstExpression(llvm::Instruction *inst, Btype *btype);
 
   // Combing the contents of a list of src expressions to produce
   // a new expression.

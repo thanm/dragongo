@@ -153,7 +153,7 @@ TEST(BackendVarTests, MakeTemporaryVar) {
   Btype *boolt = be->bool_type();
   Bvariable *bv = be->local_variable(func, "b", boolt, true, loc);
   Bexpression *trueval = be->boolean_constant_expression(true);
-  Bstatement *is1 = be->init_statement(bv, trueval);
+  Bstatement *is1 = be->init_statement(func, bv, trueval);
   Bblock *block = mkBlockFromStmt(be.get(), func, is1);
 
   // temporary var [uint64] = 99
