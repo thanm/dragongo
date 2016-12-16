@@ -466,7 +466,6 @@ public:
   void setSplitStack(SplitStackDisposition disp) { splitStack_ = disp; }
   SplitStackDisposition splitStack() const { return splitStack_; }
 
-
   // Add a local variable
   Bvariable *local_variable(const std::string &name,
                             Btype *btype,
@@ -869,6 +868,9 @@ private:
   // Returns field type from composite (struct/array) type and index
   Btype *elementTypeByIndex(Btype *type, unsigned element_index);
 
+  // Returns function result type from pointer-to-function type
+  Btype *functionReturnType(Btype *functionType);
+
   // add a builtin function definition
   void defineBuiltinFcn(const char *name, const char *libname,
                         llvm::Function *fcn);
@@ -996,6 +998,15 @@ private:
   // composite init context.
   Bexpression *resolve(Bexpression *expr, Bfunction *func);
 
+  // Check a vector of Bexpression's to see if any are the
+  // error expression, returning TRUE if so.
+  bool exprVectorHasError(const std::vector<Bexpression *> &vals) {
+    for (auto v : vals)
+      if (v == errorExpression_.get())
+        return true;
+    return false;
+  }
+
 private:
   template <typename T1, typename T2> class pairvalmap_hash {
     typedef std::pair<T1, T2> pairtype;
@@ -1067,6 +1078,9 @@ private:
 
   // Maps pointer type to pointed-to type
   std::unordered_map<Btype *, Btype *> pointerTypeMap_;
+
+  // Maps function type to return typr
+  std::unordered_map<Btype *, Btype *> funcReturnTypeMap_;
 
   // Placeholder types created by the front end.
   std::unordered_set<Btype *> placeholders_;

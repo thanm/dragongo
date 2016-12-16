@@ -949,18 +949,19 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
   }
 
   // Result types
-  llvm::Type *rtyp = nullptr;
+  Btype *rbtype = nullptr;
   if (results.empty())
-    rtyp = llvm::Type::getVoidTy(context_);
+    rbtype = makeAnonType(llvm::Type::getVoidTy(context_));
   else if (results.size() == 1) {
     if (results.front().btype == errorType_)
       return errorType_;
-    rtyp = results.front().btype->type();
+    rbtype = results.front().btype;
   } else {
     assert(result_struct != nullptr);
-    rtyp = result_struct->type();
+    rbtype = result_struct;
   }
-  assert(rtyp != nullptr);
+  assert(rbtype != nullptr);
+  llvm::Type *rtyp = rbtype->type();
 
   // https://gcc.gnu.org/PR72814 handling. From the go-gcc.cc
   // equivalent, here is an explanatory comment:
@@ -976,7 +977,14 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
   // from LLVM's perspective, no functions have varargs (all that
   // is dealt with by the front end).
   const bool isVarargs = false;
-  return makeAnonType(llvm::FunctionType::get(rtyp, elems, isVarargs));
+  llvm::FunctionType *llft = llvm::FunctionType::get(rtyp, elems, isVarargs);
+  bool isNew = (anonTypemap_.find(llft) == anonTypemap_.end());
+  Btype *bt = makeAnonType(llft);
+  if (isNew) {
+    Btype *pft = pointer_type(bt);
+    funcReturnTypeMap_[pft] = rbtype;
+  }
+  return bt;
 }
 
 Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
@@ -993,6 +1001,15 @@ Btype *Llvm_backend::array_type(Btype *element_btype, Bexpression *length) {
   if (isNew)
     arrayElemTypeMap_[ar_btype] = element_btype;
   return ar_btype;
+}
+
+Btype *Llvm_backend::functionReturnType(Btype *typ)
+{
+  assert(typ);
+  assert(typ->type()->isPointerTy());
+  auto it = funcReturnTypeMap_.find(typ);
+  assert(it != funcReturnTypeMap_.end());
+  return it->second;
 }
 
 Btype *Llvm_backend::elementTypeByIndex(Btype *btype, unsigned field_index)
@@ -2109,7 +2126,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
 
 Bexpression *Llvm_backend::constructor_expression(
     Btype *btype, const std::vector<Bexpression *> &vals, Location location) {
-  if (btype == errorType_)
+  if (btype == errorType_ || exprVectorHasError(vals))
     return errorExpression_.get();
 
   llvm::Type *llt = btype->type();
@@ -2123,16 +2140,12 @@ Bexpression *Llvm_backend::constructor_expression(
   // Constant values?
   bool isConstant = true;
   std::vector<unsigned long> indexes;
+  unsigned long ii = 0;
   for (auto val : vals) {
-    if (val == errorExpression_.get())
-      return errorExpression_.get();
-    if (!llvm::isa<llvm::Constant>(val->value())) {
+    indexes.push_back(ii++);
+    if (!llvm::isa<llvm::Constant>(val->value()))
       isConstant = false;
-      break;
-    }
   }
-  for (unsigned ii = 0; ii < vals.size(); ++ii)
-    indexes.push_back(ii);
   if (isConstant)
     return makeConstCompositeExpr(btype, llst, numElements,
                                   indexes, vals, location);
@@ -2219,7 +2232,7 @@ Llvm_backend::makeConstCompositeExpr(Btype *btype,
 Bexpression *Llvm_backend::array_constructor_expression(
     Btype *array_btype, const std::vector<unsigned long> &indexes,
     const std::vector<Bexpression *> &vals, Location location) {
-  if (array_btype == errorType_)
+  if (array_btype == errorType_ || exprVectorHasError(vals))
     return errorExpression_.get();
 
   llvm::Type *llt = array_btype->type();
@@ -2233,8 +2246,6 @@ Bexpression *Llvm_backend::array_constructor_expression(
   // Constant values?
   bool isConstant = true;
   for (auto val : vals) {
-    if (val == errorExpression_.get())
-      return errorExpression_.get();
     if (!llvm::isa<llvm::Constant>(val->value())) {
       isConstant = false;
       break;
@@ -2298,8 +2309,42 @@ Bexpression *
 Llvm_backend::call_expression(Bexpression *fn_expr,
                               const std::vector<Bexpression *> &fn_args,
                               Bexpression *chain_expr, Location location) {
-  assert(false && "Llvm_backend::call_expression not yet impl");
-  return nullptr;
+  if (fn_expr == errorExpression_.get() || exprVectorHasError(fn_args) ||
+      chain_expr == errorExpression_.get())
+    return errorExpression_.get();
+
+  // Expect pointer-to-function type here
+  assert(fn_expr->btype()->type()->isPointerTy());
+  llvm::PointerType *pt =
+      llvm::cast<llvm::PointerType>(fn_expr->btype()->type());
+  llvm::FunctionType *llft =
+      llvm::cast<llvm::FunctionType>(pt->getElementType());
+
+  // FIXME: do something with location
+
+  // Unpack / resolve arguments
+  llvm::SmallVector<llvm::Value *, 64> llargs;
+  llvm::SmallVector<Bexpression *, 64> resolvedArgs;
+  for (auto fnarg : fn_args) {
+    Bexpression *resarg = resolveVarContext(fnarg);
+    resolvedArgs.push_back(resarg);
+    llargs.push_back(resarg->value());
+  }
+
+  // Return type
+  Btype *rbtype = functionReturnType(fn_expr->btype());
+
+  // FIXME: create struct to hold result from multi-return call
+
+  std::string callname(namegen("call"));
+  llvm::CallInst *call =
+      llvm::CallInst::Create(llft, fn_expr->value(), llargs, callname);
+  Bexpression *rval =
+      makeValueExpression(call, rbtype, LocalScope);
+  for (auto resarg : resolvedArgs)
+    rval->appendInstructions(resarg->instructions());
+  rval->appendInstruction(call);
+  return rval;
 }
 
 // Return an expression that allocates SIZE bytes on the stack.
@@ -2403,11 +2448,8 @@ Bstatement *
 Llvm_backend::return_statement(Bfunction *bfunction,
                                const std::vector<Bexpression *> &vals,
                                Location location) {
-  if (bfunction == error_function())
+  if (bfunction == error_function() || exprVectorHasError(vals))
     return errorStatement_.get();
-  for (auto v : vals)
-    if (v == errorExpression_.get())
-      return errorStatement_.get();
 
   // Temporary
   assert(vals.size() == 1);
