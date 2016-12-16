@@ -1019,7 +1019,8 @@ Btype *Llvm_backend::elementTypeByIndex(Btype *btype, unsigned field_index)
 // creation routines.
 
 llvm::Type *Llvm_backend::makeOpaqueLlvmType(const char *tag) {
-  return llvm::StructType::create(context_, namegen(tag));
+  std::string tname(namegen(tag));
+  return llvm::StructType::create(context_, tname);
 }
 
 // Create a placeholder for a pointer type.
@@ -2186,6 +2187,13 @@ Llvm_backend::makeConstCompositeExpr(Btype *btype,
       touched.insert(idx);
     Bexpression *bex = vals[ii];
     llvm::Constant *con = llvm::cast<llvm::Constant>(bex->value());
+
+    // This is unpleasant, but seems to be needed given the extensive
+    // use of placeholder types in gofrontend.
+    llvm::Type *elt = llct->getTypeAtIndex(ii);
+    if (elt != con->getType())
+      con = llvm::ConstantExpr::getBitCast(con, elt);
+
     llvals[idx] = con;
   }
   if (numElements != nvals) {
