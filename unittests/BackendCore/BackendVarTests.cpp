@@ -377,4 +377,30 @@ TEST(BackendVarTests, ImplicitVariableSetInit) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendVarTests, GlobalVarSetInitToComposite) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+  Location loc;
+
+  Btype *bt = be->bool_type();
+  Btype *pbt = be->pointer_type(bt);
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *s2t = mkBackendStruct(be.get(), pbt, "f1", bi32t, "f2", nullptr);
+  Bvariable *g1 =
+      be->global_variable("gv", "gv", s2t, false, /* is_external */
+                          false,                  /* is_hidden */
+                          false, /* unique_section */
+                          Location());
+
+  std::vector<Bexpression *> vals;
+  vals.push_back(be->zero_expression(pbt));
+  vals.push_back(mkInt32Const(be.get(), int32_t(101)));
+  Bexpression *scon =
+      be->constructor_expression(s2t, vals, loc);
+
+  // Set initializer
+  be->global_variable_set_init(g1, scon);
+}
+
 }

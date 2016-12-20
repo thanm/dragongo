@@ -2684,7 +2684,10 @@ void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr) {
   assert(llvm::isa<llvm::GlobalVariable>(var->value()));
   llvm::GlobalVariable *gvar = llvm::cast<llvm::GlobalVariable>(var->value());
 
-  assert(llvm::isa<llvm::Constant>(var->value()));
+  if (expr->compositeInitPending())
+    expr = resolveCompositeInit(expr, nullptr, gvar);
+
+  assert(llvm::isa<llvm::Constant>(expr->value()));
   llvm::Constant *econ = llvm::cast<llvm::Constant>(expr->value());
 
   gvar->setInitializer(econ);
