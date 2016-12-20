@@ -143,13 +143,11 @@ TEST(BackendExprTests, MakeZeroValueExpr) {
 }
 
 TEST(BackendExprTests, TestConversionExpressions) {
-  LLVMContext C;
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Location loc;
 
-  std::unique_ptr<Backend> be(go_get_backend(C));
-
-  // We need way more test cases than this...
-  // ... however at the moment only trivial converts are supported
-
+  // Trivial / no-op conversion
   Btype *bt = be->bool_type();
   ASSERT_TRUE(bt != nullptr);
   Bexpression *bzero = be->zero_expression(bt);
@@ -157,10 +155,36 @@ TEST(BackendExprTests, TestConversionExpressions) {
   ASSERT_TRUE(bcon != nullptr);
   EXPECT_EQ(bzero->value(), bcon->value());
 
+  // Casting one pointer to another.
+  Btype *bi64t = be->integer_type(false, 64);
+  Bvariable *xv = h.mkLocal("x", bi64t);
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *s2t = mkBackendStruct(be, bi32t, "f1", bi32t, "f2", nullptr);
+  Btype *ps2t = be->pointer_type(s2t);
+  Bexpression *vex = be->var_expression(xv, VE_lvalue, loc);
+  Bexpression *adx = be->address_expression(vex, loc);
+  Bexpression *cast = be->convert_expression(ps2t, adx, loc);
+  Bexpression *dex = be->indirect_expression(s2t, cast, false, loc);
+  Bexpression *fex = be->struct_field_expression(dex, 1, loc);
+  h.mkAssign(fex, mkInt32Const(be, 22));
+
+  const char *exp = R"RAW_RESULT(
+      store i64 0, i64* %x
+      %cast = bitcast i64* %x to { i32, i32 }*
+      %field.0 = getelementptr { i32, i32 }, { i32, i32 }* %cast, i32 0, i32 1
+      store i32 22, i32* %field.0
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
   // Error handling
   Bexpression *econ =
       be->convert_expression(be->error_type(), bzero, Location());
   EXPECT_EQ(econ, be->error_expression());
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendExprTests, MakeVarExpressions) {
@@ -264,7 +288,7 @@ TEST(BackendExprTests, TestArithOps) {
   Llvm_backend *be = h.be();
   Bfunction *func = h.func();
 
-  Operator optotest[] = {OPERATOR_PLUS};
+  Operator optotest[] = {OPERATOR_PLUS,OPERATOR_MINUS};
 
   Bexpression *beic = mkInt64Const(be, 9);
   Bexpression *beic2 = mkInt64Const(be, 3);
@@ -286,8 +310,10 @@ TEST(BackendExprTests, TestArithOps) {
   }
 
   const char *exp = R"RAW_RESULT(
-    %add.0 = add i64 9, 3
-    %fadd.0 = fadd double 9.000000e+00, 3.000000e+00
+      %add.0 = add i64 9, 3
+      %sub.0 = sub i64 9, 3
+      %fadd.0 = fadd double 9.000000e+00, 3.000000e+00
+      %fsub.0 = fsub double 9.000000e+00, 3.000000e+00
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -339,24 +365,18 @@ TEST(BackendExprTests, TestMoreArith) {
 }
 
 TEST(BackendExprTests, TestAddrAndIndirection) {
-  LLVMContext C;
-
-  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
 
   // var y int64 = 10
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  Bfunction *func = mkFunci32o64(be, "foo");
   Btype *bi64t = be->integer_type(false, 64);
   Location loc;
-  Bvariable *y = be->local_variable(func, "y", bi64t, true, loc);
-  Bexpression *beic11 = mkInt64Const(be.get(), 10);
-  Bstatement *isy = be->init_statement(func, y, beic11);
-  Bblock *block = mkBlockFromStmt(be.get(), func, isy);
+  Bvariable *y = h.mkLocal("y", bi64t, mkInt64Const(be, 10));
 
   // var x *int64 = nil
   Btype *bpi64t = be->pointer_type(bi64t);
-  Bvariable *x = be->local_variable(func, "x", bpi64t, true, loc);
-  Bstatement *isx = be->init_statement(func, x, be->zero_expression(bpi64t));
-  addStmtToBlock(be.get(), block, isx);
+  Bvariable *x = h.mkLocal("x", bpi64t);
 
   {
     // x = &y
@@ -364,7 +384,7 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
     Bexpression *vey = be->var_expression(y, VE_rvalue, loc);
     Bexpression *ady = be->address_expression(vey, loc);
     Bstatement *as = be->assignment_statement(func, vex, ady, loc);
-    addStmtToBlock(be.get(), block, as);
+    h.addStmt(as);
   }
 
   {
@@ -374,23 +394,18 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
     bool knValid = false;
     Bexpression *indx1 = be->indirect_expression(bi64t, vex, knValid, loc);
     Bstatement *as = be->assignment_statement(func, vey, indx1, loc);
-    addStmtToBlock(be.get(), block, as);
+    h.addStmt(as);
   }
 
   {
     // *x = 3
     Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
     Bexpression *indx = be->indirect_expression(bi64t, vex, false, loc);
-    Bexpression *beic3 = mkInt64Const(be.get(), 3);
+    Bexpression *beic3 = mkInt64Const(be, 3);
     Bstatement *as = be->assignment_statement(func, indx, beic3, loc);
-    addStmtToBlock(be.get(), block, as);
+    h.addStmt(as);
   }
 
-  // return 10101
-  std::vector<Bexpression *> vals;
-  vals.push_back(mkInt64Const(be.get(), 10101));
-  Bstatement *ret = be->return_statement(func, vals, loc);
-  addStmtToBlock(be.get(), block, ret);
 
   const char *exp = R"RAW_RESULT(
     store i64 10, i64* %y
@@ -401,16 +416,12 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
     store i64 %.ld.0, i64* %y
     %x.ld.1 = load i64*, i64** %x
     store i64 3, i64* %x.ld.1
-    ret i64 10101
     )RAW_RESULT";
 
-  std::string reason;
-  bool equal = difftokens(exp, repr(block), reason);
-  EXPECT_EQ("pass", equal ? "pass" : reason);
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  be->function_set_body(func, block);
-
-  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -805,7 +816,7 @@ TEST(BackendExprTests, CreateFunctionCodeExpression) {
   Bfunction *func = h.func();
   Location loc;
 
-  // Assign function address to local variable
+  // Assign function address to local variab
   Bexpression *fp = be->function_code_expression(func, loc);
   h.mkLocal("fploc", fp->btype(), fp);
 

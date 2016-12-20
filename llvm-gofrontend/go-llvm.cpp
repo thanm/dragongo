@@ -1107,8 +1107,7 @@ bool Llvm_backend::set_placeholder_struct_type(
 
 Btype *Llvm_backend::placeholder_array_type(const std::string &name,
                                             Location location) {
-  assert(false && "LLvm_backend::placeholder_array_type not yet implemented");
-  return nullptr;
+  return makePlaceholderType(makeOpaqueLlvmType("AT"));
 }
 
 // Fill in the components of a placeholder array type.
@@ -1116,10 +1115,17 @@ Btype *Llvm_backend::placeholder_array_type(const std::string &name,
 bool Llvm_backend::set_placeholder_array_type(Btype *placeholder,
                                               Btype *element_btype,
                                               Bexpression *length) {
-  if (placeholder == errorType_)
+  if (placeholder == errorType_ || element_btype == errorType_ ||
+      length == errorExpression_.get())
     return false;
+
   Btype *atype = array_type(element_btype, length);
   updatePlaceholderUnderlyingType(placeholder, atype->type());
+
+  // update the array element type map to insure that the placeholder
+  // has the same info
+  assert(arrayElemTypeMap_.find(placeholder) == arrayElemTypeMap_.end());
+  arrayElemTypeMap_[placeholder] = element_btype;
   return true;
 }
 
@@ -1516,13 +1522,21 @@ Bexpression *Llvm_backend::indirect_expression(Btype *btype,
 
   // FIXME: add check for nil pointer
 
-  Bexpression *loadExpr = loadFromExpr(expr, btype);
-
   if (expr->varExprPending()) {
     const VarContext &vc = expr->varContext();
-    unsigned addrLevel = (vc.addrLevel() ? vc.addrLevel() - 1 : 0);
-    loadExpr->setVarExprPending(vc.lvalue(), addrLevel);
+    if (vc.addrLevel() != 0) {
+      // handle *&x
+      Bexpression *dexpr =
+          makeValueExpression(expr->value(), btype, LocalScope);
+      dexpr->setVarExprPending(vc.lvalue(), vc.addrLevel() - 1);
+      dexpr->appendInstructions(expr->instructions());
+      return dexpr;
+    }
   }
+
+  Bexpression *loadExpr = loadFromExpr(expr, btype);
+  if (expr->varExprPending())
+    loadExpr->setVarExprPending(expr->varContext());
 
   return loadExpr;
 }
@@ -1877,6 +1891,19 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
     return rval;
   }
 
+  // For pointer type conversions, create an appropriate bitcast.
+  if (type->type()->isPointerTy() && val->getType()->isPointerTy()) {
+    std::string tag("cast");
+    llvm::BitCastInst *bitcast = new
+        llvm::BitCastInst(val, type->type(), tag);
+    Bexpression *rval = makeValueExpression(bitcast, type, LocalScope);
+    rval->appendInstructions(expr->instructions());
+    rval->appendInstruction(bitcast);
+    if (expr->varExprPending())
+      rval->setVarExprPending(expr->varContext());
+    return rval;
+  }
+
   // This case not handled yet. In particular code needs to be
   // written to handle signed/unsigned, conversions between scalars
   // of various sizes and types.
@@ -1999,6 +2026,9 @@ static llvm::Instruction::BinaryOps arith_op_to_binop(Operator op,
     case OPERATOR_PLUS:
       tag = "fadd";
       return llvm::Instruction::FAdd;
+    case OPERATOR_MINUS:
+      tag = "fsub";
+      return llvm::Instruction::FSub;
     default:
       break;
     }
@@ -2007,6 +2037,9 @@ static llvm::Instruction::BinaryOps arith_op_to_binop(Operator op,
     case OPERATOR_PLUS:
       tag = "add";
       return llvm::Instruction::Add;
+    case OPERATOR_MINUS:
+      tag = "sub";
+      return llvm::Instruction::Sub;
     default:
       break;
     }
@@ -2103,6 +2136,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
     e->appendInstruction(cmp);
     return e;
   }
+  case OPERATOR_MINUS:
   case OPERATOR_PLUS: {
     const char *tag;
     llvm::Instruction::BinaryOps llvmop =

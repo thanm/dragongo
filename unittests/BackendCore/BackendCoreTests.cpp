@@ -203,10 +203,24 @@ TEST(BackendCoreTests, PlaceholderTypes) {
   Type *i64t = IntegerType::get(C, 64);
   EXPECT_TRUE(phst1->type() == mkTwoFieldLLvmStruct(C, i64t, i64t));
 
+  // Placeholder array type
+  Btype *phat1 = be->placeholder_array_type("pha", loc);
+  ASSERT_TRUE(phat1 != nullptr);
+
+  // Replace placeholder array type
+  Btype *bi64t = be->integer_type(false, 64);
+  Bexpression *val10 = mkInt64Const(be.get(), int64_t(10));
+  Btype *at10 = be->array_type(bi64t, val10);
+  ASSERT_TRUE(at10 != nullptr);
+  be->set_placeholder_array_type(phat1, bi64t, val10);
+  EXPECT_TRUE(phat1->type() == at10->type());
+
   // Circular pointer support
   Btype *php4 = be->placeholder_pointer_type("ph", loc, false);
   Btype *cpt = be->circular_pointer_type(php4, false);
   be->set_placeholder_pointer_type(php4, cpt);
+
+
 }
 
 TEST(BackendCoreTests, ArrayTypes) {

@@ -44,13 +44,15 @@ saw_errors (void)
 }
 
 // Called by the Go frontend proper if the unsafe package was imported.
-// Implies that type-based aliasing is no longer safe.
+//
+// FIXME: make a determination about whether we need to run TBAA
+// in a different way based on this information.
 
 void
 go_imported_unsafe (void)
 {
   // FIXME
-  assert(false && "go_imported_unsafe not yet implemented");
+  std::cerr << "FIXME: go_imported_unsafe not yet implemented\n";
 }
 
 /* This is called by the Go frontend proper to add data to the
