@@ -28,6 +28,7 @@ class Argument;
 class ArrayType;
 class BasicBlock;
 class Constant;
+class ConstantFolder;
 class DataLayout;
 class Function;
 class Instruction;
@@ -41,7 +42,6 @@ class raw_ostream;
 }
 
 #include "llvm/IR/GlobalValue.h"
-#include "llvm/IR/IRBuilder.h"
 
 // Btype wraps llvm::Type
 
@@ -820,6 +820,9 @@ public:
   // Exposed for unit testing
   llvm::Module &module() { return *module_.get(); }
 
+  // Run the module verifier.
+  void verifyModule();
+
   // Exposed for unit testing
 
   // Helpers to check tree integrity. Checks to make sure that
@@ -827,13 +830,13 @@ public:
   // one Bexpression or stmt. Returns <TRUE,""> if tree is ok,
   // otherwise returns <FALSE,descriptive_message>.
   std::pair<bool, std::string>
-  check_tree_integrity(Bexpression *e, bool includePointers = true);
+  checkTreeIntegrity(Bexpression *e, bool includePointers = true);
   std::pair<bool, std::string>
-  check_tree_integrity(Bstatement *s,  bool includePointers = true);
+  checkTreeIntegrity(Bstatement *s,  bool includePointers = true);
 
   // Similar to the above, but prints message to std::cerr and aborts if fail
-  void enforce_tree_integrity(Bexpression *e);
-  void enforce_tree_integrity(Bstatement *s);
+  void enforceTreeIntegrity(Bexpression *e);
+  void enforceTreeIntegrity(Bstatement *s);
 
   // Disable tree integrity checking. This is mainly
   // so that we can unit test the integrity checker.
@@ -846,7 +849,7 @@ public:
   void setTraceLevel(unsigned level) { traceLevel_ = level; }
   unsigned traceLevel() const { return traceLevel_; }
 
-  // For creating useful inst and block names
+  // For creating useful inst and block names. Exposed to help unit testing.
   std::string namegen(const std::string &tag, unsigned expl = 0xffffffff);
 
 private:
@@ -1047,13 +1050,10 @@ private:
   typedef std::pair<Btype *, unsigned> structplusindextype;
   typedef pairvalmap<Btype *, unsigned, Btype *> fieldmaptype;
 
-  typedef llvm::IRBuilder<> LIRBuilder;
-
   // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
   std::unique_ptr<llvm::Module> module_;
   const llvm::DataLayout &datalayout_;
-  std::unique_ptr<LIRBuilder> builder_;
   unsigned addressSpace_;
   unsigned traceLevel_;
   bool checkIntegrity_;

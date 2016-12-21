@@ -16,7 +16,6 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/IR/LLVMContext.h"
-#include "llvm/IR/Verifier.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
@@ -212,10 +211,8 @@ int main(int argc, char **argv)
   go_parse_input_files(fns, nfiles, false, true);
   if (! NoBackend)
     go_write_globals();
-  if (! NoVerify) {
-    bool broken = llvm::verifyModule(backend->module(), &llvm::dbgs());
-    assert(!broken && "Module not well-formed.");
-  }
+  if (! NoVerify)
+    backend->verifyModule();
 
   return 0;
 }

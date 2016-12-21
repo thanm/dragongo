@@ -25,12 +25,16 @@
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
+#include "llvm/IR/Verifier.h"
+
+typedef llvm::IRBuilder<> LIRBuilder;
 
 #define CHKTREE(x) if (checkIntegrity_ && traceLevel()) \
-      enforce_tree_integrity(x)
+      enforceTreeIntegrity(x)
 
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
@@ -479,8 +483,15 @@ bool IntegrityVisitor::visit(Bstatement *stmt)
   return rval;
 }
 
+void
+Llvm_backend::verifyModule()
+{
+  bool broken = llvm::verifyModule(*module_.get(), &llvm::dbgs());
+  assert(!broken && "Module not well-formed.");
+}
+
 std::pair<bool, std::string>
-Llvm_backend::check_tree_integrity(Bexpression *e, bool includePointers)
+Llvm_backend::checkTreeIntegrity(Bexpression *e, bool includePointers)
 {
   IntegrityVisitor iv(this, includePointers);
   bool rval = iv.visit(e);
@@ -488,14 +499,14 @@ Llvm_backend::check_tree_integrity(Bexpression *e, bool includePointers)
 }
 
 std::pair<bool, std::string>
-Llvm_backend::check_tree_integrity(Bstatement *s, bool includePointers)
+Llvm_backend::checkTreeIntegrity(Bstatement *s, bool includePointers)
 {
   IntegrityVisitor iv(this, includePointers);
   bool rval = iv.visit(s);
   return std::make_pair(rval, iv.msg());
 }
 
-void Llvm_backend::enforce_tree_integrity(Bexpression *e)
+void Llvm_backend::enforceTreeIntegrity(Bexpression *e)
 {
   IntegrityVisitor iv(this, true);
   if (! iv.visit(e)) {
@@ -504,7 +515,7 @@ void Llvm_backend::enforce_tree_integrity(Bexpression *e)
   }
 }
 
-void Llvm_backend::enforce_tree_integrity(Bstatement *s)
+void Llvm_backend::enforceTreeIntegrity(Bstatement *s)
 {
   IntegrityVisitor iv(this, true);
   if (! iv.visit(s)) {
@@ -648,7 +659,6 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     : context_(context)
     , module_(new llvm::Module("gomodule", context))
     , datalayout_(module_->getDataLayout())
-    , builder_(new LIRBuilder(context_, llvm::ConstantFolder()))
     , addressSpace_(0)
     , traceLevel_(0)
     , checkIntegrity_(true)
@@ -1896,8 +1906,10 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   // For pointer type conversions, create an appropriate bitcast.
   if (type->type()->isPointerTy() && val->getType()->isPointerTy()) {
     std::string tag("cast");
-    llvm::BitCastInst *bitcast = new
-        llvm::BitCastInst(val, type->type(), tag);
+    llvm::Type *totype = type->type();
+    if (expr->varExprPending())
+      totype = llvm::PointerType::get(type->type(), addressSpace_);
+    llvm::BitCastInst *bitcast = new llvm::BitCastInst(val, totype, tag);
     Bexpression *rval = makeValueExpression(bitcast, type, LocalScope);
     rval->appendInstructions(expr->instructions());
     rval->appendInstruction(bitcast);
@@ -1934,11 +1946,11 @@ llvm::Value *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
                                              llvm::Value *idxval,
                                              llvm::Value *sptr)
 {
+  LIRBuilder builder(context_, llvm::ConstantFolder());
   llvm::SmallVector<llvm::Value *, 2> elems(2);
   elems[0] = llvm::ConstantInt::get(llvmInt32Type_, 0);
   elems[1] = idxval;
-  llvm::Value *val = builder_->CreateGEP(llat, sptr, elems,
-                                         namegen("index"));
+  llvm::Value *val = builder.CreateGEP(llat, sptr, elems, namegen("index"));
   return val;
 }
 
@@ -1947,10 +1959,11 @@ llvm::Value *Llvm_backend::makeFieldGEP(llvm::StructType *llst,
                                         unsigned fieldIndex,
                                         llvm::Value *sptr)
 {
+  LIRBuilder builder(context_, llvm::ConstantFolder());
   assert(fieldIndex < llst->getNumElements());
   std::string tag(namegen("field"));
   llvm::Value *val =
-      builder_->CreateConstInBoundsGEP2_32(llst, sptr, 0, fieldIndex, tag);
+      builder.CreateConstInBoundsGEP2_32(llst, sptr, 0, fieldIndex, tag);
   return val;
 }
 
@@ -2092,8 +2105,9 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
   assert(ltype == rtype);
   assert(bltype->isUnsigned() == brtype->isUnsigned());
   bool isUnsigned = bltype->isUnsigned();
-
+  LIRBuilder builder(context_, llvm::ConstantFolder());
   llvm::Value *val = nullptr;
+
   switch (op) {
   case OPERATOR_EQEQ:
   case OPERATOR_NOTEQ:
@@ -2103,28 +2117,28 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
   case OPERATOR_GE: {
     llvm::CmpInst::Predicate pred = compare_op_to_pred(op, ltype, isUnsigned);
     if (ltype->isFloatingPointTy())
-      val = builder_->CreateFCmp(pred, left->value(), right->value(),
+      val = builder.CreateFCmp(pred, left->value(), right->value(),
                                  namegen("fcmp"));
     else
-      val = builder_->CreateICmp(pred, left->value(), right->value(),
+      val = builder.CreateICmp(pred, left->value(), right->value(),
                                  namegen("icmp"));
     break;
   }
   case OPERATOR_MINUS: {
     if (ltype->isFloatingPointTy())
-      val = builder_->CreateFSub(left->value(), right->value(),
+      val = builder.CreateFSub(left->value(), right->value(),
                                  namegen("fsub"));
     else
-      val = builder_->CreateSub(left->value(), right->value(),
+      val = builder.CreateSub(left->value(), right->value(),
                                 namegen("sub"));
     break;
   }
   case OPERATOR_PLUS: {
     if (ltype->isFloatingPointTy())
-      val = builder_->CreateFAdd(left->value(), right->value(),
+      val = builder.CreateFAdd(left->value(), right->value(),
                                  namegen("fadd"));
     else
-      val = builder_->CreateAdd(left->value(), right->value(),
+      val = builder.CreateAdd(left->value(), right->value(),
                                 namegen("add"));
     break;
   }
@@ -3101,7 +3115,7 @@ bool Llvm_backend::function_set_body(Bfunction *function,
 
   // Sanity checks
   if (checkIntegrity_)
-    enforce_tree_integrity(code_stmt);
+    enforceTreeIntegrity(code_stmt);
 
   // Create and populate entry block
   llvm::BasicBlock *entryBlock = genEntryBlock(function);
