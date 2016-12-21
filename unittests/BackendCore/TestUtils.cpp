@@ -46,31 +46,32 @@ bool difftokens(const std::string &expected, const std::string &result,
 {
   std::vector<std::string> expv = tokenize(expected);
   std::vector<std::string> resv = tokenize(result);
+  unsigned mins = std::min(expv.size(), resv.size());
+  unsigned maxs = std::max(expv.size(), resv.size());
   std::stringstream ss;
+  bool rval = true;
   if (expv.size() != resv.size()) {
     ss << "lengths differ (" << expv.size() << " vs " << resv.size()
        << ") extra " << (expv.size() > resv.size() ? "result" : "expected")
        << " tokens: ";
-    unsigned mins = std::min(expv.size(), resv.size());
-    unsigned maxs = std::max(expv.size(), resv.size());
     for (unsigned idx = 0; idx < maxs; ++idx) {
       if (idx >= mins)
         ss << (idx < expv.size() ? expv[idx] : resv[idx]) << " ";
     }
-    ss << " res:{" << vectostr(resv) << " }";
-    diffreason = ss.str();
-    return false;
+    ss << "\n";
+    rval = false;
   }
-  for (unsigned idx = 0; idx < expv.size(); ++idx) {
+  for (unsigned idx = 0; idx < mins; ++idx) {
     if (expv[idx] != resv[idx]) {
       ss << "token vector diff at slot " << idx << " (expected '" << expv[idx]
          << "' result '" << resv[idx] << "')";
-      ss << " res:{" << vectostr(resv) << " }";
-      diffreason = ss.str();
-      return false;
+      rval = false;
+      break;
     }
   }
-  return true;
+  if (! rval)
+    diffreason = ss.str();
+  return rval;
 }
 
 bool containstokens(const std::string &text, const std::string &pat)

@@ -13,13 +13,13 @@
 #include "llvm/IR/Function.h"
 #include "gtest/gtest.h"
 
-using namespace llvm;
+//using namespace llvm;
 using namespace goBackendUnitTests;
 
 namespace {
 
 TEST(BackendExprTests, MakeBoolConstExpr) {
-  LLVMContext C;
+  llvm::LLVMContext C;
 
   std::unique_ptr<Backend> be(go_get_backend(C));
 
@@ -33,7 +33,7 @@ TEST(BackendExprTests, MakeBoolConstExpr) {
 }
 
 TEST(BackendExprTests, MakeIntConstExpr) {
-  LLVMContext C;
+  llvm::LLVMContext C;
 
   std::unique_ptr<Backend> be(go_get_backend(C));
 
@@ -68,7 +68,7 @@ TEST(BackendExprTests, MakeIntConstExpr) {
 }
 
 TEST(BackendExprTests, MakeFloatConstExpr) {
-  LLVMContext C;
+  llvm::LLVMContext C;
 
   std::unique_ptr<Backend> be(go_get_backend(C));
 
@@ -120,7 +120,7 @@ TEST(BackendExprTests, MakeFloatConstExpr) {
 }
 
 TEST(BackendExprTests, MakeZeroValueExpr) {
-  LLVMContext C;
+  llvm::LLVMContext C;
 
   std::unique_ptr<Backend> be(go_get_backend(C));
 
@@ -171,7 +171,7 @@ TEST(BackendExprTests, TestConversionExpressions) {
   const char *exp = R"RAW_RESULT(
       store i64 0, i64* %x
       %cast = bitcast i64* %x to { i32, i32 }*
-      %field.0 = getelementptr { i32, i32 }, { i32, i32 }* %cast, i32 0, i32 1
+      %field.0 = getelementptr inbounds { i32, i32 }, { i32, i32 }* %cast, i32 0, i32 1
       store i32 22, i32* %field.0
     )RAW_RESULT";
 
@@ -188,7 +188,7 @@ TEST(BackendExprTests, TestConversionExpressions) {
 }
 
 TEST(BackendExprTests, MakeVarExpressions) {
-  LLVMContext C;
+  llvm::LLVMContext C;
 
   std::unique_ptr<Backend> be(go_get_backend(C));
 
@@ -228,25 +228,25 @@ TEST(BackendExprTests, TestCompareOps) {
   Operator optotest[] = {OPERATOR_EQEQ, OPERATOR_NOTEQ, OPERATOR_LT,
                          OPERATOR_LE,   OPERATOR_GT,    OPERATOR_GE};
 
+  Btype *bi64t = be->integer_type(false, 64);
+  Btype *bui64t = be->integer_type(true, 64);
+  Btype *bf64t = be->float_type(64);
+  Bvariable *x = h.mkLocal("x", bi64t);
+  Bvariable *y = h.mkLocal("y", bui64t);
+  Bvariable *z = h.mkLocal("z", bf64t);
   Bexpression *beic = mkInt64Const(be, 9);
-  Bexpression *beic2 = mkInt64Const(be, 3);
   Bexpression *beuc = mkUint64Const(be, 9);
-  Bexpression *beuc2 = mkUint64Const(be, 3);
   Bexpression *befc = mkFloat64Const(be, 9.0);
-  Bexpression *befc2 = mkFloat64Const(be, 3.0);
-  std::vector<std::pair<Bexpression *, Bexpression *>> valtotest;
-  valtotest.push_back(std::make_pair(beic, beic2));
-  valtotest.push_back(std::make_pair(beuc, beuc2));
-  valtotest.push_back(std::make_pair(befc, befc2));
+  std::vector<std::pair<Bexpression *, Bvariable *>> valtotest;
+  valtotest.push_back(std::make_pair(beic, x));
+  valtotest.push_back(std::make_pair(beuc, y));
+  valtotest.push_back(std::make_pair(befc, z));
 
   Location loc;
-  Btype *boolt = be->bool_type();
-  Bexpression *trueval = be->boolean_constant_expression(true);
-  h.mkLocal("loc1", boolt, trueval);
-
   for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
     Bexpression *bleft = valtotest[tidx].first;
-    Bexpression *bright = valtotest[tidx].second;
+    Bvariable *bv = valtotest[tidx].second;
+    Bexpression *bright = be->var_expression(bv, VE_rvalue, loc);
     for (auto op : optotest) {
       Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
       Bstatement *es = be->expression_statement(func, cmp);
@@ -255,25 +255,46 @@ TEST(BackendExprTests, TestCompareOps) {
   }
 
   const char *exp = R"RAW_RESULT(
-    store i1 true, i1* %loc1
-    %icmp.0 = icmp eq i64 9, 3
-    %icmp.1 = icmp ne i64 9, 3
-    %icmp.2 = icmp slt i64 9, 3
-    %icmp.3 = icmp sle i64 9, 3
-    %icmp.4 = icmp sgt i64 9, 3
-    %icmp.5 = icmp sge i64 9, 3
-    %icmp.6 = icmp eq i64 9, 3
-    %icmp.7 = icmp ne i64 9, 3
-    %icmp.8 = icmp ult i64 9, 3
-    %icmp.9 = icmp ule i64 9, 3
-    %icmp.10 = icmp ugt i64 9, 3
-    %icmp.11 = icmp uge i64 9, 3
-    %fcmp.0 = fcmp oeq double 9.000000e+00, 3.000000e+00
-    %fcmp.1 = fcmp one double 9.000000e+00, 3.000000e+00
-    %fcmp.2 = fcmp olt double 9.000000e+00, 3.000000e+00
-    %fcmp.3 = fcmp ole double 9.000000e+00, 3.000000e+00
-    %fcmp.4 = fcmp ogt double 9.000000e+00, 3.000000e+00
-    %fcmp.5 = fcmp oge double 9.000000e+00, 3.000000e+00
+      store i64 0, i64* %x
+      store i64 0, i64* %y
+      store double 0.000000e+00, double* %z
+      %x.ld.0 = load i64, i64* %x
+      %icmp.0 = icmp eq i64 9, %x.ld.0
+      %x.ld.1 = load i64, i64* %x
+      %icmp.1 = icmp ne i64 9, %x.ld.1
+      %x.ld.2 = load i64, i64* %x
+      %icmp.2 = icmp slt i64 9, %x.ld.2
+      %x.ld.3 = load i64, i64* %x
+      %icmp.3 = icmp sle i64 9, %x.ld.3
+      %x.ld.4 = load i64, i64* %x
+      %icmp.4 = icmp sgt i64 9, %x.ld.4
+      %x.ld.5 = load i64, i64* %x
+      %icmp.5 = icmp sge i64 9, %x.ld.5
+      %y.ld.0 = load i64, i64* %y
+      %icmp.6 = icmp eq i64 9, %y.ld.0
+      %y.ld.1 = load i64, i64* %y
+      %icmp.7 = icmp ne i64 9, %y.ld.1
+      %y.ld.2 = load i64, i64* %y
+      %icmp.8 = icmp ult i64 9, %y.ld.2
+      %y.ld.3 = load i64, i64* %y
+      %icmp.9 = icmp ule i64 9, %y.ld.3
+      %y.ld.4 = load i64, i64* %y
+      %icmp.10 = icmp ugt i64 9, %y.ld.4
+      %y.ld.5 = load i64, i64* %y
+      %icmp.11 = icmp uge i64 9, %y.ld.5
+      %z.ld.0 = load double, double* %z
+      %fcmp.0 = fcmp oeq double 9.000000e+00, %z.ld.0
+      %z.ld.1 = load double, double* %z
+      %fcmp.1 = fcmp one double 9.000000e+00, %z.ld.1
+      %z.ld.2 = load double, double* %z
+      %fcmp.2 = fcmp olt double 9.000000e+00, %z.ld.2
+      %z.ld.3 = load double, double* %z
+      %fcmp.3 = fcmp ole double 9.000000e+00, %z.ld.3
+      %z.ld.4 = load double, double* %z
+      %fcmp.4 = fcmp ogt double 9.000000e+00, %z.ld.4
+      %z.ld.5 = load double, double* %z
+      %fcmp.5 = fcmp oge double 9.000000e+00, %z.ld.5
+
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -290,18 +311,21 @@ TEST(BackendExprTests, TestArithOps) {
 
   Operator optotest[] = {OPERATOR_PLUS,OPERATOR_MINUS};
 
+  Btype *bi64t = be->integer_type(false, 64);
+  Btype *bf64t = be->float_type(64);
+  Bvariable *x = h.mkLocal("x", bi64t);
+  Bvariable *y = h.mkLocal("y", bf64t);
   Bexpression *beic = mkInt64Const(be, 9);
-  Bexpression *beic2 = mkInt64Const(be, 3);
   Bexpression *befc = mkFloat64Const(be, 9.0);
-  Bexpression *befc2 = mkFloat64Const(be, 3.0);
-  std::vector<std::pair<Bexpression *, Bexpression *>> valtotest;
-  valtotest.push_back(std::make_pair(beic, beic2));
-  valtotest.push_back(std::make_pair(befc, befc2));
+  std::vector<std::pair<Bexpression *, Bvariable *>> valtotest;
+  valtotest.push_back(std::make_pair(beic, x));
+  valtotest.push_back(std::make_pair(befc, y));
 
   Location loc;
   for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
     Bexpression *bleft = valtotest[tidx].first;
-    Bexpression *bright = valtotest[tidx].second;
+    Bvariable *bv = valtotest[tidx].second;
+    Bexpression *bright = be->var_expression(bv, VE_rvalue, loc);
     for (auto op : optotest) {
       Bexpression *cmp = be->binary_expression(op, bleft, bright, loc);
       Bstatement *es = be->expression_statement(func, cmp);
@@ -310,10 +334,16 @@ TEST(BackendExprTests, TestArithOps) {
   }
 
   const char *exp = R"RAW_RESULT(
-      %add.0 = add i64 9, 3
-      %sub.0 = sub i64 9, 3
-      %fadd.0 = fadd double 9.000000e+00, 3.000000e+00
-      %fsub.0 = fsub double 9.000000e+00, 3.000000e+00
+      store i64 0, i64* %x
+      store double 0.000000e+00, double* %y
+      %x.ld.0 = load i64, i64* %x
+      %add.0 = add i64 9, %x.ld.0
+      %x.ld.1 = load i64, i64* %x
+      %sub.0 = sub i64 9, %x.ld.1
+      %y.ld.0 = load double, double* %y
+      %fadd.0 = fadd double 9.000000e+00, %y.ld.0
+      %y.ld.1 = load double, double* %y
+      %fsub.0 = fsub double 9.000000e+00, %y.ld.1
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -426,9 +456,8 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
 }
 
 TEST(BackendExprTests, TestStructFieldExprs) {
-  LLVMContext C;
-
-  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
 
   //
   // type X struct {
@@ -438,41 +467,34 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   // var loc1 X
   //
   Location loc;
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
   Btype *bt = be->bool_type();
   Btype *pbt = be->pointer_type(bt);
   Btype *bi32t = be->integer_type(false, 32);
-  Btype *s2t = mkBackendStruct(be.get(), pbt, "f1", bi32t, "f2", nullptr);
-  Bvariable *loc1 = be->local_variable(func, "loc1", s2t, true, loc);
-  Bexpression *bszero = be->zero_expression(s2t);
-  Bstatement *is = be->init_statement(func, loc1, bszero);
-  Bblock *block = mkBlockFromStmt(be.get(), func, is);
+  Btype *s2t = mkBackendStruct(be, pbt, "f1", bi32t, "f2", nullptr);
+  Bvariable *loc1 = h.mkLocal("loc1", s2t);
 
   // var loc2 *X = &loc1
   Btype *ps2t = be->pointer_type(s2t);
-  Bvariable *loc2 = be->local_variable(func, "loc2", ps2t, true, loc);
   Bexpression *bl1vex = be->var_expression(loc1, VE_rvalue, loc);
   Bexpression *adl1 = be->address_expression(bl1vex, loc);
-  Bstatement *isx = be->init_statement(func, loc2, adl1);
-  addStmtToBlock(be.get(), block, isx);
+  Bvariable *loc2 = h.mkLocal("loc2", ps2t, adl1);
 
-  // x := loc1.f2
-  Bvariable *x = be->local_variable(func, "x", bi32t, true, loc);
+  // var x int32
+  // x = loc1.f2
+  Bvariable *x = h.mkLocal("x", bi32t);
   Bexpression *vex = be->var_expression(x, VE_lvalue, loc);
   Bexpression *sex = be->var_expression(loc1, VE_rvalue, loc);
   Bexpression *fex = be->struct_field_expression(sex, 1, loc);
-  Bstatement *as = be->assignment_statement(func, vex, fex, loc);
-  addStmtToBlock(be.get(), block, as);
+  h.mkAssign(vex, fex);
 
   // var b2 bool
   // loc1.b = &b2
-  Bvariable *b2 = be->local_variable(func, "b2", bt, true, loc);
+  Bvariable *b2 = h.mkLocal("b2", bt);
   Bexpression *lvex = be->var_expression(loc1, VE_lvalue, loc);
   Bexpression *bfex = be->struct_field_expression(lvex, 0, loc);
   Bexpression *b2ex = be->var_expression(b2, VE_rvalue, loc);
   Bexpression *adb2 = be->address_expression(b2ex, loc);
-  Bstatement *as2 = be->assignment_statement(func, bfex, adb2, loc);
-  addStmtToBlock(be.get(), block, as2);
+  h.mkAssign(bfex, adb2);
 
   // var b2 bool
   // loc2.f2 = 2 (equivalent to (*loc2).f2 = 2)
@@ -480,36 +502,31 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   bool knValid = false;
   Bexpression *lindx = be->indirect_expression(s2t, lvexi, knValid, loc);
   Bexpression *bfex2 = be->struct_field_expression(lindx, 1, loc);
-  Bexpression *bc2 = mkInt32Const(be.get(), 2);
-  Bstatement *as3 = be->assignment_statement(func, bfex2, bc2, loc);
-  addStmtToBlock(be.get(), block, as3);
-
-  // return 10101
-  std::vector<Bexpression *> vals;
-  vals.push_back(mkInt64Const(be.get(), 10101));
-  Bstatement *ret = be->return_statement(func, vals, loc);
-  addStmtToBlock(be.get(), block, ret);
+  Bexpression *bc2 = mkInt32Const(be, 2);
+  h.mkAssign(bfex2, bc2);
 
   const char *exp = R"RAW_RESULT(
-   store { i1*, i32 } zeroinitializer, { i1*, i32 }* %loc1
-   store { i1*, i32 }* %loc1, { i1*, i32 }** %loc2
-   %field.0 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc1, i32 0, i32 1
-   %loc1.field.ld.0 = load i32, i32* %field.0
-   store i32 %loc1.field.ld.0, i32* %x
-   %field.1 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc1, i32 0, i32 0
-   store i1* %b2, i1** %field.1
-   %loc2.ld.0 = load { i1*, i32 }*, { i1*, i32 }** %loc2
-   %field.2 = getelementptr { i1*, i32 }, { i1*, i32 }* %loc2.ld.0, i32 0, i32 1
-   store i32 2, i32* %field.2
-   ret i64 10101
+      store { i1*, i32 } zeroinitializer, { i1*, i32 }* %loc1
+      store { i1*, i32 }* %loc1, { i1*, i32 }** %loc2
+      store i32 0, i32* %x
+      %field.0 = getelementptr inbounds { i1*, i32 },
+        { i1*, i32 }* %loc1, i32 0, i32 1
+      %loc1.field.ld.0 = load i32, i32* %field.0
+      store i32 %loc1.field.ld.0, i32* %x
+      store i1 false, i1* %b2
+      %field.1 = getelementptr inbounds { i1*, i32 },
+         { i1*, i32 }* %loc1, i32 0, i32 0
+      store i1* %b2, i1** %field.1
+      %loc2.ld.0 = load { i1*, i32 }*, { i1*, i32 }** %loc2
+      %field.2 = getelementptr inbounds { i1*, i32 },
+        { i1*, i32 }* %loc2.ld.0, i32 0, i32 1
+      store i32 2, i32* %field.2
   )RAW_RESULT";
 
-  std::string reason;
-  bool equal = difftokens(exp, repr(block), reason);
-  EXPECT_EQ("pass", equal ? "pass" : reason);
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  be->function_set_body(func, block);
-  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -571,10 +588,10 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
 }
 
 TEST(BackendExprTests, CreateStructConstructionExprs) {
-  LLVMContext C;
-
-  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+  Location loc;
 
   // type X struct {
   //    f1 *int32
@@ -585,18 +602,15 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   // var loc2 X = { &param1, loc1.f2 }
 
   // var loc1 X = { nil, 101 }
-  Location loc;
   Btype *bi32t = be->integer_type(false, 32);
   Btype *pbi32t = be->pointer_type(bi32t);
-  Btype *s2t = mkBackendStruct(be.get(), pbi32t, "f1", bi32t, "f2", nullptr);
+  Btype *s2t = mkBackendStruct(be, pbi32t, "f1", bi32t, "f2", nullptr);
   std::vector<Bexpression *> vals1;
   vals1.push_back(be->zero_expression(pbi32t));
-  vals1.push_back(mkInt32Const(be.get(), int32_t(101)));
+  vals1.push_back(mkInt32Const(be, int32_t(101)));
   Bexpression *scon1 =
       be->constructor_expression(s2t, vals1, loc);
-  Bvariable *loc1 = be->local_variable(func, "loc1", s2t, true, loc);
-  Bstatement *is1 = be->init_statement(func, loc1, scon1);
-  Bblock *block = mkBlockFromStmt(be.get(), func, is1);
+  Bvariable *loc1 = h.mkLocal("loc1", s2t, scon1);
 
   // var loc2 X = { &param1, loc1.f2 }
   Bvariable *p1 = func->getBvarForValue(func->getNthArgValue(0));
@@ -608,33 +622,25 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   vals2.push_back(adp);
   vals2.push_back(fex);
   Bexpression *scon2 = be->constructor_expression(s2t, vals2, loc);
-  Bvariable *loc2 = be->local_variable(func, "loc2", s2t, true, loc);
-  Bstatement *is2 = be->init_statement(func, loc2, scon2);
-  addStmtToBlock(be.get(), block, is2);
-
-  // return 10101
-  std::vector<Bexpression *> vals;
-  vals.push_back(mkInt64Const(be.get(), 10101));
-  Bstatement *ret = be->return_statement(func, vals, loc);
-  addStmtToBlock(be.get(), block, ret);
+  h.mkLocal("loc2", s2t, scon2);
 
   const char *exp = R"RAW_RESULT(
-    store { i32*, i32 } { i32* null, i32 101 }, { i32*, i32 }* %loc1
-    %field.1 = getelementptr { i32*, i32 }, { i32*, i32 }* %loc2, i32 0, i32 0
-    store i32* %param1.addr, i32** %field.1
-    %field.2 = getelementptr { i32*, i32 }, { i32*, i32 }* %loc2, i32 0, i32 1
-    %field.0 = getelementptr { i32*, i32 }, { i32*, i32 }* %loc1, i32 0, i32 1
-    %loc1.field.ld.0 = load i32, i32* %field.0
-    store i32 %loc1.field.ld.0, i32* %field.2
-    ret i64 10101
+      store { i32*, i32 } { i32* null, i32 101 }, { i32*, i32 }* %loc1
+      %field.1 = getelementptr inbounds { i32*, i32 },
+        { i32*, i32 }* %loc2, i32 0, i32 0
+      store i32* %param1.addr, i32** %field.1
+      %field.2 = getelementptr inbounds { i32*, i32 },
+        { i32*, i32 }* %loc2, i32 0, i32 1
+      %field.0 = getelementptr inbounds { i32*, i32 },
+        { i32*, i32 }* %loc1, i32 0, i32 1
+      %loc1.field.ld.0 = load i32, i32* %field.0
+      store i32 %loc1.field.ld.0, i32* %field.2
   )RAW_RESULT";
 
-  std::string reason;
-  bool equal = difftokens(exp, repr(block), reason);
-  EXPECT_EQ("pass", equal ? "pass" : reason);
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  be->function_set_body(func, block);
-  bool broken = llvm::verifyModule(be->module(), &dbgs());
+  bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -752,13 +758,13 @@ TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
         [10 x { i1, [4 x { i64, i64 }*], i1 }*]* %t1, i32 0, i32 7
     %t1.index.ld.0 = load { i1, [4 x { i64, i64 }*], i1 }*,
         { i1, [4 x { i64, i64 }*], i1 }** %index.0
-    %field.0 = getelementptr { i1, [4 x { i64, i64 }*], i1 },
+    %field.0 = getelementptr inbounds { i1, [4 x { i64, i64 }*], i1 },
         { i1, [4 x { i64, i64 }*], i1 }* %t1.index.ld.0, i32 0, i32 1
     %index.1 = getelementptr [4 x { i64, i64 }*],
          [4 x { i64, i64 }*]* %field.0, i32 0, i32 3
     %.field.index.ld.0 = load { i64, i64 }*,
           { i64, i64 }** %index.1
-    %field.1 = getelementptr { i64, i64 },
+    %field.1 = getelementptr inbounds { i64, i64 },
       { i64, i64 }* %.field.index.ld.0, i32 0, i32 0
     store i64 5, i64* %field.1
   )RAW_RESULT";
@@ -788,13 +794,13 @@ TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
            [10 x { i1, [4 x { i64, i64 }*], i1 }*]* %t1, i32 0, i32 0
       %t1.index.ld.1 = load { i1, [4 x { i64, i64 }*], i1 }*,
            { i1, [4 x { i64, i64 }*], i1 }** %index.2
-      %field.2 = getelementptr { i1, [4 x { i64, i64 }*], i1 },
+      %field.2 = getelementptr inbounds { i1, [4 x { i64, i64 }*], i1 },
            { i1, [4 x { i64, i64 }*], i1 }* %t1.index.ld.1, i32 0, i32 1
       %index.3 = getelementptr [4 x { i64, i64 }*],
          [4 x { i64, i64 }*]* %field.2, i32 0, i32 0
       %.field.index.ld.1 = load { i64, i64 }*,
          { i64, i64 }** %index.3
-      %field.3 = getelementptr { i64, i64 },
+      %field.3 = getelementptr inbounds { i64, i64 },
           { i64, i64 }* %.field.index.ld.1, i32 0, i32 1
       %.field.ld.0 = load i64, i64* %field.3
       store i64 %.field.ld.0, i64* %q

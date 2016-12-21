@@ -648,6 +648,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
     : context_(context)
     , module_(new llvm::Module("gomodule", context))
     , datalayout_(module_->getDataLayout())
+    , builder_(new LIRBuilder(context_, llvm::ConstantFolder()))
     , addressSpace_(0)
     , traceLevel_(0)
     , checkIntegrity_(true)
@@ -1505,7 +1506,6 @@ Bexpression *Llvm_backend::loadFromExpr(Bexpression *expr,
   ldname = namegen(ldname);
   llvm::Instruction *ldinst = new llvm::LoadInst(expr->value(), ldname);
   Bexpression *rval = makeExpression(ldinst, loadResultType, expr, nullptr);
-  rval->appendInstruction(ldinst);
   return rval;
 }
 
@@ -1614,8 +1614,9 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
 
     // Construct an appropriate GEP
     llvm::Value *idxval = llvm::ConstantInt::get(llvmInt32Type_, eidx);
-    llvm::Instruction *gep = makeArrayIndexGEP(llat, idxval, storage);
-    expr->appendInstruction(gep);
+    llvm::Value *gep = makeArrayIndexGEP(llat, idxval, storage);
+    if (llvm::isa<llvm::Instruction>(gep))
+      expr->appendInstruction(llvm::cast<llvm::Instruction>(gep));
 
     // Store value into gep
     Bexpression *valexp = resolveVarContext(aexprs[eidx]);
@@ -1646,8 +1647,9 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
   for (unsigned fidx = 0; fidx < nFields; ++fidx) {
 
     // Construct an appropriate GEP
-    llvm::Instruction *gep = makeFieldGEP(llst, fidx, storage);
-    expr->appendInstruction(gep);
+    llvm::Value *gep = makeFieldGEP(llst, fidx, storage);
+    if (llvm::isa<llvm::Instruction>(gep))
+      expr->appendInstruction(llvm::cast<llvm::Instruction>(gep));
 
     // Store value into gep
     assert(fexprs[fidx]);
@@ -1928,32 +1930,28 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
   return makeValueExpression(bfunc->function(), fpBtype, GlobalScope);
 }
 
-llvm::Instruction *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
-                                                   llvm::Value *idxval,
-                                                   llvm::Value *sptr)
+llvm::Value *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
+                                             llvm::Value *idxval,
+                                             llvm::Value *sptr)
 {
   llvm::SmallVector<llvm::Value *, 2> elems(2);
   elems[0] = llvm::ConstantInt::get(llvmInt32Type_, 0);
   elems[1] = idxval;
-  std::string name = namegen("index");
-  llvm::GetElementPtrInst *gep =
-      llvm::GetElementPtrInst::Create(llat, sptr, elems, name);
-  return gep;
+  llvm::Value *val = builder_->CreateGEP(llat, sptr, elems,
+                                         namegen("index"));
+  return val;
 }
 
 // Field GEP helper
-llvm::Instruction *Llvm_backend::makeFieldGEP(llvm::StructType *llst,
-                                              unsigned fieldIndex,
-                                              llvm::Value *sptr)
+llvm::Value *Llvm_backend::makeFieldGEP(llvm::StructType *llst,
+                                        unsigned fieldIndex,
+                                        llvm::Value *sptr)
 {
   assert(fieldIndex < llst->getNumElements());
-  llvm::SmallVector<llvm::Value *, 2> elems(2);
-  elems[0] = llvm::ConstantInt::get(llvmInt32Type_, 0);
-  elems[1] = llvm::ConstantInt::get(llvmInt32Type_, fieldIndex);
-  std::string name = namegen("field");
-  llvm::GetElementPtrInst *gep =
-      llvm::GetElementPtrInst::Create(llst, sptr, elems, name);
-  return gep;
+  std::string tag(namegen("field"));
+  llvm::Value *val =
+      builder_->CreateConstInBoundsGEP2_32(llst, sptr, 0, fieldIndex, tag);
+  return val;
 }
 
 // Return an expression for the field at INDEX in BSTRUCT.
@@ -1968,14 +1966,14 @@ Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
   llvm::Type *llt = bstruct->btype()->type();
   assert(llt->isStructTy());
   llvm::StructType *llst = llvm::cast<llvm::StructType>(llt);
-  llvm::Instruction *gep =
-      makeFieldGEP(llst, index, bstruct->value());
+  llvm::Value *gep = makeFieldGEP(llst, index, bstruct->value());
 
-  // Wrap in a Bexpression
+  // Wrap result in a Bexpression
   Btype *bft = elementTypeByIndex(bstruct->btype(), index);
   Bexpression *rval = makeValueExpression(gep, bft, LocalScope);
   rval->appendInstructions(bstruct->instructions());
-  rval->appendInstruction(gep);
+  if (llvm::isa<llvm::Instruction>(gep))
+    rval->appendInstruction(llvm::cast<llvm::Instruction>(gep));
   if (bstruct->varExprPending())
     rval->setVarExprPending(bstruct->varContext());
   std::string tag(bstruct->tag());
@@ -2015,41 +2013,19 @@ Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
   return nullptr;
 }
 
-static llvm::Instruction::BinaryOps arith_op_to_binop(Operator op,
-                                                      llvm::Type *typ,
-                                                      bool isUnsigned,
-                                                      const char *&tag) {
-  bool isFloat = typ->isFloatingPointTy();
-
-  if (isFloat) {
-    switch (op) {
-    case OPERATOR_PLUS:
-      tag = "fadd";
-      return llvm::Instruction::FAdd;
-    case OPERATOR_MINUS:
-      tag = "fsub";
-      return llvm::Instruction::FSub;
-    default:
-      break;
-    }
-  } else {
-    switch (op) {
-    case OPERATOR_PLUS:
-      tag = "add";
-      return llvm::Instruction::Add;
-    case OPERATOR_MINUS:
-      tag = "sub";
-      return llvm::Instruction::Sub;
-    default:
-      break;
-    }
-  }
-  assert(false);
-  return llvm::Instruction::BinaryOpsEnd;
-}
-
 static llvm::CmpInst::Predicate compare_op_to_pred(Operator op, llvm::Type *typ,
                                                    bool isUnsigned) {
+
+
+
+
+
+
+
+
+
+
+
 
   bool isFloat = typ->isFloatingPointTy();
 
@@ -2117,6 +2093,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
   assert(bltype->isUnsigned() == brtype->isUnsigned());
   bool isUnsigned = bltype->isUnsigned();
 
+  llvm::Value *val = nullptr;
   switch (op) {
   case OPERATOR_EQEQ:
   case OPERATOR_NOTEQ:
@@ -2125,34 +2102,38 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
   case OPERATOR_GT:
   case OPERATOR_GE: {
     llvm::CmpInst::Predicate pred = compare_op_to_pred(op, ltype, isUnsigned);
-    llvm::Instruction *cmp;
     if (ltype->isFloatingPointTy())
-      cmp = new llvm::FCmpInst(pred, left->value(), right->value(),
-                               namegen("fcmp"));
+      val = builder_->CreateFCmp(pred, left->value(), right->value(),
+                                 namegen("fcmp"));
     else
-      cmp = new llvm::ICmpInst(pred, left->value(), right->value(),
-                               namegen("icmp"));
-    Bexpression *e = makeExpression(cmp, bltype, left, right, nullptr);
-    e->appendInstruction(cmp);
-    return e;
+      val = builder_->CreateICmp(pred, left->value(), right->value(),
+                                 namegen("icmp"));
+    break;
   }
-  case OPERATOR_MINUS:
+  case OPERATOR_MINUS: {
+    if (ltype->isFloatingPointTy())
+      val = builder_->CreateFSub(left->value(), right->value(),
+                                 namegen("fsub"));
+    else
+      val = builder_->CreateSub(left->value(), right->value(),
+                                namegen("sub"));
+    break;
+  }
   case OPERATOR_PLUS: {
-    const char *tag;
-    llvm::Instruction::BinaryOps llvmop =
-        arith_op_to_binop(op, ltype, isUnsigned, tag);
-    llvm::Instruction *binop = llvm::BinaryOperator::Create(
-        llvmop, left->value(), right->value(), namegen(tag));
-    Bexpression *e = makeExpression(binop, bltype, left, right, nullptr);
-    e->appendInstruction(binop);
-    return e;
+    if (ltype->isFloatingPointTy())
+      val = builder_->CreateFAdd(left->value(), right->value(),
+                                 namegen("fadd"));
+    else
+      val = builder_->CreateAdd(left->value(), right->value(),
+                                namegen("add"));
+    break;
   }
   default:
     std::cerr << "Op " << op << "unhandled\n";
     assert(false);
   }
 
-  return nullptr;
+  return makeExpression(val, bltype, left, right, nullptr);
 }
 
 
@@ -2319,7 +2300,7 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
   llvm::Type *llt = barray->btype()->type();
   assert(llt->isArrayTy());
   llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(llt);
-  llvm::Instruction *gep =
+  llvm::Value *gep =
       makeArrayIndexGEP(llat, index->value(), barray->value());
 
   // Wrap in a Bexpression
@@ -2327,7 +2308,8 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
   Bexpression *rval = makeValueExpression(gep, bet, LocalScope);
   rval->appendInstructions(barray->instructions());
   rval->appendInstructions(index->instructions());
-  rval->appendInstruction(gep);
+  if (llvm::isa<llvm::Instruction>(gep))
+    rval->appendInstruction(llvm::cast<llvm::Instruction>(gep));
   if (barray->varExprPending())
     rval->setVarExprPending(barray->varContext());
   std::string tag(barray->tag());
@@ -2423,10 +2405,10 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
   return st;
 }
 
-Bexpression *Llvm_backend::makeExpression(llvm::Instruction *value,
-                                           Btype *btype,
-                                           Bexpression *src,
-                                           ...)
+Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
+                                          Btype *btype,
+                                          Bexpression *src,
+                                          ...)
 {
   Bexpression *result = makeValueExpression(value, btype, LocalScope);
   va_list ap;
@@ -2438,6 +2420,8 @@ Bexpression *Llvm_backend::makeExpression(llvm::Instruction *value,
     }
     src = va_arg(ap, Bexpression *);
   }
+  if (llvm::isa<llvm::Instruction>(value))
+    result->appendInstruction(llvm::cast<llvm::Instruction>(value));
   return result;
 }
 
@@ -2455,7 +2439,6 @@ Bstatement *Llvm_backend::makeAssignment(llvm::Value *lval, Bexpression *lhs,
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
 
   Bexpression *stexp = makeExpression(si, rhs->btype(), rhs, lhs, nullptr);
-  stexp->appendInstruction(si);
   ExprListStatement *els = stmtFromExpr(stexp);
   return els;
 }
@@ -2496,7 +2479,6 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   Bexpression *toret = resolve(vals[0], bfunction);
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, toret->value());
   Bexpression *rexp = makeExpression(ri, btype, toret, nullptr);
-  rexp->appendInstruction(ri);
   ExprListStatement *els = stmtFromExpr(rexp);
   return els;
 }

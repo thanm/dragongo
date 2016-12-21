@@ -155,6 +155,9 @@ class FcnTestHarness {
   // Return current function
   Bfunction *func() const { return func_; }
 
+  // Return current block
+  Bblock *block() const { return curBlock_; }
+
   // Create a local variable in the function.
   Bvariable *mkLocal(const char *name, Btype *typ, Bexpression *init = nullptr);
 

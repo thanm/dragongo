@@ -16,26 +16,28 @@ using namespace goBackendUnitTests;
 
 namespace {
 
-TEST(BackendCoreTests, CheckTreeIntegrity1) {
-  // Add the same instruction to more than one Bexpression
-  LLVMContext C;
+TEST(BackendTreeIntegrity, CheckTreeIntegrity1) {
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
   Location loc;
-  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
-  be->disableIntegrityChecks();
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
 
-  // Create "2 + 3"
-  Bblock *block;
-  Bexpression *bl1 = mkInt64Const(be.get(), 2);
-  Bexpression *br1 = mkInt64Const(be.get(), 3);
-  Bexpression *badd1 = be->binary_expression(OPERATOR_PLUS, bl1, br1, loc);
+  // So that we can test the checker itself
+  be->disableIntegrityChecks();
+
+  // Create "2 + x"
+  Btype *bi64t = be->integer_type(false, 64);
+  Bvariable *xv = h.mkLocal("x", bi64t);
+  Bexpression *vex = be->var_expression(xv, VE_rvalue, loc);
+  Bexpression *bl1 = mkInt64Const(be, 2);
+  Bexpression *badd1 = be->binary_expression(OPERATOR_PLUS, bl1, vex, loc);
   Bstatement *es = be->expression_statement(func, badd1);
-  block = mkBlockFromStmt(be.get(), func, es);
+  h.addStmt(es);
 
   // Create "4"
-  Bexpression *b4 = mkInt64Const(be.get(), 4);
+  Bexpression *b4 = mkInt64Const(be, 4);
   Bstatement *es2 = be->expression_statement(func, b4);
-  addStmtToBlock(be.get(), block, es2);
+  h.addStmt(es2);
 
   // Mangle the IR so that we have a some instructions
   // parented by more than one Bexpression. Warning to our viewers at
@@ -43,7 +45,8 @@ TEST(BackendCoreTests, CheckTreeIntegrity1) {
   for (auto inst : badd1->instructions())
     b4->appendInstruction(inst);
 
-  std::pair<bool, std::string> result = be->check_tree_integrity(block, false);
+  std::pair<bool, std::string> result =
+      be->check_tree_integrity(h.block(), false);
   EXPECT_EQ(false, result.first);
   EXPECT_TRUE(containstokens(result.second,
                              "instruction has multiple parents"));
@@ -51,10 +54,10 @@ TEST(BackendCoreTests, CheckTreeIntegrity1) {
   // Undo the mangling to avoid asserts later on
   b4->instructions().clear();
 
-  be->function_set_body(func, block);
+  h.finish();
 }
 
-TEST(BackendCoreTests, CheckTreeIntegrity2) {
+TEST(BackendTreeIntegrity, CheckTreeIntegrity2) {
 
   // Add the same Expression to more than one statement
   LLVMContext C;
@@ -86,7 +89,7 @@ TEST(BackendCoreTests, CheckTreeIntegrity2) {
   be->function_set_body(func, block2);
 }
 
-TEST(BackendCoreTests, CheckTreeIntegrity3) {
+TEST(BackendTreeIntegrity, CheckTreeIntegrity3) {
 
   // Same statement with more than one parent.
   LLVMContext C;

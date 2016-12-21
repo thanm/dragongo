@@ -41,6 +41,7 @@ class raw_ostream;
 }
 
 #include "llvm/IR/GlobalValue.h"
+#include "llvm/IR/IRBuilder.h"
 
 // Btype wraps llvm::Type
 
@@ -935,7 +936,7 @@ private:
 
   // Combing the contents of a list of src expressions to produce
   // a new expression.
-  Bexpression *makeExpression(llvm::Instruction *value,
+  Bexpression *makeExpression(llvm::Value *value,
                               Btype *btype,
                               Bexpression *src, ...);
 
@@ -956,14 +957,14 @@ private:
                                         Location location);
 
   // Field GEP helper
-  llvm::Instruction *makeFieldGEP(llvm::StructType *llst,
-                                  unsigned fieldIndex,
-                                  llvm::Value *sptr);
+  llvm::Value *makeFieldGEP(llvm::StructType *llst,
+                            unsigned fieldIndex,
+                            llvm::Value *sptr);
 
   // Array indexing GEP helper
-  llvm::Instruction *makeArrayIndexGEP(llvm::ArrayType *art,
-                                       llvm::Value *idx,
-                                       llvm::Value *sptr);
+  llvm::Value *makeArrayIndexGEP(llvm::ArrayType *art,
+                                 llvm::Value *idx,
+                                 llvm::Value *sptr);
 
   // Create new Bstatement from an expression.
   ExprListStatement *stmtFromExpr(Bexpression *expr);
@@ -1046,15 +1047,16 @@ private:
   typedef std::pair<Btype *, unsigned> structplusindextype;
   typedef pairvalmap<Btype *, unsigned, Btype *> fieldmaptype;
 
+  typedef llvm::IRBuilder<> LIRBuilder;
+
   // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
   std::unique_ptr<llvm::Module> module_;
   const llvm::DataLayout &datalayout_;
+  std::unique_ptr<LIRBuilder> builder_;
   unsigned addressSpace_;
   unsigned traceLevel_;
   bool checkIntegrity_;
-
-  // Data structures to record types that are being manfactured.
 
   // Anonymous typed are hashed and commoned via this map, except for
   // integer types (stored in a separate map below).
