@@ -155,7 +155,13 @@ TEST(BackendExprTests, TestConversionExpressions) {
   ASSERT_TRUE(bcon != nullptr);
   EXPECT_EQ(bzero->value(), bcon->value());
 
-  // Casting one pointer to another.
+  // Casting one pointer to another. This is the equivalent of
+  // type S struct {
+  //   f1, f2 int32
+  // }
+  // var x int64
+  // ((*S)&x).f1 = 22
+  //
   Btype *bi64t = be->integer_type(false, 64);
   Bvariable *xv = h.mkLocal("x", bi64t);
   Btype *bi32t = be->integer_type(false, 32);
@@ -186,6 +192,36 @@ TEST(BackendExprTests, TestConversionExpressions) {
   bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
+
+TEST(BackendExprTests, TestMoreConversionExpressions) {
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+  Location loc;
+
+  // *(*uint32)parm3 = 5
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bpi32t = be->pointer_type(bi32t);
+  Bvariable *p3 = func->getBvarForValue(func->getNthArgValue(2));
+  Bexpression *ve = be->var_expression(p3, VE_lvalue, loc);
+  Bexpression *conv = be->convert_expression(bpi32t, ve, loc);
+  Bexpression *dex = be->indirect_expression(bi32t, conv, false, loc);
+  h.mkAssign(dex, mkInt32Const(be, 5));
+
+  const char *exp = R"RAW_RESULT(
+      %cast = bitcast i64** %param3.addr to i32**
+      %.ld.0 = load i32*, i32** %cast
+      store i32 5, i32* %.ld.0
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+
 
 TEST(BackendExprTests, MakeVarExpressions) {
   llvm::LLVMContext C;
@@ -833,8 +869,8 @@ TEST(BackendExprTests, CreateFunctionCodeExpression) {
   h.mkLocal("ui", uintptrt, be->convert_expression(uintptrt, fp, loc));
 
   const char *exp = R"RAW_RESULT(
-    store i64 (i32, i32)* @foo, i64 (i32, i32)** %fploc
-    store i64 ptrtoint (i64 (i32, i32)* @foo to i64), i64* %ui
+    store i64 (i32, i32, i64*)* @foo, i64 (i32, i32, i64*)** %fploc
+    store i64 ptrtoint (i64 (i32, i32, i64*)* @foo to i64), i64* %ui
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);

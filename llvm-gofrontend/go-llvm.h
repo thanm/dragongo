@@ -1088,6 +1088,15 @@ private:
   std::unordered_set<Btype *> placeholders_;
   std::unordered_set<Btype *> updatedPlaceholders_;
 
+  // For tracking circular types. In the case where we have
+  // "type P *P", P is represented by a named "PT" struct
+  // with a single field whose type is of pointer to PT. This
+  // map has an entry <K,V> where K is the returned type from
+  // ::circular_pointer_type and V is the type passed to
+  // ::circular_pointer_type.
+  std::unordered_map<Btype *, Btype *> circularPointerTypeMap_;
+
+
   // Various predefined or pre-computed types that we cache away
   Btype *complexFloatType_;
   Btype *complexDoubleType_;

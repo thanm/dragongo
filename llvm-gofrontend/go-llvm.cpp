@@ -685,7 +685,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
   // stand-in. See http://llvm.org/docs/LangRef.html#structure-type
   errorType_ = makeAnonType(llvm::StructType::create(context_));
 
-  // For use handling circular types and for builtin creation
+  // For builtin creation
   llvmPtrType_ =
       llvm::PointerType::get(llvm::StructType::create(context), addressSpace_);
 
@@ -1072,6 +1072,17 @@ bool Llvm_backend::set_placeholder_pointer_type(Btype *placeholder,
   assert(to_type);
   if (placeholder == errorType_ || to_type == errorType_)
     return false;
+
+  if (traceLevel() > 1) {
+    std::cerr << "placeholder pointer "
+              << ((void*)placeholder) << " [llvm type "
+              << ((void*) placeholder->type())
+              << " redirected to " << ((void*) to_type)
+              << " [llvm type " << ((void*) to_type->type())
+              << "\n";
+    placeholder->dump();
+    to_type->dump();
+  }
   assert(to_type->type()->isPointerTy());
   if (placeholders_.find(placeholder) == placeholders_.end()) {
     assert(placeholder->type() == to_type->type());
@@ -1165,7 +1176,7 @@ Btype *Llvm_backend::named_type(const std::string &name,
 
 // Return a pointer type used as a marker for a circular type.
 
-Btype *Llvm_backend::circular_pointer_type(Btype *, bool) {
+Btype *Llvm_backend::circular_pointer_type(Btype *placeholder, bool) {
   return makeAnonType(llvmPtrType_);
 }
 
@@ -1907,8 +1918,13 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   if (type->type()->isPointerTy() && val->getType()->isPointerTy()) {
     std::string tag("cast");
     llvm::Type *totype = type->type();
-    if (expr->varExprPending())
-      totype = llvm::PointerType::get(type->type(), addressSpace_);
+    if (expr->varExprPending()) {
+      llvm::Type *ptt = llvm::PointerType::get(type->type(), addressSpace_);
+      llvm::Type *pet = llvm::PointerType::get(expr->btype()->type(),
+                                               addressSpace_);
+      if (val->getType() == pet)
+        totype = ptt;
+    }
     llvm::BitCastInst *bitcast = new llvm::BitCastInst(val, totype, tag);
     Bexpression *rval = makeValueExpression(bitcast, type, LocalScope);
     rval->appendInstructions(expr->instructions());

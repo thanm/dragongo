@@ -270,8 +270,11 @@ llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...) {
 Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams) {
   Btype *bi64t = be->integer_type(false, 64);
   Btype *bi32t = be->integer_type(false, 32);
+  Btype *bpi64t = be->pointer_type(bi64t);
   Btype *befty =
-      mkFuncTyp(be, L_PARM, bi32t, L_PARM, bi32t, L_RES, bi64t, L_END);
+      mkFuncTyp(be,
+                L_PARM, bi32t, L_PARM, bi32t, L_PARM, bpi64t,
+                L_RES, bi64t, L_END);
   bool visible = true;
   bool is_declaration = false;
   bool is_inl = true;
@@ -284,6 +287,7 @@ Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams) {
   if (mkParams) {
     be->parameter_variable(func, "param1", bi32t, false, loc);
     be->parameter_variable(func, "param2", bi32t, false, loc);
+    be->parameter_variable(func, "param3", bpi64t, false, loc);
   }
   return func;
 }
