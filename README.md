@@ -121,5 +121,5 @@ TEST(BackendCoreTests, ComplexTypes) {
 }
 ```
 
-The test above makes sure that the LLVM type we get as a result of claling Backend::complex_type() is kosher and matches up to expectations.
+The test above makes sure that the LLVM type we get as a result of calling Backend::complex_type() is kosher and matches up to expectations.
 
