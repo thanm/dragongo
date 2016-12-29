@@ -1500,7 +1500,6 @@ void Llvm_backend::defineSyncFetchAndAddBuiltins() {
   }
 }
 
-// Strictly for unit testing
 bool Llvm_backend::moduleScopeValue(llvm::Value *val, Btype *btype) const
 {
   valbtype vbt(std::make_pair(val, btype));
@@ -1984,13 +1983,17 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
 
   LIRBuilder builder(context_, llvm::ConstantFolder());
 
-  // Converting function pointer to function descriptor (during
+  // Pointer type to pointer-sized-integer type. Comes up when
+  // converting function pointer to function descriptor (during
   // creation of function descriptor vals) or constant array to
-  // uintptr (as part of GC symbol initializer creation).
-  if (llvm::isa<llvm::Constant>(val) && type->type() == llvmIntegerType_) {
+  // uintptr (as part of GC symbol initializer creation), and in other
+  // places in FE-generated code (ex: array index checks).
+  if (val->getType()->isPointerTy() && type->type() == llvmIntegerType_) {
     std::string tname(namegen("pticast"));
     llvm::Value *pticast = builder.CreatePtrToInt(val, type->type(), tname);
-    Bexpression *rval = makeValueExpression(pticast, type, GlobalScope);
+    ValExprScope scope =
+        moduleScopeValue(val, expr->btype()) ? GlobalScope : LocalScope;
+    Bexpression *rval = makeValueExpression(pticast, type, scope);
     rval->appendInstructions(expr->instructions());
     return rval;
   }
@@ -2107,8 +2110,43 @@ Bexpression *Llvm_backend::conditional_expression(Btype *btype,
                                                   Bexpression *then_expr,
                                                   Bexpression *else_expr,
                                                   Location location) {
-  assert(false && "Llvm_backend::conditional_expression not yet impl");
-  return nullptr;
+  if (btype == errorType_ ||
+      condition == errorExpression_.get() ||
+      then_expr == errorExpression_.get() ||
+      else_expr == errorExpression_.get())
+    return errorExpression_.get();
+
+  //FIXME: needs to be reimplemented with short circuiting
+  std::cerr << __FILE__ << ":" << __LINE__ << ": Fix me, I am broken.\n";
+
+  condition = resolveVarContext(condition);
+  then_expr = resolveVarContext(then_expr);
+  else_expr = resolveVarContext(else_expr);
+
+  assert(! condition->compositeInitPending());
+  assert(! then_expr->compositeInitPending());
+  assert(! else_expr->compositeInitPending());
+
+  assert(then_expr->btype() == else_expr->btype());
+  assert(then_expr->btype() == btype);
+
+  LIRBuilder builder(context_, llvm::ConstantFolder());
+
+  std::string tname(namegen("select"));
+  llvm::Value *sel = builder.CreateSelect(condition->value(),
+                                          then_expr->value(),
+                                          else_expr->value(), tname);
+  ValExprScope scope =
+      (moduleScopeValue(then_expr->value(), then_expr->btype()) &&
+       moduleScopeValue(else_expr->value(), else_expr->btype()) ?
+       GlobalScope : LocalScope);
+  Bexpression *rval = makeValueExpression(sel, btype, scope);
+  rval->appendInstructions(condition->instructions());
+  rval->appendInstructions(then_expr->instructions());
+  rval->appendInstructions(else_expr->instructions());
+  if (llvm::isa<llvm::Instruction>(sel))
+    rval->appendInstruction(llvm::cast<llvm::Instruction>(sel));
+  return rval;
 }
 
 // Return an expression for the unary operation OP EXPR.
@@ -2121,18 +2159,6 @@ Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
 
 static llvm::CmpInst::Predicate compare_op_to_pred(Operator op, llvm::Type *typ,
                                                    bool isUnsigned) {
-
-
-
-
-
-
-
-
-
-
-
-
   bool isFloat = typ->isFloatingPointTy();
 
   if (isFloat) {
@@ -2233,6 +2259,20 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
     else
       val = builder.CreateAdd(left->value(), right->value(),
                                 namegen("add"));
+    break;
+  }
+  case OPERATOR_OROR: {
+    // Note that the FE will have already expanded out || in a control
+    // flow context (short circuiting)
+    assert(!ltype->isFloatingPointTy());
+    val = builder.CreateOr(left->value(), right->value(), namegen("ior"));
+    break;
+  }
+  case OPERATOR_ANDAND: {
+    // Note that the FE will have already expanded out || in a control
+    // flow context (short circuiting)
+    assert(!ltype->isFloatingPointTy());
+    val = builder.CreateAnd(left->value(), right->value(), namegen("iand"));
     break;
   }
   default:
@@ -2566,16 +2606,17 @@ Bstatement *Llvm_backend::assignment_statement(Bfunction *bfunction,
   if (lhs == errorExpression_.get() || rhs == errorExpression_.get() ||
       bfunction == errorFunction_.get())
     return errorStatement_.get();
-  lhs = resolveVarContext(lhs);
+  Bexpression *lhs2 = resolveVarContext(lhs);
+  Bexpression *rhs2 = rhs;
   if (rhs->compositeInitPending())
-    rhs = resolveCompositeInit(rhs, bfunction, lhs->value());
-  rhs = resolveVarContext(rhs);
-  Bstatement *st = makeAssignment(lhs->value(), lhs, rhs, location);
+    rhs2 = resolveCompositeInit(rhs, bfunction, lhs2->value());
+  Bexpression *rhs3 = resolveVarContext(rhs2);
+  Bstatement *st = makeAssignment(lhs->value(), lhs2, rhs3, location);
   CHKTREE(st);
   return st;
 }
 
-Bstatement *
+Bstatement*
 Llvm_backend::return_statement(Bfunction *bfunction,
                                const std::vector<Bexpression *> &vals,
                                Location location) {

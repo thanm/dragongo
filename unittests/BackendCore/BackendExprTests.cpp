@@ -1,4 +1,4 @@
-//===- llvm/tools/dragongo/unittests/BackendCore/BackendExprTests.cpp ------===//
+//===- llvm/tools/dragongo/unittests/BackendCore/BackendExprTests.cpp -----===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -422,6 +422,74 @@ TEST(BackendExprTests, TestMoreArith) {
   %add.1 = add i64 %add.0, %w.ld.0
   store i64 %add.1, i64* %x
   )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+TEST(BackendExprTests, TestLogicalOps) {
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+
+  Operator optotest[] = {OPERATOR_ANDAND, OPERATOR_OROR};
+
+  Btype *bi64t = be->integer_type(false, 64);
+  Btype *bui64t = be->integer_type(true, 64);
+  Btype *bt = be->bool_type();
+  Bvariable *x = h.mkLocal("x", bi64t);
+  Bvariable *y = h.mkLocal("y", bui64t);
+  Bvariable *z = h.mkLocal("z", bt);
+  Bvariable *x2 = h.mkLocal("x2", bi64t);
+  Bvariable *y2 = h.mkLocal("y2", bui64t);
+  Bvariable *z2 = h.mkLocal("z2", bt);
+  std::vector<std::pair<Bvariable *, Bvariable *>> valtotest;
+  valtotest.push_back(std::make_pair(x, x2));
+  valtotest.push_back(std::make_pair(y, y2));
+  valtotest.push_back(std::make_pair(z, z2));
+
+  Location loc;
+  for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
+    Bvariable *bvl = valtotest[tidx].first;
+    Bexpression *bleft = be->var_expression(bvl, VE_rvalue, loc);
+    Bvariable *bvr = valtotest[tidx].second;
+    Bexpression *bright = be->var_expression(bvr, VE_rvalue, loc);
+    for (auto op : optotest) {
+      Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
+      Bstatement *es = be->expression_statement(func, cmp);
+      h.addStmt(es);
+    }
+  }
+
+  const char *exp = R"RAW_RESULT(
+      store i64 0, i64* %x
+      store i64 0, i64* %y
+      store i1 false, i1* %z
+      store i64 0, i64* %x2
+      store i64 0, i64* %y2
+      store i1 false, i1* %z2
+      %x.ld.0 = load i64, i64* %x
+      %x2.ld.0 = load i64, i64* %x2
+      %iand.0 = and i64 %x.ld.0, %x2.ld.0
+      %x.ld.1 = load i64, i64* %x
+      %x2.ld.1 = load i64, i64* %x2
+      %ior.0 = or i64 %x.ld.1, %x2.ld.1
+      %y.ld.0 = load i64, i64* %y
+      %y2.ld.0 = load i64, i64* %y2
+      %iand.1 = and i64 %y.ld.0, %y2.ld.0
+      %y.ld.1 = load i64, i64* %y
+      %y2.ld.1 = load i64, i64* %y2
+      %ior.1 = or i64 %y.ld.1, %y2.ld.1
+      %z.ld.0 = load i1, i1* %z
+      %z2.ld.0 = load i1, i1* %z2
+      %iand.2 = and i1 %z.ld.0, %z2.ld.0
+      %z.ld.1 = load i1, i1* %z
+      %z2.ld.1 = load i1, i1* %z2
+      %ior.2 = or i1 %z.ld.1, %z2.ld.1
+    )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
@@ -1043,6 +1111,56 @@ TEST(BackendExprTests, CircularPointerExpressions) {
   bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
+
+TEST(BackendExprTests, TestConditionalExpression) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+  Location loc;
+
+  std::cerr << "This version verifies incorrect behavior, please fix.\n";
+
+  // Local vars
+  Bvariable *pv1 = func->getBvarForValue(func->getNthArgValue(0));
+  Bvariable *pv2 = func->getBvarForValue(func->getNthArgValue(1));
+
+  // x = (x < (1 == 0 ? 10 : 9)) ? y : x + 2)
+  Bexpression *c1 = mkInt32Const(be, 1);
+  Bexpression *c0 = mkInt32Const(be, 0);
+  Bexpression *c10 = mkInt32Const(be, 10);
+  Bexpression *c9 = mkInt32Const(be, 9);
+  Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, c1, c0, loc);
+  Bexpression *csel = be->conditional_expression(c1->btype(), cmp, c10,
+                                                 c9, loc);
+  Bexpression *vex1 = be->var_expression(pv1, VE_rvalue, loc);
+  Bexpression *cmp2 = be->binary_expression(OPERATOR_LT, vex1, csel, loc);
+  Bexpression *vey = be->var_expression(pv2, VE_rvalue, loc);
+  Bexpression *vex2 = be->var_expression(pv1, VE_rvalue, loc);
+  Bexpression *c2 = mkInt32Const(be, 2);
+  Bexpression *add = be->binary_expression(OPERATOR_PLUS, vex2, c2, loc);
+  Bexpression *csel2 = be->conditional_expression(c1->btype(), cmp2, vey,
+                                                  add, loc);
+  Bexpression *vexl = be->var_expression(pv1, VE_lvalue, loc);
+  h.mkAssign(vexl, csel2);
+
+  const char *exp = R"RAW_RESULT(
+      %param1.ld.0 = load i32, i32* %param1.addr
+      %icmp.1 = icmp slt i32 %param1.ld.0, 9
+      %param2.ld.0 = load i32, i32* %param2.addr
+      %param1.ld.1 = load i32, i32* %param1.addr
+      %add.0 = add i32 %param1.ld.1, 2
+      %select.1 = select i1 %icmp.1, i32 %param2.ld.0, i32 %add.0
+      store i32 %select.1, i32* %param1.addr
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 
 
 }
