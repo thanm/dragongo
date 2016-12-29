@@ -979,9 +979,18 @@ private:
   // Helper to set up entry block for function
   llvm::BasicBlock *genEntryBlock(Bfunction *bfunction);
 
+  // Helper to fix up epilog block for function (add return if needed)
+  void fixupEpilogBlog(Bfunction *bfunction, llvm::BasicBlock *epilog);
+
   // Var expr management
   Bexpression *resolveVarContext(Bexpression *expr);
-  Bexpression *loadFromExpr(Bexpression *expr, Btype *loadResultType);
+  Bexpression *loadFromExpr(Bexpression *expr, Btype *loadResultType,
+                            Location location);
+
+  // Examine vector of values to test whether they are constants.
+  // Checks for and handles pending composite inits.
+  static bool
+  valuesAreConstant(const std::vector<Bexpression *> &vals);
 
   // Composite init management
   Bexpression *resolveCompositeInit(Bexpression *expr,
@@ -1010,6 +1019,19 @@ private:
         return true;
     return false;
   }
+
+  // Conversion helper.
+  llvm::Type *isAcceptableBitcastConvert(Bexpression *expr,
+                                         llvm::Type *fromType,
+                                         llvm::Type *toType);
+
+  // Insert conversions if needed to handle circular types. Called
+  // when we create a new expression using an existing expression
+  // of a circular type, in cases where we need to force the
+  // result type back to the circular type.  This is a no-op if
+  // 'typ' is not a circular type.
+  Bexpression *resolveCircularType(Bexpression *expr, Btype *typ,
+                                   Location location);
 
 private:
   template <typename T1, typename T2> class pairvalmap_hash {
@@ -1088,14 +1110,13 @@ private:
   std::unordered_set<Btype *> placeholders_;
   std::unordered_set<Btype *> updatedPlaceholders_;
 
-  // For tracking circular types. In the case where we have
-  // "type P *P", P is represented by a named "PT" struct
-  // with a single field whose type is of pointer to PT. This
-  // map has an entry <K,V> where K is the returned type from
-  // ::circular_pointer_type and V is the type passed to
-  // ::circular_pointer_type.
-  std::unordered_map<Btype *, Btype *> circularPointerTypeMap_;
+  // Set of circular types. These are pointers to opaque types that
+  // are returned by the ::circular_pointer_type() method.
+  std::unordered_set<llvm::Type *> circularPointerTypes_;
 
+  // Map from placeholder type to circular pointer type. Key is placeholder
+  // pointer type, value is circular pointer type marker.
+  std::unordered_map<Btype *, Btype *> circularPointerTypeMap_;
 
   // Various predefined or pre-computed types that we cache away
   Btype *complexFloatType_;

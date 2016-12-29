@@ -218,9 +218,10 @@ TEST(BackendCoreTests, PlaceholderTypes) {
   // Circular pointer support
   Btype *php4 = be->placeholder_pointer_type("ph", loc, false);
   Btype *cpt = be->circular_pointer_type(php4, false);
+  Btype *cpt2 = be->circular_pointer_type(php4, false);
+  EXPECT_EQ(cpt, cpt2);
   be->set_placeholder_pointer_type(php4, cpt);
-
-
+  EXPECT_EQ(php4->type(), cpt->type());
 }
 
 TEST(BackendCoreTests, ArrayTypes) {

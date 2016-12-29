@@ -858,7 +858,7 @@ TEST(BackendExprTests, CreateFunctionCodeExpression) {
   Bfunction *func = h.func();
   Location loc;
 
-  // Assign function address to local variab
+  // Assign function address to local variable
   Bexpression *fp = be->function_code_expression(func, loc);
   h.mkLocal("fploc", fp->btype(), fp);
 
@@ -923,5 +923,126 @@ TEST(BackendExprTests, CreateStringConstantExpressions) {
   bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
+
+TEST(BackendExprTests, CircularPointerExpressions) {
+
+  // This testpoint is intended to verify handling of expressions
+  // involving circular pointer types. Go code:
+  //
+  //  type p *p
+  //  func foo() {
+  //     var cpv1, cpv2 p
+  //     cpv1 = &cpv2
+  //     cpv2 = &cpv1
+  //     b1 := (cpv1 == *cpv2)
+  //     b2 := (&cpv1 != cpv2)
+  //     b3 := (&cpv1 == ***cpv2)
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Location loc;
+
+  // Create circular pointer type
+  Btype *pht = be->placeholder_pointer_type("ph", loc, false);
+  Btype *cpt = be->circular_pointer_type(pht, false);
+  be->set_placeholder_pointer_type(pht, cpt);
+  EXPECT_EQ(pht->type(), cpt->type());
+
+  // Local vars
+  Bvariable *cpv1 = h.mkLocal("cpv1", pht);
+  Bvariable *cpv2 = h.mkLocal("cpv2", pht);
+
+  {
+    // cpv1 = &cpv2
+    Bexpression *ve1 = be->var_expression(cpv1, VE_lvalue, loc);
+    Bexpression *ve2 = be->var_expression(cpv2, VE_rvalue, loc);
+    Bexpression *adx = be->address_expression(ve2, loc);
+    h.mkAssign(ve1, adx);
+  }
+
+  {
+    // cpv2 = &cpv1
+    Bexpression *ve1 = be->var_expression(cpv2, VE_lvalue, loc);
+    Bexpression *ve2 = be->var_expression(cpv1, VE_rvalue, loc);
+    Bexpression *adx = be->address_expression(ve2, loc);
+    h.mkAssign(ve1, adx);
+  }
+
+  Btype *bt = be->bool_type();
+  Bvariable *b1 = h.mkLocal("b1", bt);
+  Bvariable *b2 = h.mkLocal("b2", bt);
+  Bvariable *b3 = h.mkLocal("b3", bt);
+
+  {
+    // b1 := (cpv1 == *cpv2)
+    Bexpression *ve0 = be->var_expression(b1, VE_lvalue, loc);
+    Bexpression *ve1 = be->var_expression(cpv1, VE_rvalue, loc);
+    Bexpression *ve2 = be->var_expression(cpv2, VE_rvalue, loc);
+    Bexpression *dex = be->indirect_expression(pht, ve2, false, loc);
+    Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, ve1, dex, loc);
+    h.mkAssign(ve0, cmp);
+  }
+
+  {
+    // b2 := (&cpv1 != cpv2)
+    Bexpression *ve0 = be->var_expression(b2, VE_lvalue, loc);
+    Bexpression *ve1 = be->var_expression(cpv1, VE_rvalue, loc);
+    Bexpression *adx = be->address_expression(ve1, loc);
+    Bexpression *ve2 = be->var_expression(cpv2, VE_rvalue, loc);
+    Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, adx, ve2, loc);
+    h.mkAssign(ve0, cmp);
+  }
+
+  {
+    // b3 := (cpv1 == ***cpv2)
+    Bexpression *ve0 = be->var_expression(b3, VE_lvalue, loc);
+    Bexpression *ve1 = be->var_expression(cpv1, VE_rvalue, loc);
+    Bexpression *ve2 = be->var_expression(cpv2, VE_rvalue, loc);
+    Bexpression *dex1 = be->indirect_expression(pht, ve2, false, loc);
+    Bexpression *dex2 = be->indirect_expression(pht, dex1, false, loc);
+    Bexpression *dex3 = be->indirect_expression(pht, dex2, false, loc);
+    Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, ve1, dex3, loc);
+    h.mkAssign(ve0, cmp);
+  }
+
+  const char *exp = R"RAW_RESULT(
+      store %CPT.0* null, %CPT.0** %cpv1
+      store %CPT.0* null, %CPT.0** %cpv2
+      %cast = bitcast %CPT.0** %cpv2 to %CPT.0*
+      store %CPT.0* %cast, %CPT.0** %cpv1
+      %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
+      store %CPT.0* %cast, %CPT.0** %cpv2
+      store i1 false, i1* %b1
+      store i1 false, i1* %b2
+      store i1 false, i1* %b3
+      %cpv1.ld.0 = load %CPT.0*, %CPT.0** %cpv1
+      %cpv2.ld.0 = load %CPT.0*, %CPT.0** %cpv2
+      %cast = bitcast %CPT.0* %cpv2.ld.0 to %CPT.0**
+      %.ld.0 = load %CPT.0*, %CPT.0** %cast
+      %icmp.0 = icmp eq %CPT.0* %cpv1.ld.0, %.ld.0
+      store i1 %icmp.0, i1* %b1
+      %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
+      %cpv2.ld.1 = load %CPT.0*, %CPT.0** %cpv2
+      %icmp.1 = icmp eq %CPT.0* %cast, %cpv2.ld.1
+      store i1 %icmp.1, i1* %b2
+      %cpv1.ld.1 = load %CPT.0*, %CPT.0** %cpv1
+      %cpv2.ld.2 = load %CPT.0*, %CPT.0** %cpv2
+      %cast = bitcast %CPT.0* %cpv2.ld.2 to %CPT.0**
+      %.ld.1 = load %CPT.0*, %CPT.0** %cast
+      %cast = bitcast %CPT.0* %.ld.1 to %CPT.0**
+      %.ld.2 = load %CPT.0*, %CPT.0** %cast
+      %cast = bitcast %CPT.0* %.ld.2 to %CPT.0**
+      %.ld.3 = load %CPT.0*, %CPT.0** %cast
+      %icmp.2 = icmp eq %CPT.0* %cpv1.ld.1, %.ld.3
+      store i1 %icmp.2, i1* %b3
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 
 }

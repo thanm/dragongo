@@ -122,6 +122,9 @@ llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...);
 // Returns func:  fname(i1, i2 int32) int64 { }
 Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams = true);
 
+// Returns function created from type
+Bfunction *mkFuncFromType(Backend *be, const char *fname, Btype *befty);
+
 // Manufacture an unsigned 64-bit integer constant
 Bexpression *mkUint64Const(Backend *be, uint64_t val);
 
@@ -138,16 +141,21 @@ Bexpression *mkInt32Const(Backend *be, int32_t val);
 Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st);
 
 // Append stmt to block
-void addStmtToBlock(Backend *be, Bblock *block, Bstatement *st);
+Bstatement *addStmtToBlock(Backend *be, Bblock *block, Bstatement *st);
 
 // Adds expression to block as expr statement.
-void addExprToBlock(Backend *be, Bfunction *f, Bblock *bl, Bexpression *e);
+Bstatement *addExprToBlock(Backend *be, Bfunction *f,
+                           Bblock *bl, Bexpression *e);
 
 class FcnTestHarness {
  public:
-  // Create test harness, set up function with specified name
-  FcnTestHarness(const char *fcnName);
+  // Create test harness. If name specified, then create a
+  // default function "fcnName(i1, i2 int32) int64".
+  FcnTestHarness(const char *fcnName = nullptr);
   ~FcnTestHarness();
+
+  // Create function to work on
+  Bfunction *mkFunction(const char *fcnName, Btype *befty);
 
   // Return pointer to backend
   Llvm_backend *be() { return be_.get(); }
@@ -163,6 +171,9 @@ class FcnTestHarness {
 
   // Create an assignment LHS = RHS and append to block
   void mkAssign(Bexpression *lhs, Bexpression *rhs);
+
+  // Create and append an expression stmt
+  Bstatement *mkExprStmt(Bexpression *expr);
 
   // Append a return stmt to block
   Bstatement *mkReturn(Bexpression *expr);

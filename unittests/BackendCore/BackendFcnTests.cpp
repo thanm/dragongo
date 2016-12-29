@@ -17,6 +17,24 @@ using namespace goBackendUnitTests;
 
 namespace {
 
+TEST(BackendFcnTests, MakeEmptyFunction) {
+
+  // Create empty function
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+  Btype *befty1 = mkFuncTyp(be, L_END);
+  h.mkFunction("foo", befty1);
+
+  const char *exp = R"RAW_RESULT(
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 TEST(BackendFcnTests, MakeFunction) {
   LLVMContext C;
 

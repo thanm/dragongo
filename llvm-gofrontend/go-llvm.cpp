@@ -1177,7 +1177,33 @@ Btype *Llvm_backend::named_type(const std::string &name,
 // Return a pointer type used as a marker for a circular type.
 
 Btype *Llvm_backend::circular_pointer_type(Btype *placeholder, bool) {
-  return makeAnonType(llvmPtrType_);
+  assert(placeholder);
+  if (placeholder == errorType_)
+    return errorType_;
+
+  // Front end call this multiple times on the same placeholder, so we
+  // cache markers and return the cached value on successive lookups.
+  auto it = circularPointerTypeMap_.find(placeholder);
+  if (it != circularPointerTypeMap_.end())
+    return it->second;
+
+  llvm::Type *opaque = makeOpaqueLlvmType("CPT");
+  llvm::Type *circ_ptr_typ = llvm::PointerType::get(opaque, addressSpace_);
+  Btype *rval = makeAnonType(circ_ptr_typ);
+  circularPointerTypes_.insert(circ_ptr_typ);
+  circularPointerTypeMap_[placeholder] = rval;
+
+  if (traceLevel() > 1) {
+    std::cerr << "circular_pointer_type "
+              << "for placeholder " << ((void *)placeholder)
+              << " [llvm type " << ((void *)placeholder->type())
+              << " returned type is " << ((void *)rval) << " [llvm type "
+              << ((void *)rval->type()) << "\n";
+    placeholder->dump();
+    rval->dump();
+  }
+
+  return rval;
 }
 
 // Return whether we might be looking at a circular type.
@@ -1519,14 +1545,35 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
   return zero_expression(uintptrt);
 }
 
+Bexpression *Llvm_backend::resolveCircularType(Bexpression *expr,
+                                               Btype *typ,
+                                               Location location)
+{
+  auto it = circularPointerTypes_.find(typ->type());
+  if (it == circularPointerTypes_.end())
+    return expr;
+  if (expr->value()->getType() == typ->type())
+    return expr;
+  // Insert a conversion.
+  return convert_expression(typ, expr, location);
+}
+
 Bexpression *Llvm_backend::loadFromExpr(Bexpression *expr,
-                                        Btype *loadResultType)
+                                        Btype *loadResultType,
+                                        Location location)
 {
   std::string ldname(expr->tag());
   ldname += ".ld";
   ldname = namegen(ldname);
-  llvm::Instruction *ldinst = new llvm::LoadInst(expr->value(), ldname);
-  Bexpression *rval = makeExpression(ldinst, loadResultType, expr, nullptr);
+
+  // A load from a CPT value produces a value of the same type
+  Bexpression *space = expr;
+  auto it = circularPointerTypes_.find(expr->btype()->type());
+  if (it != circularPointerTypes_.end())
+    space = convert_expression(pointer_type(expr->btype()), expr, location);
+
+  llvm::Instruction *ldinst = new llvm::LoadInst(space->value(), ldname);
+  Bexpression *rval = makeExpression(ldinst, loadResultType, space, nullptr);
   return rval;
 }
 
@@ -1543,20 +1590,21 @@ Bexpression *Llvm_backend::indirect_expression(Btype *btype,
 
   // FIXME: add check for nil pointer
 
+  const VarContext *vc = nullptr;
   if (expr->varExprPending()) {
-    const VarContext &vc = expr->varContext();
-    if (vc.addrLevel() != 0) {
+    vc = &expr->varContext();
+    if (vc->addrLevel() != 0) {
       // handle *&x
       Bexpression *dexpr =
           makeValueExpression(expr->value(), btype, LocalScope);
-      dexpr->setVarExprPending(vc.lvalue(), vc.addrLevel() - 1);
+      dexpr->setVarExprPending(vc->lvalue(), vc->addrLevel() - 1);
       dexpr->appendInstructions(expr->instructions());
       return dexpr;
     }
   }
 
-  Bexpression *loadExpr = loadFromExpr(expr, btype);
-  if (expr->varExprPending())
+  Bexpression *loadExpr = loadFromExpr(expr, btype, location);
+  if (vc)
     loadExpr->setVarExprPending(expr->varContext());
 
   return loadExpr;
@@ -1591,6 +1639,7 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
   rval->setTag(adtag);
   const VarContext &vc = bexpr->varContext();
   rval->setVarExprPending(vc.lvalue(), vc.addrLevel() + 1);
+  rval = resolveCircularType(rval, bexpr->btype(), location);
   return rval;
 }
 
@@ -1614,7 +1663,7 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
       expr->resetVarExprContext();
       return expr;
     }
-    return loadFromExpr(expr, expr->btype());
+    return loadFromExpr(expr, expr->btype(), Location());
   }
   return expr;
 }
@@ -1885,6 +1934,33 @@ Bexpression *Llvm_backend::complex_expression(Bexpression *breal,
   return nullptr;
 }
 
+// This helper is designed to handle a couple of the cases that
+// we see from the front end for pointer conversions. The FE introduces
+// pointer type conversions (ex: *int8 => *int64) frequently when
+// creating initializers for things like type descriptors; this
+// translates fairly directly to the LLVM equivalent.
+//
+// Return value for this routine is NULL if the cast in question
+// is not acceptable, or the correct "to" type if it is.
+
+llvm::Type *Llvm_backend::isAcceptableBitcastConvert(Bexpression *expr,
+                                                     llvm::Type *fromType,
+                                                     llvm::Type *toType)
+{
+  // Case 1: function pointer cast
+  if (fromType->isPointerTy() && toType->isPointerTy()) {
+    if (expr->varExprPending()) {
+      llvm::Type *ptt = llvm::PointerType::get(toType, addressSpace_);
+      llvm::Type *pet = llvm::PointerType::get(expr->btype()->type(),
+                                               addressSpace_);
+      if (fromType == pet)
+        return ptt;
+    }
+    return toType;
+  }
+  return nullptr;
+}
+
 // An expression that converts an expression to a different type.
 
 Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
@@ -1901,34 +1977,35 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   if (type->type() == expr->value()->getType())
     return expr;
 
+  // When the frontend casts something to function type, what this
+  // really means in the LLVM realm is "pointer to function" type
+  if (type->type()->isFunctionTy())
+    type = pointer_type(type);
+
+  LIRBuilder builder(context_, llvm::ConstantFolder());
+
   // Converting function pointer to function descriptor (during
   // creation of function descriptor vals) or constant array to
   // uintptr (as part of GC symbol initializer creation).
-  if (llvm::isa<llvm::Constant>(val)) {
-    llvm::Constant *constval = llvm::cast<llvm::Constant>(val);
-    assert(type->type() == llvmIntegerType_);
-    llvm::Constant *pticast =
-        llvm::ConstantExpr::getPtrToInt(constval, type->type());
+  if (llvm::isa<llvm::Constant>(val) && type->type() == llvmIntegerType_) {
+    std::string tname(namegen("pticast"));
+    llvm::Value *pticast = builder.CreatePtrToInt(val, type->type(), tname);
     Bexpression *rval = makeValueExpression(pticast, type, GlobalScope);
     rval->appendInstructions(expr->instructions());
     return rval;
   }
 
-  // For pointer type conversions, create an appropriate bitcast.
-  if (type->type()->isPointerTy() && val->getType()->isPointerTy()) {
+  // For pointer conversions (ex: *int32 => *int64) create an
+  // appropriate bitcast.
+  llvm::Type *toType =
+      isAcceptableBitcastConvert(expr, val->getType(), type->type());
+  if (toType) {
     std::string tag("cast");
-    llvm::Type *totype = type->type();
-    if (expr->varExprPending()) {
-      llvm::Type *ptt = llvm::PointerType::get(type->type(), addressSpace_);
-      llvm::Type *pet = llvm::PointerType::get(expr->btype()->type(),
-                                               addressSpace_);
-      if (val->getType() == pet)
-        totype = ptt;
-    }
-    llvm::BitCastInst *bitcast = new llvm::BitCastInst(val, totype, tag);
+    llvm::Value *bitcast = builder.CreateBitCast(val, toType, tag);
     Bexpression *rval = makeValueExpression(bitcast, type, LocalScope);
     rval->appendInstructions(expr->instructions());
-    rval->appendInstruction(bitcast);
+    if (llvm::isa<llvm::Instruction>(bitcast))
+      rval->appendInstruction(llvm::cast<llvm::Instruction>(bitcast));
     if (expr->varExprPending())
       rval->setVarExprPending(expr->varContext());
     return rval;
@@ -2166,6 +2243,21 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
   return makeExpression(val, bltype, left, right, nullptr);
 }
 
+bool
+Llvm_backend::valuesAreConstant(const std::vector<Bexpression *> &vals)
+{
+  for (auto val : vals) {
+    if (val->compositeInitPending()) {
+      CompositeInitContext &cic = val->compositeInitContext();
+      if (! valuesAreConstant(cic.elementExpressions()))
+        return false;
+    } else if (!llvm::isa<llvm::Constant>(val->value())) {
+      return false;
+      break;
+    }
+  }
+  return true;
+}
 
 // Return an expression that constructs BTYPE with VALS.
 
@@ -2183,21 +2275,16 @@ Bexpression *Llvm_backend::constructor_expression(
   assert(vals.size() == numElements);
 
   // Constant values?
-  bool isConstant = true;
+  bool isConstant = valuesAreConstant(vals);
   std::vector<unsigned long> indexes;
-  unsigned long ii = 0;
-  for (auto val : vals) {
-    indexes.push_back(ii++);
-    if (!llvm::isa<llvm::Constant>(val->value()))
-      isConstant = false;
-  }
+  for (unsigned long ii = 0; ii < vals.size(); ++ii)
+    indexes.push_back(ii);
   if (isConstant)
     return makeConstCompositeExpr(btype, llst, numElements,
                                   indexes, vals, location);
   else
     return makeDelayedCompositeExpr(btype, llst, numElements,
                                     indexes, vals, location);
-
 }
 
 Bexpression *
@@ -2289,14 +2376,7 @@ Bexpression *Llvm_backend::array_constructor_expression(
   assert(indexes.size() == vals.size());
 
   // Constant values?
-  bool isConstant = true;
-  for (auto val : vals) {
-    if (!llvm::isa<llvm::Constant>(val->value())) {
-      isConstant = false;
-      break;
-    }
-  }
-  if (isConstant)
+  if (valuesAreConstant(vals))
     return makeConstCompositeExpr(array_btype, llat, numElements,
                                   indexes, vals, location);
   else
@@ -2359,6 +2439,9 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
       chain_expr == errorExpression_.get())
     return errorExpression_.get();
 
+  if (fn_expr->varExprPending())
+    fn_expr = resolveVarContext(fn_expr);
+
   // Expect pointer-to-function type here
   assert(fn_expr->btype()->type()->isPointerTy());
   llvm::PointerType *pt =
@@ -2382,11 +2465,12 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
 
   // FIXME: create struct to hold result from multi-return call
 
-  std::string callname(namegen("call"));
+  std::string callname(llft->getReturnType()->isVoidTy() ? "" : namegen("call"));
   llvm::CallInst *call =
       llvm::CallInst::Create(llft, fn_expr->value(), llargs, callname);
   Bexpression *rval =
       makeValueExpression(call, rbtype, LocalScope);
+  rval->appendInstructions(fn_expr->instructions());
   for (auto resarg : resolvedArgs)
     rval->appendInstructions(resarg->instructions());
   rval->appendInstruction(call);
@@ -3119,6 +3203,29 @@ llvm::BasicBlock *Llvm_backend::genEntryBlock(Bfunction *bfunction) {
   return entry;
 }
 
+void Llvm_backend::fixupEpilogBlog(Bfunction *bfunction,
+                                   llvm::BasicBlock *epilog)
+{
+  // Append a return instruction if the block does not end with
+  // a control transfer.
+  if (epilog->empty() || !epilog->back().isTerminator()) {
+    LIRBuilder builder(context_, llvm::ConstantFolder());
+    llvm::Function *func = bfunction->function();
+    llvm::Type *rtyp= func->getFunctionType()->getReturnType();
+    llvm::ReturnInst *ri = nullptr;
+    if (rtyp->isVoidTy()) {
+      ri = builder.CreateRetVoid();
+    } else {
+      llvm::Value *zv = llvm::Constant::getNullValue(rtyp);
+      ri = builder.CreateRet(zv);
+    }
+    epilog->getInstList().push_back(ri);
+  }
+}
+
+
+
+
 // Set the function body for FUNCTION using the code in CODE_BLOCK.
 
 bool Llvm_backend::function_set_body(Bfunction *function,
@@ -3138,7 +3245,10 @@ bool Llvm_backend::function_set_body(Bfunction *function,
 
   // Walk the code statements
   GenBlocks gb(context_, this, function);
-  gb.walk(code_stmt, entryBlock);
+  llvm::BasicBlock *block = gb.walk(code_stmt, entryBlock);
+
+  // Fix up epilog block if needed
+  fixupEpilogBlog(function, block);
 
   // debugging
   if (traceLevel() > 0) {

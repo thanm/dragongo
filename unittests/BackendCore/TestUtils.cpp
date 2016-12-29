@@ -292,6 +292,20 @@ Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams) {
   return func;
 }
 
+Bfunction *mkFuncFromType(Backend *be, const char *fname, Btype *befty)
+{
+  bool visible = true;
+  bool is_declaration = false;
+  bool is_inl = true;
+  bool split_stack = true;
+  bool unique_sec = false;
+  Location loc;
+  Bfunction *func = be->function(befty, fname, fname, visible,
+                                 is_declaration, is_inl,
+                                 split_stack, unique_sec, loc);
+  return func;
+}
+
 Bexpression *mkUint64Const(Backend *be, uint64_t val) {
   mpz_t mpz_val;
   memset(&mpz_val, '0', sizeof(mpz_val));
@@ -343,18 +357,20 @@ Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st) {
   return b;
 }
 
-void addStmtToBlock(Backend *be, Bblock *block, Bstatement *st) {
+Bstatement *addStmtToBlock(Backend *be, Bblock *block, Bstatement *st) {
   std::vector<Bstatement *> stlist;
   stlist.push_back(st);
   be->block_add_statements(block, stlist);
+  return st;
 }
 
-void addExprToBlock(Backend *be, Bfunction *func,
-                    Bblock *block, Bexpression *e) {
+Bstatement *addExprToBlock(Backend *be, Bfunction *func,
+                           Bblock *block, Bexpression *e) {
   Bstatement *es = be->expression_statement(func, e);
   std::vector<Bstatement *> stlist;
   stlist.push_back(es);
   be->block_add_statements(block, stlist);
+  return es;
 }
 
 std::string repr(Bstatement *statement) {
@@ -380,13 +396,19 @@ std::string repr(Bexpression *expr) {
 FcnTestHarness::FcnTestHarness(const char *fcnName)
     : context_()
     , be_(new Llvm_backend(context_))
-    , func_(mkFunci32o64(be(), fcnName))
-    , entryBlock_(be()->block(func_, nullptr, emptyVarList_, loc_, loc_))
-    , curBlock_(be()->block(func_, nullptr, emptyVarList_, loc_, loc_))
+    , func_(nullptr)
+    , entryBlock_(nullptr)
+    , curBlock_(nullptr)
     , nextLabel_(nullptr)
     , finished_(false)
     , returnAdded_(false)
 {
+  // Eager function creation if name not specified
+  if (fcnName) {
+    func_ = mkFunci32o64(be(), fcnName);
+    entryBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
+    curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
+  }
 }
 
 FcnTestHarness::~FcnTestHarness()
@@ -394,10 +416,19 @@ FcnTestHarness::~FcnTestHarness()
   assert(finished_);
 }
 
+Bfunction *FcnTestHarness::mkFunction(const char *fcnName, Btype *befty)
+{
+  func_ = mkFuncFromType(be(), fcnName, befty);
+  entryBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
+  curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
+  return func_;
+}
+
 Bvariable *FcnTestHarness::mkLocal(const char *name,
                                    Btype *typ,
                                    Bexpression *init)
 {
+  assert(func_);
   Bvariable *v = be()->local_variable(func_, name, typ, true, loc_);
   if (!init)
     init = be()->zero_expression(typ);
@@ -408,12 +439,20 @@ Bvariable *FcnTestHarness::mkLocal(const char *name,
 
 void FcnTestHarness::mkAssign(Bexpression *lhs, Bexpression *rhs)
 {
+  assert(func_);
   Bstatement *as = be()->assignment_statement(func_, lhs, rhs, loc_);
   addStmtToBlock(be(), curBlock_, as);
 }
 
+Bstatement *FcnTestHarness::mkExprStmt(Bexpression *expr)
+{
+  assert(func_);
+  return addExprToBlock(be(), func_, curBlock_, expr);
+}
+
 Bstatement *FcnTestHarness::mkReturn(Bexpression *expr)
 {
+  assert(func_);
   std::vector<Bexpression *> vals;
   vals.push_back(expr);
   Bstatement *ret = be()->return_statement(func_, vals, loc_);
@@ -424,11 +463,14 @@ Bstatement *FcnTestHarness::mkReturn(Bexpression *expr)
 
 void FcnTestHarness::addStmt(Bstatement *stmt)
 {
+  assert(func_);
   addStmtToBlock(be(), curBlock_, stmt);
 }
 
 void FcnTestHarness::newBlock()
 {
+  assert(func_);
+
   // Create label for new block and append jump to current block
   std::string lab = be()->namegen("_lab");
   Blabel *blab = be()->label(func_, lab, loc_);
@@ -476,10 +518,6 @@ bool FcnTestHarness::expectBlock(const std::string &expected)
 
 bool FcnTestHarness::finish()
 {
-  // Tack on a return statement to the final block
-  if (! returnAdded_)
-    mkReturn(mkInt64Const(be(), 10101));
-
   // Emit a label def for the pending block if needed
   Bstatement *bst = be()->block_statement(curBlock_);
   if (nextLabel_) {
@@ -500,7 +538,6 @@ bool FcnTestHarness::finish()
   finished_ = true;
 
   return broken;
-
 }
 
 } // end namespace goBackEndUnitTests
