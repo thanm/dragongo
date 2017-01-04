@@ -992,7 +992,7 @@ TEST(BackendExprTests, CreateStringConstantExpressions) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CircularPointerExpressions) {
+TEST(BackendExprTests, CircularPointerExpressions1) {
 
   // This testpoint is intended to verify handling of expressions
   // involving circular pointer types. Go code:
@@ -1112,46 +1112,76 @@ TEST(BackendExprTests, CircularPointerExpressions) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, TestConditionalExpression) {
+TEST(BackendExprTests, CircularPointerExpressions2) {
+
+  // More tests for circular pointers, this time
+  // with multiple levels. Go code:
+  //
+  //  type p *q
+  //  type q *p
+  //  func foo() {
+  //     var x p
+  //     var y q
+  //     b1 := (x == *y)
 
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
-  Bfunction *func = h.func();
   Location loc;
 
-  std::cerr << "This version verifies incorrect behavior, please fix.\n";
+  // Create circular pointer types
+  Btype *pht1 = be->placeholder_pointer_type("ph1", loc, false);
+  Btype *pht2 = be->placeholder_pointer_type("ph2", loc, false);
+  Btype *cpt = be->circular_pointer_type(pht1, false);
+  be->set_placeholder_pointer_type(pht2, be->pointer_type(cpt));
+  be->set_placeholder_pointer_type(pht1, cpt);
 
   // Local vars
-  Bvariable *pv1 = func->getBvarForValue(func->getNthArgValue(0));
-  Bvariable *pv2 = func->getBvarForValue(func->getNthArgValue(1));
+  Bvariable *cpv1 = h.mkLocal("x", pht1);
+  Bvariable *cpv2 = h.mkLocal("y", pht2);
 
-  // x = (x < (1 == 0 ? 10 : 9)) ? y : x + 2)
-  Bexpression *c1 = mkInt32Const(be, 1);
-  Bexpression *c0 = mkInt32Const(be, 0);
-  Bexpression *c10 = mkInt32Const(be, 10);
-  Bexpression *c9 = mkInt32Const(be, 9);
-  Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, c1, c0, loc);
-  Bexpression *csel = be->conditional_expression(c1->btype(), cmp, c10,
-                                                 c9, loc);
-  Bexpression *vex1 = be->var_expression(pv1, VE_rvalue, loc);
-  Bexpression *cmp2 = be->binary_expression(OPERATOR_LT, vex1, csel, loc);
-  Bexpression *vey = be->var_expression(pv2, VE_rvalue, loc);
-  Bexpression *vex2 = be->var_expression(pv1, VE_rvalue, loc);
-  Bexpression *c2 = mkInt32Const(be, 2);
-  Bexpression *add = be->binary_expression(OPERATOR_PLUS, vex2, c2, loc);
-  Bexpression *csel2 = be->conditional_expression(c1->btype(), cmp2, vey,
-                                                  add, loc);
-  Bexpression *vexl = be->var_expression(pv1, VE_lvalue, loc);
-  h.mkAssign(vexl, csel2);
+  {
+    // x = &y
+    Bexpression *ve1 = be->var_expression(cpv1, VE_lvalue, loc);
+    Bexpression *ve2 = be->var_expression(cpv2, VE_rvalue, loc);
+    Bexpression *adx = be->address_expression(ve2, loc);
+    h.mkAssign(ve1, adx);
+  }
+
+  {
+    // y = &x
+    Bexpression *ve1 = be->var_expression(cpv2, VE_lvalue, loc);
+    Bexpression *ve2 = be->var_expression(cpv1, VE_rvalue, loc);
+    Bexpression *adx = be->address_expression(ve2, loc);
+    h.mkAssign(ve1, adx);
+  }
+
+  Btype *bt = be->bool_type();
+  Bvariable *b1 = h.mkLocal("b1", bt);
+
+  {
+    // b1 := (x == *y)
+    Bexpression *ve0 = be->var_expression(b1, VE_lvalue, loc);
+    Bexpression *ve1 = be->var_expression(cpv1, VE_rvalue, loc);
+    Bexpression *ve2 = be->var_expression(cpv2, VE_rvalue, loc);
+    Bexpression *dex = be->indirect_expression(pht1, ve2, false, loc);
+    Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, ve1, dex, loc);
+    h.mkAssign(ve0, cmp);
+  }
 
   const char *exp = R"RAW_RESULT(
-      %param1.ld.0 = load i32, i32* %param1.addr
-      %icmp.1 = icmp slt i32 %param1.ld.0, 9
-      %param2.ld.0 = load i32, i32* %param2.addr
-      %param1.ld.1 = load i32, i32* %param1.addr
-      %add.0 = add i32 %param1.ld.1, 2
-      %select.1 = select i1 %icmp.1, i32 %param2.ld.0, i32 %add.0
-      store i32 %select.1, i32* %param1.addr
+      store %CPT.0* null, %CPT.0** %x
+      store %CPT.0** null, %CPT.0*** %y
+      %cast = bitcast %CPT.0*** %y to %CPT.0*
+      store %CPT.0* %cast, %CPT.0** %x
+      store %CPT.0** %x, %CPT.0*** %y
+      store i1 false, i1* %b1
+      %cast = bitcast %CPT.0** %x to %CPT.0****
+      %x.ld.0 = load %CPT.0***, %CPT.0**** %cast
+      %y.ld.0 = load %CPT.0**, %CPT.0*** %y
+      %cast = bitcast %CPT.0** %y.ld.0 to %CPT.0****
+      %.ld.0 = load %CPT.0***, %CPT.0**** %cast
+      %icmp.0 = icmp eq %CPT.0*** %x.ld.0, %.ld.0
+      store i1 %icmp.0, i1* %b1
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -1161,6 +1191,151 @@ TEST(BackendExprTests, TestConditionalExpression) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendExprTests, TestConditionalExpression1) {
 
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+  Btype *befty1 = mkFuncTyp(be, L_END);
+  Bfunction *func = h.mkFunction("foo", befty1);
+  Location loc;
+
+  // Local vars
+  Btype *bi64t = be->integer_type(false, 64);
+  Bvariable *pv1 = h.mkLocal("a", bi64t);
+  Bvariable *pv2 = h.mkLocal("b", bi64t);
+
+  // Two calls, no type
+  Bexpression *call1 = mkCallExpr(be, func, nullptr);
+  Bexpression *call2 = mkCallExpr(be, func, nullptr);
+  Bexpression *vex1 = be->var_expression(pv1, VE_rvalue, loc);
+  Bexpression *vex2 = be->var_expression(pv2, VE_rvalue, loc);
+  Bexpression *cmp = be->binary_expression(OPERATOR_LT, vex1, vex2, loc);
+  Bexpression *condex = be->conditional_expression(func, nullptr, cmp, call1,
+                                                   call2, loc);
+  h.mkExprStmt(condex);
+
+  const char *exp = R"RAW_RESULT(
+      define void @foo() {
+      entry:
+        %a = alloca i64
+        %b = alloca i64
+        store i64 0, i64* %a
+        store i64 0, i64* %b
+        %a.ld.0 = load i64, i64* %a
+        %b.ld.0 = load i64, i64* %b
+        %icmp.0 = icmp slt i64 %a.ld.0, %b.ld.0
+        br i1 %icmp.0, label %then.0, label %else.0
+      then.0:                                           ; preds = %entry
+        call void @foo()
+        br label %fallthrough.0
+      fallthrough.0:                                ; preds = %else.0, %then.0
+        ret void
+      else.0:                                           ; preds = %entry
+        call void @foo()
+        br label %fallthrough.0
+      }
+    )RAW_RESULT";
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+
+  bool isOK = h.expectValue(func->function(), exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+}
+
+TEST(BackendExprTests, TestConditionalExpression2) {
+
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+  Btype *befty1 = mkFuncTyp(be, L_END);
+  Bfunction *func = h.mkFunction("foo", befty1);
+  Location loc;
+
+  // Local vars
+  Btype *bi64t = be->integer_type(false, 64);
+  Bvariable *pv1 = h.mkLocal("a", bi64t);
+
+  // Call on true branch,
+  Bexpression *call1 = mkCallExpr(be, func, nullptr);
+  Bexpression *ve = be->var_expression(pv1, VE_rvalue, loc);
+  Bexpression *cmp = be->binary_expression(OPERATOR_LT,
+                                           mkInt64Const(be, int64_t(3)),
+                                           mkInt64Const(be, int64_t(4)), loc);
+  Bexpression *condex = be->conditional_expression(func, ve->btype(),
+                                                   cmp, call1,
+                                                   ve, loc);
+  h.mkExprStmt(condex);
+
+  const char *exp = R"RAW_RESULT(
+      define void @foo() {
+      entry:
+        %a = alloca i64
+        %tmpv.0 = alloca i64
+        store i64 0, i64* %a
+        br i1 true, label %then.0, label %else.0
+      then.0:                                  ; preds = %entry
+        call void @foo()
+        br label %fallthrough.0
+      fallthrough.0:                           ; preds = %else.0, %then.0
+        %tmpv.0.ld.0 = load i64, i64* %tmpv.0
+        ret void
+      else.0:                                  ; preds = %entry
+        %a.ld.0 = load i64, i64* %a
+        store i64 %a.ld.0, i64* %tmpv.0
+        br label %fallthrough.0
+      }
+    )RAW_RESULT";
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+
+  bool isOK = h.expectValue(func->function(), exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+}
+
+TEST(BackendExprTests, TestCompoundExpression) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+  Location loc;
+
+  // var x int64 = 0
+  // x = 5
+  // x
+  Btype *bi64t = be->integer_type(false, 64);
+  Bvariable *xv = h.mkLocal("x", bi64t);
+  Bexpression *vex = be->var_expression(xv, VE_lvalue, loc);
+  Bstatement *st =  be->assignment_statement(func, vex,
+                                             mkInt64Const(be, 5), loc);
+  Bexpression *vex2 = be->var_expression(xv, VE_rvalue, loc);
+  Bexpression *ce = be->compound_expression(st, vex2, loc);
+  Bstatement *es = be->expression_statement(func, ce);
+  h.addStmt(es);
+
+  const char *exp = R"RAW_RESULT(
+      define i64 @foo(i32 %param1, i32 %param2, i64* %param3) {
+      entry:
+        %param1.addr = alloca i32
+        %param2.addr = alloca i32
+        %param3.addr = alloca i64*
+        %x = alloca i64
+        store i32 %param1, i32* %param1.addr
+        store i32 %param2, i32* %param2.addr
+        store i64* %param3, i64** %param3.addr
+        store i64 0, i64* %x
+        store i64 5, i64* %x
+        %x.ld.0 = load i64, i64* %x
+        ret i64 0
+      }
+    )RAW_RESULT";
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+
+  // Note that this
+  bool isOK = h.expectValue(func->function(), exp);
+  EXPECT_TRUE(isOK && "Function does not have expected contents");
+}
 
 }

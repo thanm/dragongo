@@ -348,6 +348,25 @@ Bexpression *mkInt32Const(Backend *be, int32_t val)
   return rval;
 }
 
+// Produce a call expression targeting the specified function. Variable
+// args are parameter values, terminated by nullptr.
+Bexpression *mkCallExpr(Backend *be, Bfunction *fun, ...)
+{
+  Location loc;
+  va_list ap;
+
+  va_start(ap, fun);
+  Bexpression *fn = be->function_code_expression(fun, loc);
+  std::vector<Bexpression *> args;
+  Bexpression *e = va_arg(ap, Bexpression *);
+  while (e) {
+    args.push_back(e);
+    e = va_arg(ap, Bexpression *);
+  }
+  Bexpression *call = be->call_expression(fn, args, nullptr, loc);
+  return call;
+}
+
 Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st) {
   const std::vector<Bvariable *> empty;
   Bblock *b = be->block(func, nullptr, empty, Location(), Location());
@@ -536,6 +555,7 @@ bool FcnTestHarness::finish()
 
   // Mark finished
   finished_ = true;
+  curBlock_ = entryBlock_;
 
   return broken;
 }

@@ -122,6 +122,10 @@ llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...);
 // Returns func:  fname(i1, i2 int32) int64 { }
 Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams = true);
 
+// Produce a call expression targeting the specified function. Variable
+// args are parameter values, terminated by nullptr.
+Bexpression *mkCallExpr(Backend *be, Bfunction *fun, ...);
+
 // Returns function created from type
 Bfunction *mkFuncFromType(Backend *be, const char *fname, Btype *befty);
 

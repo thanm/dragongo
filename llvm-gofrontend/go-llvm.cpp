@@ -55,13 +55,15 @@ void Btype::osdump(llvm::raw_ostream &os, unsigned ilevel) {
   indent(os, ilevel);
   if (isUnsigned())
     os << "[uns] ";
+  if (! name_.empty())
+    os << "'" << name_ << "' ";
   type_->print(os);
 }
 
 Bexpression::Bexpression(llvm::Value *value,
                          Btype *btype,
                          const std::string &tag)
-    : value_(value), btype_(btype), tag_(tag)
+    : value_(value), btype_(btype), stmt_(nullptr), tag_(tag)
 {
 }
 
@@ -168,10 +170,15 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse) {
     os << "var pending: lvalue=" <<  (vc.lvalue() ? "yes" : "no")
        << " addrLevel=" << vc.addrLevel() << "\n";
   }
+  if (!terse && stmt()) {
+    os << "enclosed stmt:\n";
+    stmt()->osdump(os, ilevel+2, terse);
+  }
 }
 
-ExprListStatement *Llvm_backend::stmtFromExpr(Bexpression *expr) {
-  ExprListStatement *st = new ExprListStatement();
+ExprListStatement *Llvm_backend::stmtFromExpr(Bfunction *function,
+                                              Bexpression *expr) {
+  ExprListStatement *st = new ExprListStatement(function);
   st->appendExpression(expr);
   CHKTREE(st);
   return st;
@@ -644,14 +651,16 @@ Blabel *Bfunction::newLabel() {
 }
 
 Bstatement *Bfunction::newLabelDefStatement(Blabel *label) {
-  LabelStatement *st = new LabelStatement(label->label());
+  assert(label);
+  LabelStatement *st = new LabelStatement(label->function(), label->label());
   assert(labelmap_[label->label()] == nullptr);
   labelmap_[label->label()] = st;
   return st;
 }
 
 Bstatement *Bfunction::newGotoStatement(Blabel *label, Location location) {
-  GotoStatement *st = new GotoStatement(label->label(), location);
+  Bfunction *fn = label->function();
+  GotoStatement *st = new GotoStatement(fn, label->label(), location);
   return st;
 }
 
@@ -723,7 +732,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context)
       new Bexpression(errorFunction_->function(), errorType_));
 
   // Error statement
-  errorStatement_.reset(stmtFromExpr(errorExpression_.get()));
+  errorStatement_.reset(stmtFromExpr(nullptr, errorExpression_.get()));
 
   // Reuse the error function as the value for errorVariable_
   errorVariable_.reset(
@@ -882,6 +891,16 @@ Btype *Llvm_backend::struct_type(const std::vector<Btyped_identifier> &fields) {
   llvm::Type *lst = llvm::StructType::get(context_, elems);
   bool isNew = (anonTypemap_.find(lst) == anonTypemap_.end());
   Btype *st = makeAnonType(lst);
+
+  if (isNew && traceLevel() > 1) {
+    std::cerr << "\n^ struct type "
+              << ((void*)st) << " [llvm type "
+              << ((void*) lst) << "] fields:";
+    for (unsigned i = 0; i < fields.size(); ++i)
+      std::cerr << i << ": " << ((void*)fields[i].btype) << "\n";
+    st->dump();
+  }
+
   if (isNew) {
     for (unsigned i = 0; i < fields.size(); ++i) {
       structplusindextype spi(std::make_pair(st, i));
@@ -1074,12 +1093,12 @@ bool Llvm_backend::set_placeholder_pointer_type(Btype *placeholder,
     return false;
 
   if (traceLevel() > 1) {
-    std::cerr << "placeholder pointer "
+    std::cerr << "\n^ placeholder pointer "
               << ((void*)placeholder) << " [llvm type "
-              << ((void*) placeholder->type())
+              << ((void*) placeholder->type()) << "]"
               << " redirected to " << ((void*) to_type)
               << " [llvm type " << ((void*) to_type->type())
-              << "\n";
+              << "]\n";
     placeholder->dump();
     to_type->dump();
   }
@@ -1089,6 +1108,42 @@ bool Llvm_backend::set_placeholder_pointer_type(Btype *placeholder,
   } else {
     updatePlaceholderUnderlyingType(placeholder, to_type->type());
   }
+
+  unsigned nct = circularPointerLoop_.size();
+  if (nct != 0) {
+    btpair p = circularPointerLoop_[0];
+    Btype *cplTT = p.second;
+    if (to_type == cplTT) {
+      // We've come to the end of a cycle of circular types (in the
+      // sense that we're back visiting the placeholder that initiated
+      // the loop). Record proper values for inserting conversions when
+      // we have operations on this this (load, addr).
+      btpair adPair = circularPointerLoop_[nct == 1 ? 0 : 1];
+      Btype *adConvPH = adPair.first;
+      Btype *adConvTT = adPair.second;
+      btpair loadPair = circularPointerLoop_.back();
+      Btype *loadConvTT = loadPair.second;
+      circularConversionLoadMap_[to_type] = loadConvTT;
+      circularConversionLoadMap_[placeholder] = loadConvTT;
+      circularConversionAddrMap_[adConvPH] = to_type;
+      circularConversionAddrMap_[adConvTT] = to_type;
+
+      if (traceLevel() > 1) {
+        std::cerr << "\n^ finished circular type loop of size " << nct
+                  << ": [" << ((void*) loadConvTT)
+                  << "," << ((void*) adConvPH)
+                  << "," << ((void*) adConvTT)
+                  << "] for to_type: [load, addrPH, addrTT]:\n";
+        loadConvTT->dump();
+        adConvPH->dump();
+        adConvTT->dump();
+      }
+      circularPointerLoop_.clear();
+    } else {
+      circularPointerLoop_.push_back(std::make_pair(placeholder, to_type));
+    }
+  }
+
   return true;
 }
 
@@ -1113,6 +1168,18 @@ bool Llvm_backend::set_placeholder_struct_type(
   if (placeholder == errorType_)
     return false;
   Btype *stype = struct_type(fields);
+
+  if (traceLevel() > 1) {
+    std::cerr << "\n^ placeholder struct "
+              << ((void*)placeholder) << " [llvm type "
+              << ((void*) placeholder->type())
+              << "] redirected to " << ((void*) stype)
+              << " [llvm type " << ((void*) stype->type())
+              << "]\n";
+    placeholder->dump();
+    stype->dump();
+  }
+
   updatePlaceholderUnderlyingType(placeholder, stype->type());
   // update the field type map to insure that the placeholder has the same info
   for (unsigned i = 0; i < fields.size(); ++i) {
@@ -1141,6 +1208,21 @@ bool Llvm_backend::set_placeholder_array_type(Btype *placeholder,
       length == errorExpression_.get())
     return false;
 
+  if (traceLevel() > 1) {
+    std::string ls;
+    llvm::raw_string_ostream os(ls);
+    length->osdump(os, 0);
+    std::cerr << "\n^ placeholder array "
+              << ((void*)placeholder) << " [llvm type "
+              << ((void*) placeholder->type())
+              << "] element type updated to " << ((void*) element_btype)
+              << " [llvm type " << ((void*) element_btype->type())
+              << "] length: " << ls
+              << "\n";
+    placeholder->dump();
+    element_btype->dump();
+  }
+
   Btype *atype = array_type(element_btype, length);
   updatePlaceholderUnderlyingType(placeholder, atype->type());
 
@@ -1160,21 +1242,45 @@ Btype *Llvm_backend::named_type(const std::string &name,
   // TODO: add support for debug metadata
 
   // In the LLVM type world, all types are nameless except for so-called
-  // identified struct types. For this reason, names are stored in a side
-  // data structure.
+  // identified struct types. Record the fact that we have a named
+  // type with a specified LLVM type using a side data structure. NB: this
+  // may turn out to not be needed, but for now it is helpful with debugging.
 
   named_llvm_type cand(name, btype->type());
   auto it = namedTypemap_.find(cand);
   if (it != namedTypemap_.end())
     return it->second;
-  Btype *rval = new Btype(btype->type());
+  Btype *rval = new Btype(btype->type(), name);
   if (btype->isUnsigned())
     rval->setUnsigned();
   namedTypemap_[cand] = rval;
+
+  if (traceLevel() > 1) {
+    std::cerr << "\n^ named type '" << name << "' "
+              << ((void*)rval) << " [llvm type "
+              << ((void*) btype->type()) << "]\n";
+    rval->dump();
+  }
+
   return rval;
 }
 
 // Return a pointer type used as a marker for a circular type.
+
+// Consider the following Go code:
+//
+//      type s *p
+//      type p *q
+//      type q *r
+//      type r *p
+//
+// Here we have a cycle involving p/q/r, plus another type "p" that
+// points into the cycle. When the front end detects the cycle it will
+// flag "p" as circular, meaning that circular_pointer_type will
+// wind up being invoked twice (once for real due to the cycle and
+// once due to the jump into the cycle). We use a map to detect
+// the second instance (e.g. "s") so that we can just return whatever
+// we created before.
 
 Btype *Llvm_backend::circular_pointer_type(Btype *placeholder, bool) {
   assert(placeholder);
@@ -1192,13 +1298,15 @@ Btype *Llvm_backend::circular_pointer_type(Btype *placeholder, bool) {
   Btype *rval = makeAnonType(circ_ptr_typ);
   circularPointerTypes_.insert(circ_ptr_typ);
   circularPointerTypeMap_[placeholder] = rval;
+  assert(circularPointerLoop_.size() == 0);
+  circularPointerLoop_.push_back(std::make_pair(placeholder, rval));
 
   if (traceLevel() > 1) {
-    std::cerr << "circular_pointer_type "
+    std::cerr << "\n^ circular_pointer_type "
               << "for placeholder " << ((void *)placeholder)
               << " [llvm type " << ((void *)placeholder->type())
-              << " returned type is " << ((void *)rval) << " [llvm type "
-              << ((void *)rval->type()) << "\n";
+              << "] returned type is " << ((void *)rval) << " [llvm type "
+              << ((void *)rval->type()) << "]\n";
     placeholder->dump();
     rval->dump();
   }
@@ -1209,7 +1317,9 @@ Btype *Llvm_backend::circular_pointer_type(Btype *placeholder, bool) {
 // Return whether we might be looking at a circular type.
 
 bool Llvm_backend::is_circular_pointer_type(Btype *btype) {
-  return btype->type() == llvmPtrType_;
+  assert(btype);
+  auto it = circularPointerTypes_.find(btype->type());
+  return it != circularPointerTypes_.end();
 }
 
 // Return the size of a type.
@@ -1543,34 +1653,26 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
   Btype *uintptrt = makeAnonType(pti);
   return zero_expression(uintptrt);
 }
-
-Bexpression *Llvm_backend::resolveCircularType(Bexpression *expr,
-                                               Btype *typ,
-                                               Location location)
-{
-  auto it = circularPointerTypes_.find(typ->type());
-  if (it == circularPointerTypes_.end())
-    return expr;
-  if (expr->value()->getType() == typ->type())
-    return expr;
-  // Insert a conversion.
-  return convert_expression(typ, expr, location);
-}
-
 Bexpression *Llvm_backend::loadFromExpr(Bexpression *expr,
-                                        Btype *loadResultType,
+                                        Btype* &loadResultType,
                                         Location location)
 {
   std::string ldname(expr->tag());
   ldname += ".ld";
   ldname = namegen(ldname);
 
-  // A load from a CPT value produces a value of the same type
+  // If this is a load from a pointer flagged as being a circular
+  // type, insert a conversion prior to the load so as to force
+  // the value to the correct type. This is weird but necessary,
+  // since the LLVM type system can't accurately model Go circular
+  // pointer types.
   Bexpression *space = expr;
-  auto it = circularPointerTypes_.find(expr->btype()->type());
-  if (it != circularPointerTypes_.end())
-    space = convert_expression(pointer_type(expr->btype()), expr, location);
-
+  auto it = circularConversionLoadMap_.find(expr->btype());
+  if (it != circularConversionLoadMap_.end()) {
+    Btype *tctyp = it->second;
+    space = convert_expression(pointer_type(tctyp), expr, location);
+    loadResultType = tctyp;
+  }
   llvm::Instruction *ldinst = new llvm::LoadInst(space->value(), ldname);
   Bexpression *rval = makeExpression(ldinst, loadResultType, space, nullptr);
   return rval;
@@ -1638,7 +1740,15 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
   rval->setTag(adtag);
   const VarContext &vc = bexpr->varContext();
   rval->setVarExprPending(vc.lvalue(), vc.addrLevel() + 1);
-  rval = resolveCircularType(rval, bexpr->btype(), location);
+
+  // Handle circular types
+  auto it = circularConversionAddrMap_.find(bexpr->btype());
+  if (it != circularConversionAddrMap_.end()) {
+    assert(it != circularConversionAddrMap_.end());
+    Btype *ctyp = it->second;
+    return convert_expression(ctyp, rval, location);
+  }
+
   return rval;
 }
 
@@ -1662,7 +1772,8 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
       expr->resetVarExprContext();
       return expr;
     }
-    return loadFromExpr(expr, expr->btype(), Location());
+    Btype *btype = expr->btype();
+    return loadFromExpr(expr, btype, Location());
   }
   return expr;
 }
@@ -2098,40 +2209,98 @@ Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
 Bexpression *Llvm_backend::compound_expression(Bstatement *bstat,
                                                Bexpression *bexpr,
                                                Location location) {
-  assert(false && "Llvm_backend::compound_expression not yet impl");
-  return nullptr;
+  if (bstat == errorStatement_.get() || bexpr == errorExpression_.get())
+    return errorExpression_.get();
+
+  Bstatement *st = bexpr->stmt();
+  if (st) {
+    CompoundStatement *cs = st->castToCompoundStatement();
+    if (!cs) {
+      cs = new CompoundStatement(bstat->function());
+      cs->stlist().push_back(st);
+    }
+    cs->stlist().push_back(bstat);
+    bexpr->setStmt(cs);
+    bstat = st;
+  }
+  bexpr->setStmt(bstat);
+  return bexpr;
 }
 
 // Return an expression that executes THEN_EXPR if CONDITION is true, or
 // ELSE_EXPR otherwise.
 
-Bexpression *Llvm_backend::conditional_expression(Btype *btype,
+Bexpression *Llvm_backend::conditional_expression(Bfunction *function,
+                                                  Btype *btype,
                                                   Bexpression *condition,
                                                   Bexpression *then_expr,
                                                   Bexpression *else_expr,
                                                   Location location) {
-  if (btype == errorType_ ||
+  if (function == errorFunction_.get() ||
+      btype == errorType_ ||
       condition == errorExpression_.get() ||
       then_expr == errorExpression_.get() ||
       else_expr == errorExpression_.get())
     return errorExpression_.get();
 
-  //FIXME: needs to be reimplemented with short circuiting
-  std::cerr << __FILE__ << ":" << __LINE__ << ": Fix me, I am broken.\n";
+  assert(condition && then_expr);
 
   condition = resolveVarContext(condition);
   then_expr = resolveVarContext(then_expr);
-  else_expr = resolveVarContext(else_expr);
+  if (else_expr)
+    else_expr = resolveVarContext(else_expr);
 
   assert(! condition->compositeInitPending());
   assert(! then_expr->compositeInitPending());
-  assert(! else_expr->compositeInitPending());
+  assert(! else_expr || ! else_expr->compositeInitPending());
 
-  assert(then_expr->btype() == else_expr->btype());
-  assert(then_expr->btype() == btype);
+  Bblock *thenBlock = function->newBlock(function);
+  Bblock *elseBlock = nullptr;
+  Bvariable *tempv = nullptr;
 
-  LIRBuilder builder(context_, llvm::ConstantFolder());
+  // FIXME: add lifetime intrinsics for temp var below.
+  Bstatement *thenStmt = nullptr;
+  if (!btype || then_expr->btype() == void_type())
+    thenStmt = expression_statement(function, then_expr);
+  else
+    tempv = temporary_variable(function, nullptr,
+                               then_expr->btype(), then_expr, false,
+                               location, &thenStmt);
+  thenBlock->stlist().push_back(thenStmt);
 
+  if (else_expr) {
+    Bstatement *elseStmt = nullptr;
+    elseBlock = function->newBlock(function);
+    if (!btype || else_expr->btype() == void_type()) {
+      elseStmt = expression_statement(function, else_expr);
+    } else {
+      // Capture "else_expr" into temporary. Type needs to agree with
+      // then_expr if then_expr had non-void type.
+      if (!tempv) {
+        tempv = temporary_variable(function, nullptr,
+                                   else_expr->btype(), else_expr, false,
+                                   location, &elseStmt);
+      } else {
+        assert(then_expr->btype() == else_expr->btype());
+        Bexpression *varExpr = var_expression(tempv, VE_lvalue, location);
+        elseStmt = assignment_statement(function, varExpr, else_expr, location);
+      }
+    }
+    elseBlock->stlist().push_back(elseStmt);
+  }
+
+  // Wrap up and return the result
+  Bstatement *ifStmt = if_statement(function, condition,
+                                    thenBlock, elseBlock, location);
+  llvm::Value *nilval = nullptr;
+  Bexpression *rval = (tempv ?
+                       var_expression(tempv, VE_rvalue, location) :
+                       makeValueExpression(nilval, void_type(), LocalScope));
+  Bexpression *result = compound_expression(ifStmt, rval, location);
+  return result;
+}
+
+#if 0
   std::string tname(namegen("select"));
   llvm::Value *sel = builder.CreateSelect(condition->value(),
                                           then_expr->value(),
@@ -2147,7 +2316,7 @@ Bexpression *Llvm_backend::conditional_expression(Btype *btype,
   if (llvm::isa<llvm::Instruction>(sel))
     rval->appendInstruction(llvm::cast<llvm::Instruction>(sel));
   return rval;
-}
+#endif
 
 // Return an expression for the unary operation OP EXPR.
 
@@ -2533,7 +2702,7 @@ Bstatement *Llvm_backend::expression_statement(Bfunction *bfunction,
                                                Bexpression *expr) {
   if (expr == errorExpression_.get())
     return errorStatement_.get();
-  ExprListStatement *els = new ExprListStatement();
+  ExprListStatement *els = new ExprListStatement(bfunction);
   els->appendExpression(resolve(expr, bfunction));
   CHKTREE(els);
   return els;
@@ -2548,25 +2717,27 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
     return errorStatement_.get();
   if (init->compositeInitPending()) {
     init = resolveCompositeInit(init, bfunction, var->value());
-    ExprListStatement *els = new ExprListStatement();
+    ExprListStatement *els = new ExprListStatement(bfunction);
     els->appendExpression(init);
     CHKTREE(els);
     return els;
   }
   init = resolveVarContext(init);
-  Bstatement *st = makeAssignment(var->value(), nullptr, init, Location());
+  Bstatement *st = makeAssignment(bfunction, var->value(),
+                                  nullptr, init, Location());
   CHKTREE(st);
   return st;
 }
 
 Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
                                           Btype *btype,
-                                          Bexpression *src,
+                                          Bexpression *srcExpr,
                                           ...)
 {
   Bexpression *result = makeValueExpression(value, btype, LocalScope);
+  Bexpression *src = srcExpr;
   va_list ap;
-  va_start(ap, src);
+  va_start(ap, srcExpr);
   while (src) {
     for (auto inst : src->instructions()) {
       assert(inst->getParent() == nullptr);
@@ -2576,10 +2747,13 @@ Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
   }
   if (llvm::isa<llvm::Instruction>(value))
     result->appendInstruction(llvm::cast<llvm::Instruction>(value));
+  if (srcExpr && srcExpr->stmt())
+    result->setStmt(srcExpr->stmt());
   return result;
 }
 
-Bstatement *Llvm_backend::makeAssignment(llvm::Value *lval, Bexpression *lhs,
+Bstatement *Llvm_backend::makeAssignment(Bfunction *function,
+                                         llvm::Value *lval, Bexpression *lhs,
                                          Bexpression *rhs, Location location) {
   llvm::PointerType *pt = llvm::cast<llvm::PointerType>(lval->getType());
   assert(pt);
@@ -2593,7 +2767,7 @@ Bstatement *Llvm_backend::makeAssignment(llvm::Value *lval, Bexpression *lhs,
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
 
   Bexpression *stexp = makeExpression(si, rhs->btype(), rhs, lhs, nullptr);
-  ExprListStatement *els = stmtFromExpr(stexp);
+  ExprListStatement *els = stmtFromExpr(function, stexp);
   return els;
 }
 
@@ -2611,7 +2785,8 @@ Bstatement *Llvm_backend::assignment_statement(Bfunction *bfunction,
   if (rhs->compositeInitPending())
     rhs2 = resolveCompositeInit(rhs, bfunction, lhs2->value());
   Bexpression *rhs3 = resolveVarContext(rhs2);
-  Bstatement *st = makeAssignment(lhs->value(), lhs2, rhs3, location);
+  Bstatement *st = makeAssignment(bfunction, lhs->value(),
+                                  lhs2, rhs3, location);
   CHKTREE(st);
   return st;
 }
@@ -2634,7 +2809,7 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   Bexpression *toret = resolve(vals[0], bfunction);
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, toret->value());
   Bexpression *rexp = makeExpression(ri, btype, toret, nullptr);
-  ExprListStatement *els = stmtFromExpr(rexp);
+  ExprListStatement *els = stmtFromExpr(bfunction, rexp);
   return els;
 }
 
@@ -2663,7 +2838,7 @@ Bstatement *Llvm_backend::if_statement(Bfunction *bfunction,
   condition = resolve(condition, bfunction);
   assert(then_block);
   IfPHStatement *ifst =
-      new IfPHStatement(condition, then_block, else_block, location);
+      new IfPHStatement(bfunction, condition, then_block, else_block, location);
   CHKTREE(ifst);
   return ifst;
 }
@@ -2681,7 +2856,8 @@ Bstatement *Llvm_backend::switch_statement(
 // Pair of statements.
 
 Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
-  CompoundStatement *st = new CompoundStatement();
+  assert(s1->function() == s2->function());
+  CompoundStatement *st = new CompoundStatement(s1->function());
   std::vector<Bstatement *> &stlist = st->stlist();
   stlist.push_back(s1);
   stlist.push_back(s2);
@@ -2693,7 +2869,9 @@ Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
 
 Bstatement *
 Llvm_backend::statement_list(const std::vector<Bstatement *> &statements) {
-  CompoundStatement *cst = new CompoundStatement();
+  Bfunction *function =
+      (statements.size() != 0 ? statements[0]->function() : nullptr);
+  CompoundStatement *cst = new CompoundStatement(function);
   std::vector<Bstatement *> &stlist = cst->stlist();
   for (auto st : statements)
     stlist.push_back(st);
@@ -2709,7 +2887,7 @@ Bblock *Llvm_backend::block(Bfunction *function, Bblock *enclosing,
   // FIXME: record debug location
 
   // Create new Bblock
-  Bblock *bb = new Bblock();
+  Bblock *bb = new Bblock(function);
   function->addBlock(bb);
 
   // Mark start of lifetime for each variable
@@ -3033,8 +3211,10 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
 
 // Make a label.
 
-Blabel *Llvm_backend::label(Bfunction *function, const std::string &name,
+Blabel *Llvm_backend::label(Bfunction *function,
+                            const std::string &name,
                             Location location) {
+  assert(function);
   return function->newLabel();
 }
 
@@ -3200,6 +3380,8 @@ llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
   case Bstatement::ST_ExprList: {
     ExprListStatement *elst = stmt->castToExprListStatement();
     for (auto expr : elst->expressions()) {
+      if (expr->stmt())
+        curblock = walk(expr->stmt(), curblock);
       for (auto inst : expr->instructions()) {
         curblock->getInstList().push_back(inst);
       }
@@ -3263,9 +3445,6 @@ void Llvm_backend::fixupEpilogBlog(Bfunction *bfunction,
     epilog->getInstList().push_back(ri);
   }
 }
-
-
-
 
 // Set the function body for FUNCTION using the code in CODE_BLOCK.
 
