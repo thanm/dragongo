@@ -121,12 +121,32 @@ void Bexpression::finishCompositeInit(llvm::Value *finalizedValue)
   compositeInitContext_.reset(nullptr);
 }
 
+void Bexpression::incorporateStmt(Bstatement *newst)
+{
+  if (newst == nullptr)
+    return;
+  if (stmt() == nullptr) {
+    setStmt(newst);
+    return;
+  }
+  CompoundStatement *cs = stmt()->castToCompoundStatement();
+  if (!cs) {
+    cs = new CompoundStatement(stmt()->function());
+    cs->stlist().push_back(stmt());
+  }
+  cs->stlist().push_back(newst);
+  setStmt(cs);
+}
+
 void Bexpression::destroy(Bexpression *expr, WhichDel which) {
   if (which != DelWrappers)
     for (auto inst : expr->instructions())
       delete inst;
-  if (which != DelInstructions)
+  if (which != DelInstructions) {
+    if (expr->stmt())
+      Bstatement::destroy(expr->stmt(), which);
     delete expr;
+  }
 }
 
 void Bexpression::dump()
@@ -225,7 +245,10 @@ void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse)
   case ST_IfPlaceholder: {
     IfPHStatement *ifst = castToIfPHStatement();
     indent(os, ilevel);
-    os << "if:\n";
+    os << "if";
+    if (! terse)
+      os << " " << ((void*) ifst);
+    os << ":\n";
     indent(os, ilevel + 2);
     os << "cond:\n";
     ifst->cond()->osdump(os, ilevel + 2, terse);
@@ -301,6 +324,17 @@ void Bstatement::destroy(Bstatement *stmt, WhichDel which) {
     delete stmt;
 }
 
+// This visitor class detects malformed IR trees, specifically cases
+// where the same Bexpression or Bstatement is pointed to by more than
+// containing expr/stmt. For example suppose we have a couple of assignment
+// statements
+//
+//      x = y
+//      z = y
+//
+// where the Bexpression corresponding to "y" is pointed to both by
+// the first assignment stmt and by the second assignment stmt.
+
 class IntegrityVisitor {
  public:
   IntegrityVisitor(const Llvm_backend *be, bool incPtrs)
@@ -313,8 +347,8 @@ class IntegrityVisitor {
  private:
   const Llvm_backend *be_;
   std::unordered_map<llvm::Instruction *, Bexpression *> iparent_;
-  std::unordered_map<Bstatement *, Bstatement *> sparent_;
   typedef std::pair<Bexpression *, Bstatement *> eors;
+  std::unordered_map<Bstatement *, eors> sparent_;
   std::unordered_map<Bexpression *, eors> eparent_;
   std::string str_;
   llvm::raw_string_ostream ss_;
@@ -322,8 +356,8 @@ class IntegrityVisitor {
 
  private:
   bool setParent(Bexpression *child, const eors &parent);
+  bool setParent(Bstatement *child, const eors &parent);
   bool setParent(llvm::Instruction *inst, Bexpression *exprParent);
-  bool setParent(Bstatement *child, Bstatement *parent);
   eors makeExprParent(Bexpression *expr);
   eors makeStmtParent(Bstatement *stmt);
   void dumpTag(const char *tag, void *ptr);
@@ -377,7 +411,7 @@ void IntegrityVisitor::dump(const IntegrityVisitor::eors &pair) {
     dump(stmt);
 }
 
-bool IntegrityVisitor::setParent(Bstatement *child, Bstatement *parent)
+bool IntegrityVisitor::setParent(Bstatement *child, const eors &parent)
 {
   auto it = sparent_.find(child);
   if (it != sparent_.end()) {
@@ -417,7 +451,7 @@ bool IntegrityVisitor::setParent(llvm::Instruction *inst,
                                  Bexpression *exprParent)
 {
   auto it = iparent_.find(inst);
-  if (it != iparent_.end() && exprParent != it->second) {
+  if (it != iparent_.end()) {
     ss_ << "error: instruction has multiple parents\n";
     dump(inst);
     ss_ << "parent 1:\n";
@@ -433,6 +467,11 @@ bool IntegrityVisitor::setParent(llvm::Instruction *inst,
 bool IntegrityVisitor::visit(Bexpression *expr)
 {
   bool rval = true;
+  if (expr->stmt()) {
+    eors parthis = makeExprParent(expr);
+    rval = (setParent(expr->stmt(), parthis) && rval);
+    visit(expr->stmt());
+  }
   if (expr->compositeInitPending()) {
     eors parthis = makeExprParent(expr);
     for (auto initval : expr->compositeInitContext().elementExpressions())
@@ -451,8 +490,10 @@ bool IntegrityVisitor::visit(Bstatement *stmt)
       CompoundStatement *cst = stmt->castToCompoundStatement();
       for (auto st : cst->stlist())
         rval = (visit(st) && rval);
-      for (auto st : cst->stlist())
-        rval = (setParent(st, cst) && rval);
+      eors parcst = makeStmtParent(cst);
+      for (auto st : cst->stlist()) {
+        rval = (setParent(st, parcst) && rval);
+      }
       break;
     }
     case Bstatement::ST_ExprList: {
@@ -466,16 +507,16 @@ bool IntegrityVisitor::visit(Bstatement *stmt)
     }
     case Bstatement::ST_IfPlaceholder: {
       IfPHStatement *ifst = stmt->castToIfPHStatement();
-      eors stparent(std::make_pair(nullptr, ifst));
+      eors parif = makeStmtParent(ifst);
       rval = (visit(ifst->cond()) && rval);
-      rval = (setParent(ifst->cond(), stparent) && rval);
+      rval = (setParent(ifst->cond(), parif) && rval);
       if (ifst->trueStmt()) {
         rval = (visit(ifst->trueStmt()) && rval);
-        rval = (setParent(ifst->trueStmt(), ifst) && rval);
+        rval = (setParent(ifst->trueStmt(), parif) && rval);
       }
       if (ifst->falseStmt()) {
         rval = (visit(ifst->falseStmt()) && rval);
-        rval = (setParent(ifst->falseStmt(), ifst) && rval);
+        rval = (setParent(ifst->falseStmt(), parif) && rval);
       }
       break;
     }
@@ -1653,6 +1694,7 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
   Btype *uintptrt = makeAnonType(pti);
   return zero_expression(uintptrt);
 }
+
 Bexpression *Llvm_backend::loadFromExpr(Bexpression *expr,
                                         Btype* &loadResultType,
                                         Location location)
@@ -2212,18 +2254,7 @@ Bexpression *Llvm_backend::compound_expression(Bstatement *bstat,
   if (bstat == errorStatement_.get() || bexpr == errorExpression_.get())
     return errorExpression_.get();
 
-  Bstatement *st = bexpr->stmt();
-  if (st) {
-    CompoundStatement *cs = st->castToCompoundStatement();
-    if (!cs) {
-      cs = new CompoundStatement(bstat->function());
-      cs->stlist().push_back(st);
-    }
-    cs->stlist().push_back(bstat);
-    bexpr->setStmt(cs);
-    bstat = st;
-  }
-  bexpr->setStmt(bstat);
+  bexpr->incorporateStmt(bstat);
   return bexpr;
 }
 
@@ -2438,7 +2469,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
     break;
   }
   case OPERATOR_ANDAND: {
-    // Note that the FE will have already expanded out || in a control
+    // Note that the FE will have already expanded out && in a control
     // flow context (short circuiting)
     assert(!ltype->isFloatingPointTy());
     val = builder.CreateAnd(left->value(), right->value(), namegen("iand"));
@@ -2622,15 +2653,12 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
   llvm::Value *gep =
       makeArrayIndexGEP(llat, index->value(), barray->value());
 
-  // Wrap in a Bexpression
+  // Wrap in a Bexpression, encapsulating contents of source exprs
   Btype *bet = elementTypeByIndex(barray->btype(), 0);
-  Bexpression *rval = makeValueExpression(gep, bet, LocalScope);
-  rval->appendInstructions(barray->instructions());
-  rval->appendInstructions(index->instructions());
-  if (llvm::isa<llvm::Instruction>(gep))
-    rval->appendInstruction(llvm::cast<llvm::Instruction>(gep));
+  Bexpression *rval = makeExpression(gep, bet, barray, index, nullptr);
   if (barray->varExprPending())
     rval->setVarExprPending(barray->varContext());
+
   std::string tag(barray->tag());
   tag += ".index";
   rval->setTag(tag);
@@ -2737,18 +2765,26 @@ Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
   Bexpression *result = makeValueExpression(value, btype, LocalScope);
   Bexpression *src = srcExpr;
   va_list ap;
+  std::set<llvm::Instruction *> visited;
   va_start(ap, srcExpr);
   while (src) {
+    result->incorporateStmt(src->stmt());
     for (auto inst : src->instructions()) {
       assert(inst->getParent() == nullptr);
       result->appendInstruction(inst);
+      assert(visited.find(inst) == visited.end());
+      visited.insert(inst);
     }
     src = va_arg(ap, Bexpression *);
   }
-  if (llvm::isa<llvm::Instruction>(value))
-    result->appendInstruction(llvm::cast<llvm::Instruction>(value));
-  if (srcExpr && srcExpr->stmt())
-    result->setStmt(srcExpr->stmt());
+  if (llvm::isa<llvm::Instruction>(value)) {
+    // We need this guard to deal with situations where we've done
+    // something like x | 0, in which the IRBuilder will simply return
+    // the left operand.
+    llvm::Instruction *inst = llvm::cast<llvm::Instruction>(value);
+      if (visited.find(inst) == visited.end())
+        result->appendInstruction(inst);
+  }
   return result;
 }
 
@@ -3301,6 +3337,10 @@ bool Llvm_backend::function_set_parameters(
   return true;
 }
 
+//
+// Helper class for assigning instructions to LLVM basic blocks
+// and materializing control transfers.
+//
 class GenBlocks {
 public:
   GenBlocks(llvm::LLVMContext &context, Llvm_backend *be, Bfunction *function)
@@ -3311,16 +3351,8 @@ public:
   llvm::BasicBlock *genIf(IfPHStatement *ifst, llvm::BasicBlock *curblock);
 
 private:
-  llvm::BasicBlock *getBlockForLabel(LabelId lab) {
-    auto it = labelmap_.find(lab);
-    if (it != labelmap_.end())
-      return it->second;
-    std::string lname = be_->namegen("label", lab);
-    llvm::Function *func = function()->function();
-    llvm::BasicBlock *bb = llvm::BasicBlock::Create(context_, lname, func);
-    labelmap_[lab] = bb;
-    return bb;
-  }
+  llvm::BasicBlock *getBlockForLabel(LabelId lab);
+  llvm::BasicBlock *walkExpr(llvm::BasicBlock *curblock, Bexpression *expr);
 
 private:
   llvm::LLVMContext &context_;
@@ -3329,11 +3361,33 @@ private:
   std::map<LabelId, llvm::BasicBlock *> labelmap_;
 };
 
+llvm::BasicBlock *GenBlocks::getBlockForLabel(LabelId lab) {
+  auto it = labelmap_.find(lab);
+  if (it != labelmap_.end())
+    return it->second;
+  std::string lname = be_->namegen("label", lab);
+  llvm::Function *func = function()->function();
+  llvm::BasicBlock *bb = llvm::BasicBlock::Create(context_, lname, func);
+  labelmap_[lab] = bb;
+  return bb;
+}
+
+llvm::BasicBlock *GenBlocks::walkExpr(llvm::BasicBlock *curblock,
+                                      Bexpression *expr)
+{
+  if (expr->stmt())
+    curblock = walk(expr->stmt(), curblock);
+  for (auto inst : expr->instructions()) {
+    curblock->getInstList().push_back(inst);
+  }
+  return curblock;
+}
+
 llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
                                    llvm::BasicBlock *curblock) {
-  // Append the condition instructions to the current block
-  for (auto inst : ifst->cond()->instructions())
-    curblock->getInstList().push_back(inst);
+
+  // Walk condition first
+  curblock = walkExpr(curblock, ifst->cond());
 
   // Create true block
   std::string tname = be_->namegen("then");
@@ -3379,13 +3433,8 @@ llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
   }
   case Bstatement::ST_ExprList: {
     ExprListStatement *elst = stmt->castToExprListStatement();
-    for (auto expr : elst->expressions()) {
-      if (expr->stmt())
-        curblock = walk(expr->stmt(), curblock);
-      for (auto inst : expr->instructions()) {
-        curblock->getInstList().push_back(inst);
-      }
-    }
+    for (auto expr : elst->expressions())
+      curblock = walkExpr(curblock, expr);
     break;
   }
   case Bstatement::ST_IfPlaceholder: {
@@ -3397,6 +3446,9 @@ llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
     GotoStatement *gst = stmt->castToGotoStatement();
     llvm::BasicBlock *lbb = getBlockForLabel(gst->targetLabel());
     llvm::BranchInst::Create(lbb, curblock);
+    // FIXME: don't bother generating an orphan block, just zero
+    // the current block and don't emit whatever statically unreachable
+    // code is there.
     std::string n = be_->namegen("orphan");
     llvm::Function *func = function()->function();
     llvm::BasicBlock *orphan = llvm::BasicBlock::Create(context_, n, func, lbb);

@@ -85,8 +85,8 @@ public:
     instructions_.push_back(inst);
   }
   void appendInstructions(const std::vector<llvm::Instruction *> &ilist) {
-    for (auto i : ilist)
-      instructions_.push_back(i);
+    for (auto inst : ilist)
+      instructions_.push_back(inst);
   }
 
   void clear() { instructions_.clear(); }
@@ -231,6 +231,7 @@ public:
 
   Bstatement *stmt() { return stmt_; }
   void setStmt(Bstatement *st) { assert(st); stmt_ = st; }
+  void incorporateStmt(Bstatement *src);
 
   // Delete some or all or this Bexpression. Deallocates just the
   // Bexpression, its contained instructions, or both (depending
