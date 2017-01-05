@@ -138,6 +138,9 @@ void Bexpression::incorporateStmt(Bstatement *newst)
   setStmt(cs);
 }
 
+// Note that we don't delete expr here; all Bexpression
+// deletion is handled in the Llvm_backend destructor
+
 void Bexpression::destroy(Bexpression *expr, WhichDel which) {
   if (which != DelWrappers)
     for (auto inst : expr->instructions())
@@ -145,7 +148,6 @@ void Bexpression::destroy(Bexpression *expr, WhichDel which) {
   if (which != DelInstructions) {
     if (expr->stmt())
       Bstatement::destroy(expr->stmt(), which);
-    delete expr;
   }
 }
 
@@ -292,18 +294,15 @@ void Bstatement::destroy(Bstatement *stmt, WhichDel which) {
       destroy(st, which);
     break;
   }
-
-  case ST_ExprList:
-    if (which != DelWrappers) {
-      ExprListStatement *elst = stmt->castToExprListStatement();
-      for (auto expr : elst->expressions())
-        Bexpression::destroy(expr, which);
-    }
+  case ST_ExprList: {
+    ExprListStatement *elst = stmt->castToExprListStatement();
+    for (auto expr : elst->expressions())
+      Bexpression::destroy(expr, which);
     break;
+  }
   case ST_IfPlaceholder: {
     IfPHStatement *ifst = stmt->castToIfPHStatement();
-    if (which != DelWrappers)
-      Bexpression::destroy(ifst->cond(), which);
+    Bexpression::destroy(ifst->cond(), which);
     if (ifst->trueStmt())
       Bstatement::destroy(ifst->trueStmt(), which);
     if (ifst->falseStmt())
