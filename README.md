@@ -54,13 +54,27 @@ Within <workarea>/llvm/tools/dragongo, the following directories are of interest
  
 ## Building and running llvm-goparse
 
-The executable llvm-goparse is a driver program that will (at some point) kick off the go parser on a specified go program. At the moment llvm-goparse doesn't do anything, only creates an instance of the back end and then exits. 
+The executable llvm-goparse is a driver program that runs the gofrontend parser on a specific go program, with the LLVM-specific backend instance connected to the parser. This program is still mostly a skeleton -- it can create LLVM based on the Backend method calls made by the front end, however it doesn't actually do anything with the IR yet (just dumps it out). 
 
 ```
 // From within <workarea>/build.opt:
 
 % ninja llvm-goparse
-% ./bin/llvm-goparse ~/himom.go
+% cat micro.go
+package foo
+func bar() int {
+	return 1
+}
+% ./bin/llvm-goparse ~/micro.go
+...
+define hidden i64 @foo.bar() {
+entry:
+  %"$ret0" = alloca i64
+  store i64 0, i64* %"$ret0"
+  store i64 1, i64* %"$ret0"
+  %"$ret0.ld.0" = load i64, i64* %"$ret0"
+  ret i64 %"$ret0.ld.0"
+}
 %
 ```
 

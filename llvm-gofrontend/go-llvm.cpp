@@ -537,6 +537,12 @@ Llvm_backend::verifyModule()
   assert(!broken && "Module not well-formed.");
 }
 
+void
+Llvm_backend::dumpModule()
+{
+  module_->dump();
+}
+
 std::pair<bool, std::string>
 Llvm_backend::checkTreeIntegrity(Bexpression *e, bool includePointers)
 {

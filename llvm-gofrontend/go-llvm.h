@@ -856,6 +856,9 @@ public:
   // Run the module verifier.
   void verifyModule();
 
+  // Dump LLVM IR for module
+  void dumpModule();
+
   // Exposed for unit testing
 
   // Helpers to check tree integrity. Checks to make sure that

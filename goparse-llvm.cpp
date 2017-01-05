@@ -79,6 +79,11 @@ DumpAst("fgo-dump-ast",
         cl::init(false));
 
 static cl::opt<bool>
+DumpIR("dump-ir",
+        cl::desc("Dump LLVM IR for module at end of run."),
+        cl::init(false));
+
+static cl::opt<bool>
 OptimizeAllocs("fgo-optimize-allocs",
                cl::desc("Enable escape analysis in the go frontend."),
                cl::init(false));
@@ -213,6 +218,8 @@ int main(int argc, char **argv)
     go_write_globals();
   if (! NoVerify)
     backend->verifyModule();
+  if (DumpIR)
+    backend->dumpModule();
 
   return 0;
 }
