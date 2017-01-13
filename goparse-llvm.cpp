@@ -141,7 +141,7 @@ static Llvm_backend *init_gogo(TargetMachine *Target,
   args.compiling_runtime = false; // FIXME: not yet supported
   args.debug_escape_level = EscapeDebugLevel;
   args.linemap = linemap;
-  Llvm_backend *backend = new Llvm_backend(Context);
+  Llvm_backend *backend = new Llvm_backend(Context, linemap);
   args.backend = backend;
   go_create_gogo (&args);
 

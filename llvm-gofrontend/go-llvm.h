@@ -59,7 +59,7 @@ class raw_ostream;
 
 class Llvm_backend : public Backend {
 public:
-  Llvm_backend(llvm::LLVMContext &context);
+  Llvm_backend(llvm::LLVMContext &context, Linemap *linemap);
   ~Llvm_backend();
 
   // Types.
@@ -307,6 +307,8 @@ public:
                                 const std::vector<Bfunction *> &,
                                 const std::vector<Bvariable *> &);
 
+  Linemap *linemap() const { return linemap_; }
+
   // Exposed for unit testing
   llvm::Module &module() { return *module_.get(); }
 
@@ -315,6 +317,10 @@ public:
 
   // Dump LLVM IR for module
   void dumpModule();
+
+  // Dump expression or stmt with line information
+  void dumpExpr(Bexpression *);
+  void dumpStmt(Bstatement *);
 
   // Exposed for unit testing
 
@@ -447,7 +453,8 @@ public:
   enum ValExprScope { GlobalScope, LocalScope };
   Bexpression *makeValueExpression(llvm::Value *val,
                                    Btype *btype,
-                                   ValExprScope scope);
+                                   ValExprScope scope,
+                                   Location location);
 
   enum ModVarConstant { MV_Constant, MV_NonConstant };
   enum ModVarSec { MV_UniqueSection, MV_DefaultSection };
@@ -471,6 +478,7 @@ public:
   // a new expression.
   Bexpression *makeExpression(llvm::Value *value,
                               Btype *btype,
+                              Location location,
                               Bexpression *src, ...);
 
   // Helper for creating a constant-valued array/struct expression.
@@ -598,6 +606,8 @@ private:
   llvm::LLVMContext &context_;
   std::unique_ptr<llvm::Module> module_;
   const llvm::DataLayout &datalayout_;
+  Linemap *linemap_;
+  std::unique_ptr<Linemap> ownLinemap_;
   unsigned addressSpace_;
   unsigned traceLevel_;
   bool checkIntegrity_;

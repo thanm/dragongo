@@ -28,7 +28,9 @@
 //
 // It may be more efficient in the long run to do away with the hashing
 // and just return a new handle on each lookup, since hit rates for the
-// cache seem to be pretty low as far as I can tell.
+// cache seem to be pretty low as far as I can tell. There are probably also
+// more space-efficient representations as well, but at the moment
+// there doesn't seem to be time to dig into this.
 //
 
 #ifndef GO_LLVM_LINEMAP_H

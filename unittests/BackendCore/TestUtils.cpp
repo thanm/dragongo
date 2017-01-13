@@ -398,7 +398,7 @@ std::string repr(Bstatement *statement) {
   std::string res;
   llvm::raw_string_ostream os(res);
   bool terse = true;
-  statement->osdump(os, 0, terse);
+  statement->osdump(os, 0, nullptr, terse);
   return trimsp(os.str());
 }
 
@@ -408,13 +408,13 @@ std::string repr(Bexpression *expr) {
   std::string res;
   llvm::raw_string_ostream os(res);
   bool terse = true;
-  expr->osdump(os, 0, terse);
+  expr->osdump(os, 0, nullptr, terse);
   return trimsp(os.str());
 }
 
 FcnTestHarness::FcnTestHarness(const char *fcnName)
     : context_()
-    , be_(new Llvm_backend(context_))
+    , be_(new Llvm_backend(context_, nullptr))
     , func_(nullptr)
     , entryBlock_(nullptr)
     , curBlock_(nullptr)

@@ -19,7 +19,7 @@ class Location
 {
  public:
   Location()
-      : handle_()
+      : handle_(0)
   { }
 
   explicit Location(linemap_handle handle)

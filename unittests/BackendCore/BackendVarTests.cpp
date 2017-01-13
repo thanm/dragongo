@@ -258,7 +258,7 @@ TEST(BackendVarTests, MakeImplicitVariable) {
 TEST(BackendVarTests, MakeImmutableStructReference) {
   LLVMContext C;
 
-  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C, nullptr));
 
   Location loc;
   Btype *bi32t = be->integer_type(false, 32);

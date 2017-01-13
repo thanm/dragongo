@@ -25,11 +25,20 @@ static void indent(llvm::raw_ostream &os, unsigned ilevel) {
 void Bstatement::dump() {
   std::string s;
   llvm::raw_string_ostream os(s);
-  osdump(os, 0, false);
+  osdump(os, 0, nullptr, false);
   std::cerr << os.str();
 }
 
-void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse)
+void Bstatement::srcDump(Linemap *linemap)
+{
+  std::string s;
+  llvm::raw_string_ostream os(s);
+  osdump(os, 0, linemap, false);
+  std::cerr << os.str();
+}
+
+void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel,
+                        Linemap *linemap, bool terse)
 {
   switch (flavor()) {
   case ST_Compound: {
@@ -39,7 +48,7 @@ void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse)
       os << ((void*)this) << " {\n";
     }
     for (auto st : cst->stlist())
-      st->osdump(os, ilevel + 2, terse);
+      st->osdump(os, ilevel + 2, linemap, terse);
     if (! terse) {
       indent(os, ilevel);
       os << "}\n";
@@ -53,7 +62,7 @@ void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse)
       os << ((void*)this) << " [\n";
     }
     for (auto expr : elst->expressions())
-      expr->osdump(os, ilevel + 2, terse);
+      expr->osdump(os, ilevel + 2, linemap, terse);
     if (! terse) {
       indent(os, ilevel);
       os << "]\n";
@@ -69,16 +78,16 @@ void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse)
     os << ":\n";
     indent(os, ilevel + 2);
     os << "cond:\n";
-    ifst->cond()->osdump(os, ilevel + 2, terse);
+    ifst->cond()->osdump(os, ilevel + 2, linemap, terse);
     if (ifst->trueStmt()) {
       indent(os, ilevel + 2);
       os << "then:\n";
-      ifst->trueStmt()->osdump(os, ilevel + 2, terse);
+      ifst->trueStmt()->osdump(os, ilevel + 2, linemap, terse);
     }
     if (ifst->falseStmt()) {
       indent(os, ilevel + 2);
       os << "else:\n";
-      ifst->falseStmt()->osdump(os, ilevel + 2, terse);
+      ifst->falseStmt()->osdump(os, ilevel + 2, linemap, terse);
     }
     break;
   }

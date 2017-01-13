@@ -167,12 +167,13 @@ class CompositeInitContext {
 
 class Bexpression : public Binstructions {
 public:
-  Bexpression(llvm::Value *value, Btype *btype, const std::string &tag = "");
+  Bexpression(llvm::Value *value, Btype *btype, Location location);
   ~Bexpression();
 
   llvm::Value *value() const { return value_; }
   Btype *btype() { return btype_; }
   const std::string &tag() const { return tag_; }
+  Location location() const { return location_; }
   void setTag(const std::string &tag) { tag_ = tag; }
 
   bool varExprPending() const;
@@ -198,8 +199,12 @@ public:
   // debugging
   void dump();
 
+  // dump with source line info
+  void srcDump(Linemap *);
+
   // dump to raw_ostream
-  void osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse = false);
+  void osdump(llvm::raw_ostream &os, unsigned ilevel = 0,
+              Linemap *linemap = nullptr, bool terse = false);
 
 private:
   Bexpression() : value_(NULL) {}
@@ -207,6 +212,7 @@ private:
   Btype *btype_;
   Bstatement *stmt_;
   std::string tag_;
+  Location location_;
   std::unique_ptr<VarContext> varContext_;
   std::unique_ptr<CompositeInitContext> compositeInitContext_;
 };

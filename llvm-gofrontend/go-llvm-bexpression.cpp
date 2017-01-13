@@ -28,8 +28,8 @@ static void indent(llvm::raw_ostream &os, unsigned ilevel) {
 
 Bexpression::Bexpression(llvm::Value *value,
                          Btype *btype,
-                         const std::string &tag)
-    : value_(value), btype_(btype), stmt_(nullptr), tag_(tag)
+                         Location location)
+    : value_(value), btype_(btype), stmt_(nullptr), location_(location)
 {
 }
 
@@ -121,17 +121,32 @@ void Bexpression::dump()
 {
   std::string s;
   llvm::raw_string_ostream os(s);
-  osdump(os, 0, false);
+  osdump(os, 0, nullptr, false);
   std::cerr << os.str();
 }
 
-void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse) {
+void Bexpression::srcDump(Linemap *linemap)
+{
+  std::string s;
+  llvm::raw_string_ostream os(s);
+  osdump(os, 0, linemap, false);
+  std::cerr << os.str();
+}
+
+void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel,
+                         Linemap *linemap, bool terse) {
   bool hitValue = false;
-  if (! terse && compositeInitPending()) {
-    indent(os, ilevel);
-    os << "composite init pending:\n";
-    for (auto exp : compositeInitContext().elementExpressions())
-      exp->osdump(os, ilevel+2, terse);
+  if (! terse) {
+    if (linemap) {
+      indent(os, ilevel);
+      os << linemap->to_string(location()) << "\n";
+    }
+    if (compositeInitPending()) {
+      indent(os, ilevel);
+      os << "composite init pending:\n";
+      for (auto exp : compositeInitContext().elementExpressions())
+        exp->osdump(os, ilevel+2, linemap, terse);
+    }
   }
   for (auto inst : instructions()) {
     indent(os, ilevel);
@@ -160,6 +175,6 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse) {
   }
   if (!terse && stmt()) {
     os << "enclosed stmt:\n";
-    stmt()->osdump(os, ilevel+2, terse);
+    stmt()->osdump(os, ilevel+2, linemap, terse);
   }
 }

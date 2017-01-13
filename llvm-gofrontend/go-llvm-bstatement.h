@@ -95,8 +95,12 @@ public:
   // debugging
   void dump();
 
+  // dump with source line info
+  void srcDump(Linemap *);
+
   // dump to raw_ostream
-  void osdump(llvm::raw_ostream &os, unsigned ilevel, bool terse = false);
+  void osdump(llvm::raw_ostream &os, unsigned ilevel = 0,
+              Linemap *linemap = nullptr, bool terse = false);
 
  private:
   Bfunction *function_;

@@ -148,7 +148,7 @@ TEST(BackendStmtTests, TestLabelGotoStmts) {
 
 TEST(BackendStmtTests, TestIfStmt) {
   LLVMContext C;
-  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C));
+  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C, nullptr));
 
   Location loc;
   Btype *bi64t = be->integer_type(false, 64);

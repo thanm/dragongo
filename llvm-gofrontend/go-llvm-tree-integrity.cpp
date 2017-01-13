@@ -39,12 +39,12 @@ void IntegrityVisitor::dumpTag(const char *tag, void *ptr) {
 
 void IntegrityVisitor::dump(Bexpression *expr) {
   dumpTag("expr", (void*) expr);
-  expr->osdump(ss_, 0, false);
+  expr->osdump(ss_, 0, be_->linemap(), false);
 }
 
 void IntegrityVisitor::dump(Bstatement *stmt) {
   dumpTag("stmt", (void*) stmt);
-  stmt->osdump(ss_, 0, false);
+  stmt->osdump(ss_, 0, be_->linemap(), false);
 }
 
 void IntegrityVisitor::dump(llvm::Instruction *inst) {
