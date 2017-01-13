@@ -27,6 +27,11 @@ gofrontend/go/unsafe.cc
 go-backend.cpp
 go-llvm-linemap.cpp
 go-llvm-diagnostics.cpp
+go-llvm-btype.cpp
+go-llvm-bexpression.cpp
+go-llvm-bstatement.cpp
+go-llvm-bfunction.cpp
+go-llvm-tree-integrity.cpp
 go-llvm.cpp
 go-sha1.cpp
 )

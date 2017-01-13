@@ -1,15 +1,16 @@
 
-
 # Notes:
 #
-# The code in gofrontend depends on functions from GMP, MPC, and MPFR; these libraries are currently handled via the cmake "ExternalProject" utility
-#  
+# The code in gofrontend depends on functions from GMP, MPC, and MPFR;
+# these libraries are currently handled via the cmake "ExternalProject"
+# utility.
+#
 
 include(ExternalProject)
 include(ProcessorCount)
 include(LLVMExternalProjectUtils)
 
-# So that we can issue "make -jN" cmds in externalproject_add  
+# So that we can issue "make -jN" cmds in externalproject_add
 processorcount(PROCESSOR_COUNT)
 
 # FIXME: something less hacky for MacOS
@@ -23,7 +24,7 @@ endif()
 # URL ftp://gcc.gnu.org/pub/gcc/infrastructure/mpfr-3.1.4.tar.bz2
 # URL ftp://gcc.gnu.org/pub/gcc/infrastructure/mpc-1.0.3.tar.gz
 
-# Open issue: should the configure cmds below be run with 
+# Open issue: should the configure cmds below be run with
 # "CC=${CMAKE_BINARY_DIR}/bin/clang"
 
 set(MPCINSTALL ${CMAKE_CURRENT_BINARY_DIR}/external/build-mpc)
