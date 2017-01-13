@@ -61,7 +61,11 @@ go_imported_unsafe (void)
 void
 go_write_export_data (const char *bytes, unsigned int size)
 {
-  std::cerr << "FIXME: go_write_export_data not yet implemented\n";
+  static bool warned;
+  if (!warned) {
+    warned = true;
+    std::cerr << "FIXME: go_write_export_data not yet implemented\n";
+  }
 }
 
 static const char *

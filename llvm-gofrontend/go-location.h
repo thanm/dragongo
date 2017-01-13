@@ -42,7 +42,7 @@ operator<(Location loca, Location locb)
 }
 
 inline bool
-operator==(Location loca, Location locb)
+operator==(const Location loca, const Location locb)
 {
   return loca.handle() == locb.handle();
 }

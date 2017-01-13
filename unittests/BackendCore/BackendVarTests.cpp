@@ -286,7 +286,7 @@ TEST(BackendVarTests, ImmutableStructSetInit) {
   Location loc;
   Btype *bt = be->bool_type();
   Btype *pbt = be->pointer_type(bt);
-  Btype *uintptrt = be->integer_type(true, be->type_size(pbt));
+  Btype *uintptrt = be->integer_type(true, be->type_size(pbt)*8);
   Btype *desct = mkBackendStruct(be, uintptrt, "x", nullptr);
   Bvariable *ims = be->immutable_struct("desc", "desc",
                                         false, false, desct, loc);

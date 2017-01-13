@@ -43,34 +43,309 @@ class raw_ostream;
 
 #include "llvm/IR/GlobalValue.h"
 
+class BStructType;
+class BArrayType;
+class BPointerType;
+class BIntegerType;
+class BFloatType;
+class BFunctionType;
+
 // Btype wraps llvm::Type
 
 class Btype {
-public:
-  explicit Btype(llvm::Type *type) : type_(type), isUnsigned_(false) {}
-  explicit Btype(llvm::Type *type, const std::string &name)
-      : type_(type), name_(name), isUnsigned_(false) {}
+ public:
+  enum TyFlavor {
+    ArrayT, FloatT, FunctionT, IntegerT, PointerT, StructT, AuxT
+  };
+  explicit Btype(TyFlavor flavor, llvm::Type *type) :
+      type_(type), flavor_(flavor), isPlaceholder_(false) { }
+  virtual ~Btype() { }
+
+  TyFlavor flavor() const { return flavor_; }
 
   llvm::Type *type() const { return type_; }
+  void setType(llvm::Type *t) { assert(t); type_ = t; }
   const std::string &name() const { return name_; }
+  void setName(const std::string &name) { name_ = name; }
 
-  // For integer types.
-  bool isUnsigned() { return isUnsigned_; }
-  void setUnsigned() { isUnsigned_ = true; }
+  bool isPlaceholder() const { return isPlaceholder_; }
+  void setPlaceholder(bool v) { isPlaceholder_ = v; }
+
+  // Create a shallow copy of this type
+  Btype *clone() const;
 
   // debugging
-  void dump();
+  void dump() const;
 
   // dump to raw ostream buffer
-  void osdump(llvm::raw_ostream &os, unsigned ilevel);
+  void osdump(llvm::raw_ostream &os, unsigned ilevel) const;
+
+  // test for structural equality
+  bool equal(const Btype &other) const;
+
+  // hash
+  unsigned hash() const;
+
+  // Cast to derived class (these return NULL if the type
+  // does not have the appropriate flavor).
+  inline BStructType *castToBStructType();
+  inline BArrayType *castToBArrayType();
+  inline BPointerType *castToBPointerType();
+  inline BIntegerType *castToBIntegerType();
+  inline BFloatType *castToBFloatType();
+  inline BFunctionType *castToBFunctionType();
+  inline const BStructType *castToBStructType() const;
+  inline const BArrayType *castToBArrayType() const;
+  inline const BPointerType *castToBPointerType() const;
+  inline const BIntegerType *castToBIntegerType() const;
+  inline const BFloatType *castToBFloatType() const;
+  inline const BFunctionType *castToBFunctionType() const;
 
  private:
   Btype() : type_(NULL) {}
   llvm::Type *type_;
+  TyFlavor flavor_;
   std::string name_;
-  bool isUnsigned_;
-  friend class Llvm_backend;
+  bool isPlaceholder_;
 };
+
+class BIntegerType : public Btype {
+ public:
+  BIntegerType(bool isUnsigned, unsigned bits, llvm::Type *type)
+      : Btype(IntegerT, type), bits_(bits), isUnsigned_(isUnsigned) { }
+
+  bool isUnsigned() const { return isUnsigned_; }
+  unsigned bits() const { return bits_; }
+
+  // Create a shallow copy of this type
+  Btype *clone() const {
+    return new BIntegerType(isUnsigned_, bits_, type());
+  }
+
+ private:
+  unsigned bits_;
+  bool isUnsigned_;
+};
+
+inline BIntegerType *Btype::castToBIntegerType() {
+  return (flavor_ == IntegerT ? static_cast<BIntegerType *>(this)
+          : nullptr);
+}
+
+inline const BIntegerType *Btype::castToBIntegerType() const {
+  return (flavor_ == IntegerT ? static_cast<const BIntegerType *>(this)
+          : nullptr);
+}
+
+class BFloatType : public Btype {
+ public:
+  BFloatType(unsigned bits, llvm::Type *type)
+      : Btype(FloatT, type), bits_(bits) { }
+
+  unsigned bits() const { return bits_; }
+
+  // Create a shallow copy of this type
+  Btype *clone() const {
+    return new BFloatType(bits_, type());
+  }
+
+ private:
+  unsigned bits_;
+};
+
+inline BFloatType *Btype::castToBFloatType() {
+  return (flavor_ == FloatT ? static_cast<BFloatType *>(this)
+          : nullptr);
+}
+
+inline const BFloatType *Btype::castToBFloatType() const {
+  return (flavor_ == FloatT ? static_cast<const BFloatType *>(this)
+          : nullptr);
+}
+
+class BStructType : public Btype {
+ public:
+
+  // For concrete struct types
+  explicit BStructType(const std::vector<Backend::Btyped_identifier> &fields,
+                       llvm::Type *type)
+      : Btype(StructT, type), fields_(fields) { }
+
+  // For placeholder struct types
+  explicit BStructType(const std::string &name)
+      : Btype(StructT, nullptr)
+  {
+    setPlaceholder(true);
+    setName(name);
+  }
+
+  Btype *fieldType(unsigned idx) const {
+    return fields_[idx].btype;
+  }
+  void setFieldType(unsigned idx, Btype *t) {
+    assert(t);
+    fields_[idx].btype = t;
+  }
+  const std::string &fieldName(unsigned idx) const {
+    return fields_[idx].name;
+  }
+  const std::vector<Backend::Btyped_identifier> &fields() const {
+    return fields_;
+  }
+  void setFields(const std::vector<Backend::Btyped_identifier> &fields) {
+    fields_ = fields;
+  }
+
+  // Create a shallow copy of this type
+  Btype *clone() const {
+    return new BStructType(fields_, type());
+  }
+
+ private:
+  std::vector<Backend::Btyped_identifier> fields_;
+};
+
+inline BStructType *Btype::castToBStructType() {
+  return (flavor_ == StructT ? static_cast<BStructType *>(this)
+          : nullptr);
+}
+
+inline const BStructType *Btype::castToBStructType() const {
+  return (flavor_ == StructT ? static_cast<const BStructType *>(this)
+          : nullptr);
+}
+
+class BArrayType : public Btype {
+ public:
+  // For concrete array types
+  explicit BArrayType(Btype *elemType, Bexpression *nelements, llvm::Type *type)
+      : Btype(ArrayT, type), elemType_(elemType), nelements_(nelements)
+  {
+    if (elemType_->isPlaceholder())
+      setPlaceholder(true);
+  }
+
+  // For placeholder array types
+  explicit BArrayType(const std::string &name)
+      : Btype(ArrayT, nullptr), elemType_(nullptr), nelements_(nullptr)
+  {
+    setPlaceholder(true);
+    setName(name);
+  }
+
+  Btype *elemType() const {
+    return elemType_;
+  }
+  void setElemType(Btype *t) {
+    assert(t);
+    elemType_ = t;
+    if (elemType_->isPlaceholder())
+      setPlaceholder(true);
+  }
+  Bexpression *nelements() const {
+    return nelements_;
+  }
+  void setNelements(Bexpression *nel) { nelements_ = nel; }
+  uint64_t nelSize() const;
+
+  // Create a shallow copy of this type
+  Btype *clone() const {
+    return new BArrayType(elemType_, nelements_, type());
+  }
+
+ private:
+  Btype *elemType_;
+  Bexpression *nelements_;
+};
+
+inline BArrayType *Btype::castToBArrayType() {
+  return (flavor_ == ArrayT ? static_cast<BArrayType *>(this)
+          : nullptr);
+}
+
+inline const BArrayType *Btype::castToBArrayType() const {
+  return (flavor_ == ArrayT ? static_cast<const BArrayType *>(this)
+          : nullptr);
+}
+
+class BPointerType : public Btype {
+ public:
+  // For concrete pointer types
+  explicit BPointerType(Btype *toType, llvm::Type *type)
+      : Btype(PointerT, type), toType_(toType) {
+    if (toType_->isPlaceholder())
+      setPlaceholder(true);
+  }
+
+  // For placeholder pointers
+  explicit BPointerType(const std::string &name)
+      : Btype(PointerT, nullptr), toType_(nullptr) {
+    setPlaceholder(true);
+    setName(name);
+  }
+
+  Btype *toType() const {
+    return toType_;
+  }
+  void setToType(Btype *to) {
+    toType_ = to;
+  }
+
+  // Create a shallow copy of this type
+  Btype *clone() const {
+    return new BPointerType(toType_, type());
+  }
+
+ private:
+  Btype *toType_;
+};
+
+inline BPointerType *Btype::castToBPointerType() {
+  return (flavor_ == PointerT ? static_cast<BPointerType *>(this)
+          : nullptr);
+};
+
+inline const BPointerType *Btype::castToBPointerType() const {
+  return (flavor_ == PointerT ? static_cast<const BPointerType *>(this)
+          : nullptr);
+};
+
+class BFunctionType : public Btype {
+ public:
+  BFunctionType(Btype *receiverType,
+                const std::vector<Btype *> &paramTypes,
+                const std::vector<Btype *> &resultTypes,
+                Btype *rtype,
+                llvm::Type *type)
+      : Btype(FunctionT, type), receiverType_(receiverType),
+        paramTypes_(paramTypes), resultTypes_(resultTypes),
+        rtype_(rtype) { }
+
+  Btype *resultType() const { return rtype_; }
+  Btype *receiverType() const { return receiverType_; }
+  const std::vector<Btype *> &paramTypes() const { return paramTypes_; }
+
+  // Create a shallow copy of this type
+  Btype *clone() const {
+    return new BFunctionType(receiverType_, paramTypes_, resultTypes_, rtype_,
+                             type());
+  }
+
+ private:
+  Btype *receiverType_;
+  std::vector<Btype *> paramTypes_;
+  std::vector<Btype *> resultTypes_;
+  Btype *rtype_;
+};
+
+inline BFunctionType *Btype::castToBFunctionType() {
+  return (flavor_ == FunctionT ? static_cast<BFunctionType *>(this)
+          : nullptr);
+}
+inline const BFunctionType *Btype::castToBFunctionType() const {
+  return (flavor_ == FunctionT ? static_cast<const BFunctionType *>(this)
+          : nullptr);
+}
 
 // Mixin class for a list of instructions
 
@@ -482,10 +757,11 @@ class Bblock : public CompoundStatement {
 
 class Bfunction {
 public:
-  Bfunction(llvm::Function *f, const std::string &asmName);
+  Bfunction(llvm::Function *f, Btype *fcnType, const std::string &asmName);
   ~Bfunction();
 
   llvm::Function *function() const { return function_; }
+  Btype *fcnType() const { return fcnType_; }
   const std::string &asmName() const { return asmName_; }
 
   enum SplitStackDisposition { YesSplit, NoSplit };
@@ -557,6 +833,7 @@ private:
   std::vector<Bstatement *> labelmap_;
   std::vector<Blabel *> labels_;
   llvm::Function *function_;
+  Btype *fcnType_;
   std::string asmName_;
   unsigned labelCount_;
   SplitStackDisposition splitStack_;
@@ -888,28 +1165,65 @@ public:
   // For creating useful inst and block names. Exposed to help unit testing.
   std::string namegen(const std::string &tag, unsigned expl = 0xffffffff);
 
-private:
-  // Make an anonymous Btype from an llvm::Type
-  Btype *makeAnonType(llvm::Type *lt);
+ private:
 
-  // Create a Btype from an llvm::Type, recording the fact that this
-  // is a placeholder type.
-  Btype *makePlaceholderType(llvm::Type *placeholder);
+  enum PTDisp { Concrete, Placeholder };
 
-  // Replace the underlying llvm::Type for a given placeholder type once
+  // Create a new anonymous Btype based on LLVM type 'lt'. This is used
+  // for types where there is a direct corresponding between the LLVM type
+  // and the frontend type (ex: float32), and where we don't need to
+  // do any later post-processing or checking.
+  Btype *makeAuxType(llvm::Type *lt);
+
+  // Is this a placeholder type?
+  bool isPlaceholderType(Btype *t);
+
+  // Replace the underlying type for a given placeholder type once
   // we've determined what the final type will be.
-  void updatePlaceholderUnderlyingType(Btype *plt, llvm::Type *newtyp);
+  void updatePlaceholderUnderlyingType(Btype *plt, Btype *totype);
 
   // Create an opaque type for use as part of a placeholder type.
   // Type will be named according to the tag passed in (name is relevant
   // only for debugging).
   llvm::Type *makeOpaqueLlvmType(const char *tag);
 
+  // LLVM type creation helpers
+  llvm::Type *makeLLVMFloatType(int bits);
+  llvm::Type *makeLLVMStructType(const std::vector<Btyped_identifier> &fields);
+  llvm::Type *makeLLVMFunctionType(Btype *receiverType,
+                                   const std::vector<Btype *> &paramTypes,
+                                   const std::vector<Btype *> &resultTypes,
+                                   Btype *rbtype);
+
   // Returns field type from composite (struct/array) type and index
   Btype *elementTypeByIndex(Btype *type, unsigned element_index);
 
   // Returns function result type from pointer-to-function type
   Btype *functionReturnType(Btype *functionType);
+
+  // When making a change to a Btype (for example,modifying its underlying
+  // type or setting/resetting its placeholder flag) we need to
+  // remove it from anonTypes and then reinstall it after we're
+  // done making changes. These routines help with that process.
+  // 'removeAnonType' returns true if the type in question was in
+  // the anonTypes set.
+  bool removeAnonType(Btype *typ);
+  void reinstallAnonType(Btype *typ);
+
+  // The specified placeholder 'btype' has been resolved to a
+  // concrete type -- visit all of the types that refer to it
+  // and see if we can completely resolve them.
+  void postProcessResolvedPlaceholder(Btype *btype);
+
+  // Helpers for the routine above
+  void postProcessResolvedPointerPlaceholder(BPointerType *bpt, Btype *btype);
+  void postProcessResolvedStructPlaceholder(BStructType *bst, Btype *btype);
+  void postProcessResolvedArrayPlaceholder(BArrayType *bat, Btype *btype);
+
+  // For a newly create type, adds entries to the placeholderRefs
+  // table for any contained types. Returns true if any placeholders
+  // found.
+  bool addPlaceholderRefs(Btype *type);
 
   // add a builtin function definition
   void defineBuiltinFcn(const char *name, const char *libname,
@@ -1108,35 +1422,46 @@ private:
   unsigned traceLevel_;
   bool checkIntegrity_;
 
-  // Anonymous typed are hashed and commoned via this map, except for
-  // integer types (stored in a separate map below).
-  std::unordered_map<llvm::Type *, Btype *> anonTypemap_;
+  class btype_hash {
+  public:
+    unsigned int operator()(const Btype *t) const {
+      return t->hash();
+    }
+  };
 
-  // Within the LLVM world there is no notion of an unsigned (vs
-  // signed) type, there are only signed/unsigned operations on
-  // vanilla integer types.  This table provides for commoning/caching
-  // of integer types declared as signed/unsigned by the front end.
-  integer_type_maptyp integerTypemap_;
+  class btype_equal {
+  public:
+    bool operator()(const Btype *t1, const Btype *t2) const {
+      return t1->equal(*t2);
+    }
+  };
 
-  // Named types are commoned/cached using this table (since LLVM types
-  // themselves have no names).
-  named_type_maptyp namedTypemap_;
+  typedef std::unordered_set<Btype *, btype_hash, btype_equal> anonTypeSetType;
 
-  // Maps <structType,index> => <fieldType>
-  fieldmaptype fieldTypeMap_;
+  // Anonymous typed are hashed/commoned via this set.
+  anonTypeSetType anonTypes_;
 
-  // Maps array type to element type
-  std::unordered_map<Btype *, Btype *> arrayElemTypeMap_;
+  // This map stores oddball types that get created internally by
+  // the back end (ex: void type, or predefined complex). Key is
+  // LLVM type, value is Btype.
+  std::unordered_map<llvm::Type *, Btype *> auxTypeMap_;
 
-  // Maps pointer type to pointed-to type
-  std::unordered_map<Btype *, Btype *> pointerTypeMap_;
+  // Repository for named types (those specifically created by the
+  // ::named_type method).
+  std::unordered_set<Btype *> namedTypes_;
 
-  // Maps function type to return typr
-  std::unordered_map<Btype *, Btype *> funcReturnTypeMap_;
-
-  // Placeholder types created by the front end.
+  // Records all placeholder types explicitlt created viar
+  // Backend::placeholder_<XYZ>_type() method calls.
   std::unordered_set<Btype *> placeholders_;
-  std::unordered_set<Btype *> updatedPlaceholders_;
+
+  // These types became redundant/duplicate after one or more
+  // of their placeholder children were updated.
+  std::unordered_set<Btype *> duplicates_;
+
+  // For managing placeholder types. An entry [X, {A,B,C}] indicates
+  // that placeholder type X is referred to by the other placeholder
+  // types A, B, and C.
+  std::unordered_map<Btype *, std::set<Btype *> > placeholderRefs_;
 
   // Set of circular types. These are pointers to opaque types that
   // are returned by the ::circular_pointer_type() method.
@@ -1161,6 +1486,7 @@ private:
   Btype *errorType_;
   Btype *stringType_;
   llvm::Type *llvmVoidType_;
+  llvm::Type *llvmBoolType_;
   llvm::Type *llvmPtrType_;
   llvm::Type *llvmSizeType_;
   llvm::Type *llvmIntegerType_;
@@ -1170,9 +1496,6 @@ private:
   llvm::Type *llvmFloatType_;
   llvm::Type *llvmDoubleType_;
   llvm::Type *llvmLongDoubleType_;
-
-  // Lifetime start intrinsic function (created lazily)
-  // llvm::Function *llvmLifetimeStart_;
 
   // Target library info oracle
   llvm::TargetLibraryInfo *TLI_;

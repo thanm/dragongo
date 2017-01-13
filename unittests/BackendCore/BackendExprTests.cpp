@@ -26,10 +26,10 @@ TEST(BackendExprTests, MakeBoolConstExpr) {
   // Boolean constants
   Bexpression *trueval = be->boolean_constant_expression(true);
   ASSERT_TRUE(trueval != nullptr);
-  EXPECT_EQ(llvm::ConstantInt::getTrue(C), trueval->value());
+  EXPECT_EQ(repr(trueval->value()), "i8 1");
   Bexpression *falseval = be->boolean_constant_expression(false);
   ASSERT_TRUE(falseval != nullptr);
-  EXPECT_EQ(llvm::ConstantInt::getFalse(C), falseval->value());
+  EXPECT_EQ(repr(falseval->value()), "i8 0");
 }
 
 TEST(BackendExprTests, MakeIntConstExpr) {
@@ -129,10 +129,11 @@ TEST(BackendExprTests, MakeZeroValueExpr) {
   ASSERT_TRUE(bt != nullptr);
   Bexpression *bzero = be->zero_expression(bt);
   ASSERT_TRUE(bzero != nullptr);
-  EXPECT_EQ(llvm::ConstantInt::getFalse(C), bzero->value());
+  EXPECT_EQ(repr(bzero->value()), "i8 0");
   Btype *pbt = be->pointer_type(bt);
   Bexpression *bpzero = be->zero_expression(pbt);
   ASSERT_TRUE(bpzero != nullptr);
+  EXPECT_EQ(repr(bpzero->value()), "i8* null");
   Btype *bi32t = be->integer_type(false, 32);
   Btype *s2t = mkBackendStruct(be.get(), pbt, "f1", bi32t, "f2", nullptr);
   Bexpression *bszero = be->zero_expression(s2t);
@@ -296,41 +297,58 @@ TEST(BackendExprTests, TestCompareOps) {
       store double 0.000000e+00, double* %z
       %x.ld.0 = load i64, i64* %x
       %icmp.0 = icmp eq i64 9, %x.ld.0
+      %zext.0 = zext i1 %icmp.0 to i8
       %x.ld.1 = load i64, i64* %x
       %icmp.1 = icmp ne i64 9, %x.ld.1
+      %zext.1 = zext i1 %icmp.1 to i8
       %x.ld.2 = load i64, i64* %x
       %icmp.2 = icmp slt i64 9, %x.ld.2
+      %zext.2 = zext i1 %icmp.2 to i8
       %x.ld.3 = load i64, i64* %x
       %icmp.3 = icmp sle i64 9, %x.ld.3
+      %zext.3 = zext i1 %icmp.3 to i8
       %x.ld.4 = load i64, i64* %x
       %icmp.4 = icmp sgt i64 9, %x.ld.4
+      %zext.4 = zext i1 %icmp.4 to i8
       %x.ld.5 = load i64, i64* %x
       %icmp.5 = icmp sge i64 9, %x.ld.5
+      %zext.5 = zext i1 %icmp.5 to i8
       %y.ld.0 = load i64, i64* %y
       %icmp.6 = icmp eq i64 9, %y.ld.0
+      %zext.6 = zext i1 %icmp.6 to i8
       %y.ld.1 = load i64, i64* %y
       %icmp.7 = icmp ne i64 9, %y.ld.1
+      %zext.7 = zext i1 %icmp.7 to i8
       %y.ld.2 = load i64, i64* %y
       %icmp.8 = icmp ult i64 9, %y.ld.2
+      %zext.8 = zext i1 %icmp.8 to i8
       %y.ld.3 = load i64, i64* %y
       %icmp.9 = icmp ule i64 9, %y.ld.3
+      %zext.9 = zext i1 %icmp.9 to i8
       %y.ld.4 = load i64, i64* %y
       %icmp.10 = icmp ugt i64 9, %y.ld.4
+      %zext.10 = zext i1 %icmp.10 to i8
       %y.ld.5 = load i64, i64* %y
       %icmp.11 = icmp uge i64 9, %y.ld.5
+      %zext.11 = zext i1 %icmp.11 to i8
       %z.ld.0 = load double, double* %z
       %fcmp.0 = fcmp oeq double 9.000000e+00, %z.ld.0
+      %zext.12 = zext i1 %fcmp.0 to i8
       %z.ld.1 = load double, double* %z
       %fcmp.1 = fcmp one double 9.000000e+00, %z.ld.1
+      %zext.13 = zext i1 %fcmp.1 to i8
       %z.ld.2 = load double, double* %z
       %fcmp.2 = fcmp olt double 9.000000e+00, %z.ld.2
+      %zext.14 = zext i1 %fcmp.2 to i8
       %z.ld.3 = load double, double* %z
       %fcmp.3 = fcmp ole double 9.000000e+00, %z.ld.3
+      %zext.15 = zext i1 %fcmp.3 to i8
       %z.ld.4 = load double, double* %z
       %fcmp.4 = fcmp ogt double 9.000000e+00, %z.ld.4
+      %zext.16 = zext i1 %fcmp.4 to i8
       %z.ld.5 = load double, double* %z
       %fcmp.5 = fcmp oge double 9.000000e+00, %z.ld.5
-
+      %zext.17 = zext i1 %fcmp.5 to i8
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -467,10 +485,10 @@ TEST(BackendExprTests, TestLogicalOps) {
   const char *exp = R"RAW_RESULT(
       store i64 0, i64* %x
       store i64 0, i64* %y
-      store i1 false, i1* %z
+      store i8 0, i8* %z
       store i64 0, i64* %x2
       store i64 0, i64* %y2
-      store i1 false, i1* %z2
+      store i8 0, i8* %z2
       %x.ld.0 = load i64, i64* %x
       %x2.ld.0 = load i64, i64* %x2
       %iand.0 = and i64 %x.ld.0, %x2.ld.0
@@ -483,12 +501,12 @@ TEST(BackendExprTests, TestLogicalOps) {
       %y.ld.1 = load i64, i64* %y
       %y2.ld.1 = load i64, i64* %y2
       %ior.1 = or i64 %y.ld.1, %y2.ld.1
-      %z.ld.0 = load i1, i1* %z
-      %z2.ld.0 = load i1, i1* %z2
-      %iand.2 = and i1 %z.ld.0, %z2.ld.0
-      %z.ld.1 = load i1, i1* %z
-      %z2.ld.1 = load i1, i1* %z2
-      %ior.2 = or i1 %z.ld.1, %z2.ld.1
+      %z.ld.0 = load i8, i8* %z
+      %z2.ld.0 = load i8, i8* %z2
+      %iand.2 = and i8 %z.ld.0, %z2.ld.0
+      %z.ld.1 = load i8, i8* %z
+      %z2.ld.1 = load i8, i8* %z2
+      %ior.2 = or i8 %z.ld.1, %z2.ld.1
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -610,20 +628,17 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   h.mkAssign(bfex2, bc2);
 
   const char *exp = R"RAW_RESULT(
-      store { i1*, i32 } zeroinitializer, { i1*, i32 }* %loc1
-      store { i1*, i32 }* %loc1, { i1*, i32 }** %loc2
+      store { i8*, i32 } zeroinitializer, { i8*, i32 }* %loc1
+      store { i8*, i32 }* %loc1, { i8*, i32 }** %loc2
       store i32 0, i32* %x
-      %field.0 = getelementptr inbounds { i1*, i32 },
-        { i1*, i32 }* %loc1, i32 0, i32 1
+      %field.0 = getelementptr inbounds { i8*, i32 }, { i8*, i32 }* %loc1, i32 0, i32 1
       %loc1.field.ld.0 = load i32, i32* %field.0
       store i32 %loc1.field.ld.0, i32* %x
-      store i1 false, i1* %b2
-      %field.1 = getelementptr inbounds { i1*, i32 },
-         { i1*, i32 }* %loc1, i32 0, i32 0
-      store i1* %b2, i1** %field.1
-      %loc2.ld.0 = load { i1*, i32 }*, { i1*, i32 }** %loc2
-      %field.2 = getelementptr inbounds { i1*, i32 },
-        { i1*, i32 }* %loc2.ld.0, i32 0, i32 1
+      store i8 0, i8* %b2
+      %field.1 = getelementptr inbounds { i8*, i32 }, { i8*, i32 }* %loc1, i32 0, i32 0
+      store i8* %b2, i8** %field.1
+      %loc2.ld.0 = load { i8*, i32 }*, { i8*, i32 }** %loc2
+      %field.2 = getelementptr inbounds { i8*, i32 }, { i8*, i32 }* %loc2.ld.0, i32 0, i32 1
       store i32 2, i32* %field.2
   )RAW_RESULT";
 
@@ -856,21 +871,14 @@ TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
     h.mkAssign(fx, bi64five);
 
   const char *exp = R"RAW_RESULT(
-    store [10 x { i1, [4 x { i64, i64 }*], i1 }*] zeroinitializer,
-      [10 x { i1, [4 x { i64, i64 }*], i1 }*]* %t1
-    %index.0 = getelementptr [10 x { i1, [4 x { i64, i64 }*], i1 }*],
-        [10 x { i1, [4 x { i64, i64 }*], i1 }*]* %t1, i32 0, i32 7
-    %t1.index.ld.0 = load { i1, [4 x { i64, i64 }*], i1 }*,
-        { i1, [4 x { i64, i64 }*], i1 }** %index.0
-    %field.0 = getelementptr inbounds { i1, [4 x { i64, i64 }*], i1 },
-        { i1, [4 x { i64, i64 }*], i1 }* %t1.index.ld.0, i32 0, i32 1
-    %index.1 = getelementptr [4 x { i64, i64 }*],
-         [4 x { i64, i64 }*]* %field.0, i32 0, i32 3
-    %.field.index.ld.0 = load { i64, i64 }*,
-          { i64, i64 }** %index.1
-    %field.1 = getelementptr inbounds { i64, i64 },
-      { i64, i64 }* %.field.index.ld.0, i32 0, i32 0
-    store i64 5, i64* %field.1
+      store [10 x { i8, [4 x { i64, i64 }*], i8 }*] zeroinitializer, [10 x { i8, [4 x { i64, i64 }*], i8 }*]* %t1
+      %index.0 = getelementptr [10 x { i8, [4 x { i64, i64 }*], i8 }*], [10 x { i8, [4 x { i64, i64 }*], i8 }*]* %t1, i32 0, i32 7
+      %t1.index.ld.0 = load { i8, [4 x { i64, i64 }*], i8 }*, { i8, [4 x { i64, i64 }*], i8 }** %index.0
+      %field.0 = getelementptr inbounds { i8, [4 x { i64, i64 }*], i8 }, { i8, [4 x { i64, i64 }*], i8 }* %t1.index.ld.0, i32 0, i32 1
+      %index.1 = getelementptr [4 x { i64, i64 }*], [4 x { i64, i64 }*]* %field.0, i32 0, i32 3
+      %.field.index.ld.0 = load { i64, i64 }*, { i64, i64 }** %index.1
+      %field.1 = getelementptr inbounds { i64, i64 }, { i64, i64 }* %.field.index.ld.0, i32 0, i32 0
+      store i64 5, i64* %field.1
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -894,18 +902,12 @@ TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
     h.mkLocal("q", bi64t, fx);
 
   const char *exp = R"RAW_RESULT(
-      %index.2 = getelementptr [10 x { i1, [4 x { i64, i64 }*], i1 }*],
-           [10 x { i1, [4 x { i64, i64 }*], i1 }*]* %t1, i32 0, i32 0
-      %t1.index.ld.1 = load { i1, [4 x { i64, i64 }*], i1 }*,
-           { i1, [4 x { i64, i64 }*], i1 }** %index.2
-      %field.2 = getelementptr inbounds { i1, [4 x { i64, i64 }*], i1 },
-           { i1, [4 x { i64, i64 }*], i1 }* %t1.index.ld.1, i32 0, i32 1
-      %index.3 = getelementptr [4 x { i64, i64 }*],
-         [4 x { i64, i64 }*]* %field.2, i32 0, i32 0
-      %.field.index.ld.1 = load { i64, i64 }*,
-         { i64, i64 }** %index.3
-      %field.3 = getelementptr inbounds { i64, i64 },
-          { i64, i64 }* %.field.index.ld.1, i32 0, i32 1
+      %index.2 = getelementptr [10 x { i8, [4 x { i64, i64 }*], i8 }*], [10 x { i8, [4 x { i64, i64 }*], i8 }*]* %t1, i32 0, i32 0
+      %t1.index.ld.1 = load { i8, [4 x { i64, i64 }*], i8 }*, { i8, [4 x { i64, i64 }*], i8 }** %index.2
+      %field.2 = getelementptr inbounds { i8, [4 x { i64, i64 }*], i8 }, { i8, [4 x { i64, i64 }*], i8 }* %t1.index.ld.1, i32 0, i32 1
+      %index.3 = getelementptr [4 x { i64, i64 }*], [4 x { i64, i64 }*]* %field.2, i32 0, i32 0
+      %.field.index.ld.1 = load { i64, i64 }*, { i64, i64 }** %index.3
+      %field.3 = getelementptr inbounds { i64, i64 }, { i64, i64 }* %.field.index.ld.1, i32 0, i32 1
       %.field.ld.0 = load i64, i64* %field.3
       store i64 %.field.ld.0, i64* %q
   )RAW_RESULT";
@@ -933,7 +935,7 @@ TEST(BackendExprTests, CreateFunctionCodeExpression) {
   // Cast function to pointer-sized int and store to local
   Btype *bt = be->bool_type();
   Btype *pbt = be->pointer_type(bt);
-  Btype *uintptrt = be->integer_type(true, be->type_size(pbt));
+  Btype *uintptrt = be->integer_type(true, be->type_size(pbt)*8);
   h.mkLocal("ui", uintptrt, be->convert_expression(uintptrt, fp, loc));
 
   const char *exp = R"RAW_RESULT(
@@ -1080,19 +1082,21 @@ TEST(BackendExprTests, CircularPointerExpressions1) {
       store %CPT.0* %cast, %CPT.0** %cpv1
       %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
       store %CPT.0* %cast, %CPT.0** %cpv2
-      store i1 false, i1* %b1
-      store i1 false, i1* %b2
-      store i1 false, i1* %b3
+      store i8 0, i8* %b1
+      store i8 0, i8* %b2
+      store i8 0, i8* %b3
       %cpv1.ld.0 = load %CPT.0*, %CPT.0** %cpv1
       %cpv2.ld.0 = load %CPT.0*, %CPT.0** %cpv2
       %cast = bitcast %CPT.0* %cpv2.ld.0 to %CPT.0**
       %.ld.0 = load %CPT.0*, %CPT.0** %cast
       %icmp.0 = icmp eq %CPT.0* %cpv1.ld.0, %.ld.0
-      store i1 %icmp.0, i1* %b1
+      %zext.0 = zext i1 %icmp.0 to i8
+      store i8 %zext.0, i8* %b1
       %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
       %cpv2.ld.1 = load %CPT.0*, %CPT.0** %cpv2
       %icmp.1 = icmp eq %CPT.0* %cast, %cpv2.ld.1
-      store i1 %icmp.1, i1* %b2
+      %zext.1 = zext i1 %icmp.1 to i8
+      store i8 %zext.1, i8* %b2
       %cpv1.ld.1 = load %CPT.0*, %CPT.0** %cpv1
       %cpv2.ld.2 = load %CPT.0*, %CPT.0** %cpv2
       %cast = bitcast %CPT.0* %cpv2.ld.2 to %CPT.0**
@@ -1102,7 +1106,8 @@ TEST(BackendExprTests, CircularPointerExpressions1) {
       %cast = bitcast %CPT.0* %.ld.2 to %CPT.0**
       %.ld.3 = load %CPT.0*, %CPT.0** %cast
       %icmp.2 = icmp eq %CPT.0* %cpv1.ld.1, %.ld.3
-      store i1 %icmp.2, i1* %b3
+      %zext.2 = zext i1 %icmp.2 to i8
+      store i8 %zext.2, i8* %b3
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -1174,14 +1179,15 @@ TEST(BackendExprTests, CircularPointerExpressions2) {
       %cast = bitcast %CPT.0*** %y to %CPT.0*
       store %CPT.0* %cast, %CPT.0** %x
       store %CPT.0** %x, %CPT.0*** %y
-      store i1 false, i1* %b1
+      store i8 0, i8* %b1
       %cast = bitcast %CPT.0** %x to %CPT.0****
       %x.ld.0 = load %CPT.0***, %CPT.0**** %cast
       %y.ld.0 = load %CPT.0**, %CPT.0*** %y
       %cast = bitcast %CPT.0** %y.ld.0 to %CPT.0****
       %.ld.0 = load %CPT.0***, %CPT.0**** %cast
       %icmp.0 = icmp eq %CPT.0*** %x.ld.0, %.ld.0
-      store i1 %icmp.0, i1* %b1
+      %zext.0 = zext i1 %icmp.0 to i8
+      store i8 %zext.0, i8* %b1
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -1224,7 +1230,9 @@ TEST(BackendExprTests, TestConditionalExpression1) {
         %a.ld.0 = load i64, i64* %a
         %b.ld.0 = load i64, i64* %b
         %icmp.0 = icmp slt i64 %a.ld.0, %b.ld.0
-        br i1 %icmp.0, label %then.0, label %else.0
+        %zext.0 = zext i1 %icmp.0 to i8
+        %trunc.0 = trunc i8 %zext.0 to i1
+        br i1 %trunc.0, label %then.0, label %else.0
       then.0:                                           ; preds = %entry
         call void @foo()
         br label %fallthrough.0

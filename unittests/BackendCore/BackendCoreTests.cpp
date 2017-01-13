@@ -76,7 +76,7 @@ TEST(BackendCoreTests, StructTypes) {
   ASSERT_TRUE(best != nullptr);
   ASSERT_TRUE(llst != nullptr);
   EXPECT_EQ(llst, best->type());
-  EXPECT_EQ(repr(best->type()), "{ i1, float*, i64 }");
+  EXPECT_EQ(repr(best->type()), "{ i8, float*, i64 }");
 
   // If a field has error type, entire struct has error type
   std::vector<Backend::Btyped_identifier> fields = {
@@ -87,8 +87,20 @@ TEST(BackendCoreTests, StructTypes) {
   EXPECT_EQ(badst, be->error_type());
 
   // Llvm_backend should be caching and reusing anonymous types
-  EXPECT_EQ(mkBackendThreeFieldStruct(be.get()),
-            mkBackendThreeFieldStruct(be.get()));
+  Btype *st1 = mkBackendThreeFieldStruct(be.get());
+  Btype *st2 = mkBackendThreeFieldStruct(be.get());
+  EXPECT_EQ(st1, st2);
+}
+
+TEST(BackendCoreTests, TypeHashAndCompare) {
+  LLVMContext C;
+
+  std::unique_ptr<Backend> be(go_get_backend(C));
+
+  Btype *st1 = mkBackendThreeFieldStruct(be.get());
+  Btype *st2 = mkBackendThreeFieldStruct(be.get());
+  EXPECT_EQ(st1->hash(), st2->hash());
+  EXPECT_TRUE(st1->equal(*st1));
 }
 
 TEST(BackendCoreTests, ComplexTypes) {
@@ -275,17 +287,16 @@ TEST(BackendCoreTests, NamedTypes) {
 TEST(BackendCoreTests, TypeUtils) {
   LLVMContext C;
 
-  // Type size and alignment. Size seems to be in bits, whereas
-  // alignment is in bytes.
+  // Type size and alignment. Size and align are in bytes.
   std::unique_ptr<Backend> be(go_get_backend(C));
   Btype *i8t = be->integer_type(false, 8);
-  EXPECT_EQ(be->type_size(i8t), int64_t(8));
+  EXPECT_EQ(be->type_size(i8t), int64_t(1));
   EXPECT_EQ(be->type_alignment(i8t), 1);
 
   // Slightly more complicated example
   Btype *u64 = be->integer_type(true, 64);
   Btype *st = mkTwoFieldStruct(be.get(), u64, u64);
-  EXPECT_EQ(be->type_size(st), int64_t(128));
+  EXPECT_EQ(be->type_size(st), int64_t(16));
   EXPECT_EQ(be->type_alignment(st), 8);
 
   // type field alignment

@@ -158,7 +158,7 @@ llvm::StructType *mkLlvmStruct(llvm::LLVMContext *context, ...)
 llvm::StructType *mkLlvmThreeFieldStruct(llvm::LLVMContext &context) {
   llvm::Type *flt = llvm::Type::getFloatTy(context);
   return mkLlvmStruct(&context,
-                      llvm::Type::getInt1Ty(context),
+                      llvm::Type::getInt8Ty(context),
                       llvm::PointerType::get(flt, 0),
                       llvm::IntegerType::get(context, 64),
                       nullptr);

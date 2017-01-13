@@ -3,13 +3,13 @@
 # Notes:
 #
 # The code in gofrontend depends on functions from GMP, MPC, and MPFR; these libraries are currently handled via the cmake "ExternalProject" utility
-# 
+#  
 
 include(ExternalProject)
 include(ProcessorCount)
 include(LLVMExternalProjectUtils)
 
-# So that we can issue "make -jN" cmds in externalproject_add 
+# So that we can issue "make -jN" cmds in externalproject_add  
 processorcount(PROCESSOR_COUNT)
 
 # FIXME: something less hacky for MacOS
