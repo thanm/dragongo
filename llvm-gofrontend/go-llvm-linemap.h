@@ -14,13 +14,12 @@
 
 // Implementation notes:
 //
-// Line/column pairs are ULEB128-encoded and stored in a large
-// array; we then hand out the offset of the encoded pair as a
-// handle for use in the Location class. The source file for a range
-// of pairs is stored in a separate table.
-//
-// This implementation doesn't hash or common line/column pairs, meaning
-// that there can be some redundancy in the encodings.
+// Line/column pairs are ULEB128-encoded and stored in a large array;
+// we then hand out the offset of the encoded pair as a handle for use
+// in the Location class. The source file for a range of pairs is
+// stored in a separate table.  This implementation doesn't hash or
+// common line/column pairs, meaning that there can be some redundancy
+// in the encodings.
 //
 
 #ifndef GO_LLVM_LINEMAP_H
@@ -94,24 +93,43 @@ class Llvm_linemap : public Linemap
     }
   };
 
+  // Given a File/line/column triple, add an entry to the linemap for
+  // the triple and return a handle for it.
   unsigned add_encoded_location(const FLC &flc);
+
+  // Given a handle, return the associated file/line/column triple.
   FLC decode_location(unsigned handle);
+
+  // Debugging
   void dump();
 
  private:
-  std::vector<const char *> files_;
+  // Source files we've seen so far.
+  std::vector<std::string> files_;
+  // Maps source file to index in the files_ array.
   std::map<const char *, unsigned> fmap_;
+  // Sorted table of segments, used to record file id for ranges of handles.
   std::vector<Segment> segments_;
+  // Array of ULEB-encoded line/col pairs.
   std::vector<unsigned char> encoded_locations_;
+  // Predefined "unknown file" file ID.
   unsigned unknown_fidx_;
+  // Current file ID (most recent file passed to start_file)
   unsigned current_fidx_;
+  // Current line.
   unsigned current_line_;
+  // Special handle for predeclared location.
   unsigned predeclared_handle_;
+  // Special handle for unknown location.
   unsigned unknown_handle_;
+  // First handle in the segment we are building (not yet in segment table).
+  // May be set to NoHandle if there are no locations in the segment yet.
   unsigned firsthandle_;
+  // Last handle in the segment we are building (not yet in segment table).
+  // May be set to NoHandle if there are no locations in the segment yet.
   unsigned lasthandle_;
+  // Number of lookups made into the linemap.
   unsigned lookups_;
-
   // Whether we are currently reading a file.
   bool in_file_;
 };

@@ -1,6 +1,6 @@
 // go-linemap.cc -- LLVM implementation of Linemap.
 
-// Copyright 2011 The Go Authors. All rights reserved.
+// Copyright 2016 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -114,6 +114,7 @@ Llvm_linemap::to_string(Location location)
 }
 
 // Return the line number for a given location (for debugging dumps)
+
 int
 Llvm_linemap::location_line(Location loc)
 {
