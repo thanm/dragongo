@@ -84,12 +84,12 @@ Llvm_linemap::start_file(const char *file_name, unsigned line_begin)
   lasthandle_ = NoHandle;
 
   // Locate the file in the file table, adding new entry if needed
-  auto it = fmap_.find(file_name);
+  auto it = fmap_.find(std::string(file_name));
   unsigned fidx = files_.size();
   if (it != fmap_.end())
     fidx = it->second;
   else {
-    files_.push_back(file_name);
+    files_.push_back(std::string(file_name));
     fmap_[file_name] = fidx;
   }
   current_fidx_ = fidx;
@@ -107,9 +107,9 @@ Llvm_linemap::to_string(Location location)
     return "";
 
   FLC flc = decode_location(location.handle());
-  const char *path = files_[flc.fidx];
+  const std::string &path = files_[flc.fidx];
   std::stringstream ss;
-  ss << lbasename(path) << ":" << flc.line;
+  ss << lbasename(path.c_str()) << ":" << flc.line;
   return ss.str();
 }
 

@@ -107,7 +107,7 @@ class Llvm_linemap : public Linemap
   // Source files we've seen so far.
   std::vector<std::string> files_;
   // Maps source file to index in the files_ array.
-  std::map<const char *, unsigned> fmap_;
+  std::map<std::string, unsigned> fmap_;
   // Sorted table of segments, used to record file id for ranges of handles.
   std::vector<Segment> segments_;
   // Array of ULEB-encoded line/col pairs.
