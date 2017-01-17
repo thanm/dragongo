@@ -14,23 +14,13 @@
 
 // Implementation notes:
 //
-// File/line/column triples are ULEB128-encoded and stored in a large
-// array; we then hand out the offset of the encoded triple as a
-// handle for use in the Location class.
+// Line/column pairs are ULEB128-encoded and stored in a large
+// array; we then hand out the offset of the encoded pair as a
+// handle for use in the Location class. The source file for a range
+// of pairs is stored in a separate table.
 //
-// In this implementation, incoming FLC triples are hashed, and when a
-// new FLC triple is added to the linemap we record an entry to a map
-// recording the FLC for that hash. When looking up a new location, we
-// consult the hash table and return the existing handle if its
-// encoded FLC match the incoming FLC.  There can be hash collision,
-// however, meaning that we may return two different handles for
-// the same FLC triple requested at different times in the compilation.
-//
-// It may be more efficient in the long run to do away with the hashing
-// and just return a new handle on each lookup, since hit rates for the
-// cache seem to be pretty low as far as I can tell. There are probably also
-// more space-efficient representations as well, but at the moment
-// there doesn't seem to be time to dig into this.
+// This implementation doesn't hash or common line/column pairs, meaning
+// that there can be some redundancy in the encodings.
 //
 
 #ifndef GO_LLVM_LINEMAP_H
@@ -79,6 +69,7 @@ class Llvm_linemap : public Linemap
 
  private:
 
+  // File/line/column container
   struct FLC {
     unsigned fidx;
     unsigned line;
@@ -86,30 +77,40 @@ class Llvm_linemap : public Linemap
     FLC(unsigned f, unsigned l, unsigned c)
         : fidx(f), line(l), column(c)
     { }
-    unsigned hash() { return (line << 15) | (column << 6) | fidx; }
-    bool equal(const FLC other) {
-      return (other.line == line &&
-              other.column == column &&
-              other.fidx == fidx);
+  };
+
+  // Stores the file ID associated with a range of handle
+  struct Segment {
+    // Lo/hi handles in this range
+    unsigned lo, hi;
+    // File id for this collection of handles
+    unsigned fidx;
+
+    Segment(unsigned low, unsigned high, unsigned fileid)
+        : lo(low), hi(high), fidx(fileid) { }
+
+    static bool cmp(const struct Segment &a1, const struct Segment &a2) {
+      return a1.hi < a2.hi;
     }
   };
 
   unsigned add_encoded_location(const FLC &flc);
-  FLC read_encoded_location(unsigned handle);
+  FLC decode_location(unsigned handle);
+  void dump();
 
  private:
   std::vector<const char *> files_;
-  std::vector<unsigned char> encoded_locations_;
   std::map<const char *, unsigned> fmap_;
-  std::map<unsigned, unsigned> hmap_;
+  std::vector<Segment> segments_;
+  std::vector<unsigned char> encoded_locations_;
   unsigned unknown_fidx_;
   unsigned current_fidx_;
   unsigned current_line_;
   unsigned predeclared_handle_;
   unsigned unknown_handle_;
+  unsigned firsthandle_;
+  unsigned lasthandle_;
   unsigned lookups_;
-  unsigned hits_;
-  unsigned collisions_;
 
   // Whether we are currently reading a file.
   bool in_file_;

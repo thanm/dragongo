@@ -11,23 +11,27 @@
 
 #include <sstream>
 
+static constexpr unsigned NoHandle = 0xffffffff;
+
 Linemap* Linemap::instance_ = NULL;
 
 Llvm_linemap::Llvm_linemap()
     : Linemap()
     , unknown_fidx_(0)
-    , current_fidx_(0xffffffff)
+    , current_fidx_(0)
     , current_line_(0xffffffff)
     , predeclared_handle_(1)
     , unknown_handle_(0)
+    , firsthandle_(NoHandle)
+    , lasthandle_(NoHandle)
     , lookups_(0)
-    , hits_(0)
-    , collisions_(0)
     , in_file_(false)
 {
   files_.push_back("");
   unknown_handle_ = add_encoded_location(FLC(unknown_fidx_, 0, 0));
   predeclared_handle_ = add_encoded_location(FLC(unknown_fidx_, 1, 1));
+  firsthandle_ = unknown_handle_;
+  lasthandle_ = predeclared_handle_;
 }
 
 Llvm_linemap::~Llvm_linemap()
@@ -36,29 +40,34 @@ Llvm_linemap::~Llvm_linemap()
 
 unsigned Llvm_linemap::add_encoded_location(const FLC &flc)
 {
-  unsigned char buf[32];
+  unsigned char buf[64];
   unsigned l1 = llvm::encodeULEB128(flc.line, buf);
   unsigned l2 = llvm::encodeULEB128(flc.column, &buf[l1]);
-  unsigned l3 = llvm::encodeULEB128(flc.fidx, &buf[l2]);
-  unsigned tot = l1 + l2 + l3;
+  unsigned tot = l1 + l2;
   unsigned handle = encoded_locations_.size();
   for (unsigned i = 0; i < tot; ++i)
     encoded_locations_.push_back(buf[i]);
   return handle;
 }
 
-Llvm_linemap::FLC Llvm_linemap::read_encoded_location(unsigned handle)
+Llvm_linemap::FLC Llvm_linemap::decode_location(unsigned handle)
 {
-  FLC rval(0, 0, 0);
   assert(handle < encoded_locations_.size());
+
+  // Read line/col from encoded array
+  FLC rval(0, 0, 0);
   unsigned char *lptr = &encoded_locations_[handle];
   unsigned c1;
   rval.line = llvm::decodeULEB128(lptr, &c1);
   unsigned c2;
   rval.column = llvm::decodeULEB128(&lptr[c1], &c2);
-  unsigned c3;
-  rval.fidx = llvm::decodeULEB128(&lptr[c2], &c3);
-  assert(handle + c1 + c2 + c3 <= encoded_locations_.size());
+  assert(handle + c1 + c2 <= encoded_locations_.size());
+
+  // Determine file ID by looking up handle in segment table
+  Segment s(handle, handle, 0);
+  auto it = std::lower_bound(segments_.begin(), segments_.end(), s,
+                             Segment::cmp);
+  rval.fidx = (it == segments_.end() ? current_fidx_ : it->fidx);
   return rval;
 }
 
@@ -67,6 +76,14 @@ Llvm_linemap::FLC Llvm_linemap::read_encoded_location(unsigned handle)
 void
 Llvm_linemap::start_file(const char *file_name, unsigned line_begin)
 {
+  if (firsthandle_ != NoHandle) {
+    // Close out the current segment
+    segments_.push_back(Segment(firsthandle_, lasthandle_, current_fidx_));
+  }
+  firsthandle_ = NoHandle;
+  lasthandle_ = NoHandle;
+
+  // Locate the file in the file table, adding new entry if needed
   auto it = fmap_.find(file_name);
   unsigned fidx = files_.size();
   if (it != fmap_.end())
@@ -89,7 +106,7 @@ Llvm_linemap::to_string(Location location)
       location.handle() == unknown_handle_)
     return "";
 
-  FLC flc = read_encoded_location(location.handle());
+  FLC flc = decode_location(location.handle());
   const char *path = files_[flc.fidx];
   std::stringstream ss;
   ss << lbasename(path) << ":" << flc.line;
@@ -100,7 +117,7 @@ Llvm_linemap::to_string(Location location)
 int
 Llvm_linemap::location_line(Location loc)
 {
-  FLC flc = read_encoded_location(loc.handle());
+  FLC flc = decode_location(loc.handle());
   return flc.line;
 }
 
@@ -125,24 +142,14 @@ Llvm_linemap::start_line(unsigned lineno, unsigned linesize)
 Location
 Llvm_linemap::get_location(unsigned column)
 {
-  FLC flc(current_fidx_, current_line_, column);
+  assert(in_file_);
 
-  // Seen before?
-  unsigned hash = flc.hash();
-  auto it = hmap_.find(hash);
   lookups_++;
-  if (it != hmap_.end()) {
-    hits_++;
-    FLC existing = read_encoded_location(it->second);
-    if (existing.equal(flc))
-      return Location(it->second);
-    else
-      collisions_++;
-  }
-
-  // Add new entry
+  FLC flc(current_fidx_, current_line_, column);
   unsigned handle = add_encoded_location(flc);
-  hmap_[hash] = handle;
+  if (firsthandle_ == NoHandle)
+    firsthandle_ = handle;
+  lasthandle_ = handle;
   return Location(handle);
 }
 
@@ -178,16 +185,31 @@ Llvm_linemap::is_unknown(Location loc)
   return loc.handle() == unknown_handle_;
 }
 
-std::string
-Llvm_linemap::statistics()
+std::string Llvm_linemap::statistics()
 {
   std::stringstream ss;
   ss << "accesses: " << lookups_
-     << " hits: " << hits_
-     << " collisions: " << collisions_
      << " files: " << files_.size()
+     << " segments: " << segments_.size()
      << " locmem: " << encoded_locations_.size();
   return ss.str();
+}
+
+void Llvm_linemap::dump()
+{
+  std::cerr << "Files:\n";
+  for (unsigned ii = 0; ii < files_.size(); ++ii)
+    std::cerr << ii << ": " << files_[ii] << "\n";
+  std::cerr << "Segments:\n";
+  for (unsigned ii = 0; ii < segments_.size(); ++ii) {
+    unsigned lo = segments_[ii].lo;
+    unsigned hi = segments_[ii].hi;
+    std::cerr << ii << ": [" << lo << "," << hi << "] lo='"
+              << to_string(Location(lo)) << "' hi='"
+              << to_string(Location(hi)) << "'\n";
+  }
+  std::cerr << "firsthandle: " << firsthandle_ << "\n";
+  std::cerr << "lasthandle: " << lasthandle_ << "\n";
 }
 
 // Return the Linemap to use for the backend.
