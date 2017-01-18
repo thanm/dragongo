@@ -222,8 +222,6 @@ TEST(BackendExprTests, TestMoreConversionExpressions) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-
-
 TEST(BackendExprTests, MakeVarExpressions) {
   llvm::LLVMContext C;
 
@@ -928,19 +926,51 @@ TEST(BackendExprTests, CreateFunctionCodeExpression) {
   Bfunction *func = h.func();
   Location loc;
 
-  // Assign function address to local variable
-  Bexpression *fp = be->function_code_expression(func, loc);
-  h.mkLocal("fploc", fp->btype(), fp);
+  // Local variables of pointer-to-function-descriptor type. A key
+  // item to note here is that we want to verify that the backend methods
+  // allow flexibility in terms of the concrete LLVM type for the
+  // function descriptor. The FE sometimes creates a struct with a
+  // uintptr field, and sometimes a struct with a function pointer field.
 
-  // Cast function to pointer-sized int and store to local
-  Btype *bt = be->bool_type();
-  Btype *pbt = be->pointer_type(bt);
-  Btype *uintptrt = be->integer_type(true, be->type_size(pbt)*8);
-  h.mkLocal("ui", uintptrt, be->convert_expression(uintptrt, fp, loc));
+  // Function descriptor type with uintptr, e.g. { i64 }
+  Btype *fdesct1 = mkFuncDescType(be);
+
+  // Function descriptor type with function pointer, e.g. { i64 (i64, ...) }
+  Btype *fdesct2 = mkBackendStruct(be, func->fcnType(), "f1", nullptr);
+
+  // Function descriptor variable
+  Bvariable *bfdv1 = h.mkLocal("fdloc1", fdesct1, mkFuncDescExpr(be, func));
+
+  // Pointer-to-FD variables
+  Btype *pfd1t = be->pointer_type(fdesct1);
+  Btype *pfd2t = be->pointer_type(fdesct2);
+  Bexpression *vex1 = be->var_expression(bfdv1, VE_rvalue, loc);
+  Bexpression *adfd1 = be->address_expression(vex1, loc);
+  Bvariable *bfpv1 = h.mkLocal("fploc1", pfd1t, adfd1);
+  Bvariable *bfpv2 = h.mkLocal("fploc2", pfd2t);
+
+  // Assignment of function descriptor pointer values. Note that the
+  // types here are not going to agree strictly; this test verifies
+  // that this flexibility is allowed.
+  Bexpression *vex2 = be->var_expression(bfpv2, VE_lvalue, loc);
+  Bexpression *rvex2 = be->var_expression(bfpv1, VE_rvalue, loc);
+  h.mkAssign(vex2, rvex2);
+  Bexpression *vex3 = be->var_expression(bfpv1, VE_lvalue, loc);
+  Bexpression *rvex3 = be->var_expression(bfpv2, VE_rvalue, loc);
+  h.mkAssign(vex3, rvex3);
 
   const char *exp = R"RAW_RESULT(
-    store i64 (i32, i32, i64*)* @foo, i64 (i32, i32, i64*)** %fploc
-    store i64 ptrtoint (i64 (i32, i32, i64*)* @foo to i64), i64* %ui
+      store { i64 } { i64 ptrtoint (i64 (i32, i32, i64*)* @foo to i64) },
+             { i64 }* %fdloc1
+      store { i64 }* %fdloc1, { i64 }** %fploc1
+      store { i64 (i32, i32, i64*) }* null, { i64 (i32, i32, i64*) }** %fploc2
+      %fploc1.ld.0 = load { i64 }*, { i64 }** %fploc1
+      %cast = bitcast { i64 }* %fploc1.ld.0 to { i64 (i32, i32, i64*) }*
+      store { i64 (i32, i32, i64*) }* %cast, { i64 (i32, i32, i64*) }** %fploc2
+      %fploc2.ld.0 = load { i64 (i32, i32, i64*) }*,
+            { i64 (i32, i32, i64*) }** %fploc2
+      %cast = bitcast { i64 (i32, i32, i64*) }* %fploc2.ld.0 to { i64 }*
+      store { i64 }* %cast, { i64 }** %fploc1
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);

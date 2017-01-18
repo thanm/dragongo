@@ -31,6 +31,7 @@ go-llvm-btype.cpp
 go-llvm-bexpression.cpp
 go-llvm-bstatement.cpp
 go-llvm-bfunction.cpp
+go-llvm-bvariable.cpp
 go-llvm-tree-integrity.cpp
 go-llvm.cpp
 go-sha1.cpp

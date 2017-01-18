@@ -181,6 +181,12 @@ void Llvm_backend::dumpStmt(Bstatement *s)
     s->srcDump(linemap_);
 }
 
+void Llvm_backend::dumpVar(Bvariable *v)
+{
+  if (v)
+    v->srcDump(linemap_);
+}
+
 std::pair<bool, std::string>
 Llvm_backend::checkTreeIntegrity(Bexpression *e, bool includePointers)
 {
@@ -551,9 +557,9 @@ Btype *Llvm_backend::pointer_type(Btype *toType)
 // structs, so the general strategy for placeholders is to create an
 // opaque struct (corresponding to the thing being pointed to) and then
 // make a pointer to it. Since LLVM allows only a single opaque struct
-// type with a given name within a given context, we generally throw
-// out the name/location information passed into the placeholder type
-// creation routines.
+// type with a given name within a given context, we capture the provided
+// name but we don't try to hand that specific name to LLVM to use
+// for the identified struct (so as to avoid collisions).
 
 // Create a placeholder for a pointer type.
 
@@ -1573,13 +1579,14 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
   if (bexpr == errorExpression_.get())
     return errorExpression_.get();
 
-  // Gofrontend tends to take the address of things like strings
-  // and arrays, which is an issue here since an array type in LLVM
-  // is already effectively a pointer (you can feed it directly into
-  // a GEP as opposed to having to take the address of it first).
-  // Bypass the effects of the address operator here if this is the
-  // case. This is hacky, maybe I can come up with a better solution
-  // for this issue(?).
+  // Gofrontend tends to take the address of things that are already
+  // pointer-like to begin with (for example, C strings and and
+  // arrays). This presents wrinkles here, since since an array type
+  // in LLVM is already effectively a pointer (you can feed it
+  // directly into a GEP as opposed to having to take the address of
+  // it first).  Bypass the effects of the address operator if
+  // this is the case. This is hacky, maybe I can come up with a
+  // better solution for this issue(?).
   if (llvm::isa<llvm::ConstantArray>(bexpr->value()))
     return bexpr;
   if (bexpr->value()->getType() == stringType_->type() &&
@@ -1915,7 +1922,6 @@ llvm::Type *Llvm_backend::isAcceptableBitcastConvert(Bexpression *expr,
                                                      llvm::Type *fromType,
                                                      llvm::Type *toType)
 {
-  // Case 1: function pointer cast
   if (fromType->isPointerTy() && toType->isPointerTy()) {
     if (expr->varExprPending()) {
       llvm::Type *ptt = llvm::PointerType::get(toType, addressSpace_);
@@ -2622,16 +2628,81 @@ Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
   return result;
 }
 
+bool Llvm_backend::isFuncDescriptorType(llvm::Type *typ)
+{
+  if (! typ->isStructTy())
+    return false;
+  llvm::StructType *st = llvm::cast<llvm::StructType>(typ);
+  if (st->getNumElements() != 1)
+    return false;
+  if (st->getElementType(0) != llvmIntegerType_ &&
+      !st->getElementType(0)->isFunctionTy())
+    return false;
+  return true;
+}
+
+bool Llvm_backend::isPtrToFuncDescriptorType(llvm::Type *typ)
+{
+  if (! typ->isPointerTy())
+    return false;
+  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
+  return isFuncDescriptorType(pt->getElementType());
+}
+
+bool Llvm_backend::isPtrToFuncType(llvm::Type *typ)
+{
+  if (! typ->isPointerTy())
+    return false;
+  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
+  return pt->getElementType()->isFunctionTy();
+}
+
+llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
+                                                llvm::Type *dstType)
+{
+  assert(dstType->isPointerTy());
+  llvm::PointerType *dpt = llvm::cast<llvm::PointerType>(dstType);
+  llvm::Type *dstToType = dpt->getElementType();
+  llvm::Type *srcType = src->value()->getType();
+
+  if (dstToType == srcType)
+    return nullptr;
+
+  // Case 1: handle discrepancies between representations of function
+  // descriptors. All front end function descriptor types are structs
+  // with a single field, however this field can sometimes be a pointer
+  // to function, and sometimes it can be of uintptr type.
+  bool srcPtrToFD = isPtrToFuncDescriptorType(srcType);
+  bool dstPtrToFD = isPtrToFuncDescriptorType(dstToType);
+  if (srcPtrToFD && dstPtrToFD) {
+    LIRBuilder builder(context_, llvm::ConstantFolder());
+    std::string tag("cast");
+    llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
+    if (llvm::isa<llvm::Instruction>(bitcast))
+      src->appendInstruction(llvm::cast<llvm::Instruction>(bitcast));
+    return bitcast;
+  }
+
+  return nullptr;
+}
+
 Bstatement *Llvm_backend::makeAssignment(Bfunction *function,
                                          llvm::Value *lval, Bexpression *lhs,
                                          Bexpression *rhs, Location location) {
+  assert(lval->getType()->isPointerTy());
   llvm::PointerType *pt = llvm::cast<llvm::PointerType>(lval->getType());
-  assert(pt);
   llvm::Value *rval = rhs->value();
-  assert(rval->getType() == pt->getElementType());
 
   // These cases should have been handled in the caller
   assert(!rhs->varExprPending() && !rhs->compositeInitPending());
+
+  // Work around type inconsistencies in gofrontend.
+  llvm::Value *cval = convertForAssignment(rhs, pt);
+  if (cval)
+    rval = cval;
+
+  // At this point the types should agree
+  assert(rval->getType() == pt->getElementType());
 
   // FIXME: alignment?
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
@@ -2729,7 +2800,8 @@ Bstatement *Llvm_backend::switch_statement(
 // Pair of statements.
 
 Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
-  assert(s1->function() == s2->function());
+  assert(!s1->function() || !s2->function() ||
+         s1->function() == s2->function());
   CompoundStatement *st = new CompoundStatement(s1->function());
   std::vector<Bstatement *> &stlist = st->stlist();
   stlist.push_back(s1);
@@ -2849,10 +2921,13 @@ Bvariable *Llvm_backend::global_variable(const std::string &var_name,
                                          bool is_hidden,
                                          bool in_unique_section,
                                          Location location) {
-
+#if 0
   llvm::GlobalValue::LinkageTypes linkage =
       (is_external || is_hidden ? llvm::GlobalValue::ExternalLinkage
        : llvm::GlobalValue::InternalLinkage);
+#endif
+  llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
+
   ModVarSec inUniqSec =
       (in_unique_section ? MV_UniqueSection : MV_DefaultSection);
   ModVarVis varVis =

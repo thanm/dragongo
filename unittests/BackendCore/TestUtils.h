@@ -141,6 +141,12 @@ Bexpression *mkFloat64Const(Backend *be, double val);
 // Manufacture a signed 32-bit integer constant
 Bexpression *mkInt32Const(Backend *be, int32_t val);
 
+// Return func desc type
+Btype *mkFuncDescType(Backend *be);
+
+// Create a function descriptor value for specified func
+Bexpression *mkFuncDescExpr(Backend *be, Bfunction *fcn);
+
 // Create a basic block from a single statement
 Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st);
 

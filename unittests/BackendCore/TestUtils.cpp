@@ -348,6 +348,33 @@ Bexpression *mkInt32Const(Backend *be, int32_t val)
   return rval;
 }
 
+// Return func desc type
+Btype *mkFuncDescType(Backend *be)
+{
+  assert(be);
+  Btype *bt = be->bool_type();
+  Btype *pbt = be->pointer_type(bt);
+  Btype *uintptrt = be->integer_type(true, be->type_size(pbt)*8);
+  Btype *fdescst = mkBackendStruct(be, uintptrt, "f1", nullptr);
+  return fdescst;
+}
+
+Bexpression *mkFuncDescExpr(Backend *be, Bfunction *fcn)
+{
+  assert(be);
+  assert(fcn);
+  Location loc;
+  Btype *bt = be->bool_type();
+  Btype *pbt = be->pointer_type(bt);
+  Btype *uintptrt = be->integer_type(true, be->type_size(pbt)*8);
+  Btype *fdescst = mkFuncDescType(be);
+  Bexpression *fp = be->function_code_expression(fcn, loc);
+  Bexpression *fpuint = be->convert_expression(uintptrt, fp, loc);
+  std::vector<Bexpression *> vals;
+  vals.push_back(fpuint);
+  return be->constructor_expression(fdescst, vals, loc);
+}
+
 // Produce a call expression targeting the specified function. Variable
 // args are parameter values, terminated by nullptr.
 Bexpression *mkCallExpr(Backend *be, Bfunction *fun, ...)

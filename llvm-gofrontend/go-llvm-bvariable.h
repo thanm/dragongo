@@ -45,6 +45,16 @@ public:
   bool addrtaken() { return addrtaken_; }
   WhichVar flavor() const { return which_; }
 
+  // debugging
+  void dump();
+
+  // dump with source line info
+  void srcDump(Linemap *);
+
+  // dump to raw_ostream
+  void osdump(llvm::raw_ostream &os, unsigned ilevel = 0,
+              Linemap *linemap = nullptr, bool terse = false);
+
 private:
   Bvariable() = delete;
   const std::string name_;

@@ -321,6 +321,7 @@ public:
   // Dump expression or stmt with line information
   void dumpExpr(Bexpression *);
   void dumpStmt(Bstatement *);
+  void dumpVar(Bvariable *);
 
   // Exposed for unit testing
 
@@ -558,10 +559,31 @@ public:
     return false;
   }
 
+  // Type helpers
+  bool isFuncDescriptorType(llvm::Type *typ);
+  bool isPtrToFuncDescriptorType(llvm::Type *typ);
+  bool isPtrToFuncType(llvm::Type *typ);
+
   // Conversion helper.
   llvm::Type *isAcceptableBitcastConvert(Bexpression *expr,
                                          llvm::Type *fromType,
                                          llvm::Type *toType);
+
+  // Converts value "src" for assignment to container of type
+  // "dstType" in assignment-like contexts. This helper exists to
+  // help with cases where the frontend is creating an assignment of
+  // form "X = Y" where X and Y's types are considered matching by
+  // the front end, but are non-matching in an LLVM context. For example,
+  //
+  //   type Ifi func(int) int
+  //   ...
+  //   var fp Ifi = myfunctionfoobar
+  //
+  // Here the right hand side will come out as pointer-to-descriptor,
+  // whereas variable "fp" will have type "pointer to functon", which are
+  // not the same. Return value will be a new convert Bexpression if a
+  // convert is needed, NULL otherwise.
+  llvm::Value *convertForAssignment(Bexpression *src, llvm::Type *dstType);
 
 private:
   template <typename T1, typename T2> class pairvalmap_hash {
