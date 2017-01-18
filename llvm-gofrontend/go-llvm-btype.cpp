@@ -194,6 +194,12 @@ Btype *Btype::clone() const
   return rval;
 }
 
+bool Btype::isUnresolvedPlaceholder() const {
+  if (flavor() == StructT)
+    return false;
+  return isPlaceholder();
+}
+
 uint64_t BArrayType::nelSize() const
 {
   llvm::ConstantInt *lc =

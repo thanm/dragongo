@@ -433,7 +433,7 @@ bool Llvm_backend::addPlaceholderRefs(Btype *btype)
   switch(btype->flavor()) {
     case Btype::ArrayT: {
       BArrayType *bat = btype->castToBArrayType();
-      if (bat->elemType()->isPlaceholder()) {
+      if (bat->elemType()->isUnresolvedPlaceholder()) {
         placeholderRefs_[bat->elemType()].insert(btype);
         rval = true;
       }
@@ -441,7 +441,7 @@ bool Llvm_backend::addPlaceholderRefs(Btype *btype)
     }
     case Btype::PointerT: {
       BPointerType *bpt = btype->castToBPointerType();
-      if (bpt->toType()->isPlaceholder()) {
+      if (bpt->toType()->isUnresolvedPlaceholder()) {
         placeholderRefs_[bpt->toType()].insert(btype);
         rval = true;
       }
@@ -451,7 +451,7 @@ bool Llvm_backend::addPlaceholderRefs(Btype *btype)
       BStructType *bst = btype->castToBStructType();
       const std::vector<Backend::Btyped_identifier> &fields = bst->fields();
       for (unsigned i = 0; i < fields.size(); ++i) {
-        if (fields[i].btype->isPlaceholder()) {
+        if (fields[i].btype->isUnresolvedPlaceholder()) {
           placeholderRefs_[fields[i].btype].insert(bst);
           rval = true;
         }
@@ -469,31 +469,42 @@ bool Llvm_backend::addPlaceholderRefs(Btype *btype)
 
 Btype *Llvm_backend::struct_type(const std::vector<Btyped_identifier> &fields)
 {
-  // Return error type if any field has error type
+  // Return error type if any field has error type; look for placeholders
+  bool hasPlaceField = false;
   for (unsigned i = 0; i < fields.size(); ++i) {
     if (fields[i].btype == errorType_)
       return errorType_;
+    if (fields[i].btype->isUnresolvedPlaceholder())
+      hasPlaceField = true;
   }
 
-  // Check for and return existing anon type if we have one already
-  llvm::Type *llst = makeLLVMStructType(fields);
-  BStructType cand(fields, llst);
-  auto it = anonTypes_.find(&cand);
-  if (it != anonTypes_.end()) {
-    Btype *existing = *it;
-    BStructType *bst = existing->castToBStructType();
-    assert(bst);
-    return bst;
+  BStructType *rval = nullptr;
+  llvm::Type *llst = nullptr;
+  if (hasPlaceField) {
+    // If any of the fields have placeholder type, then we can't
+    // create a concrete LLVM type, so manufacture a placeholder
+    // instead.
+    llst = makeOpaqueLlvmType("IPST");
+    rval = new BStructType(fields, llst);
+    rval->setPlaceholder(addPlaceholderRefs(rval));
+  } else {
+    // No placeholder fields -- manufacture the concrete LLVM, then
+    // check for and return existing anon type if we have one already.
+    llst = makeLLVMStructType(fields);
+    BStructType cand(fields, llst);
+    auto it = anonTypes_.find(&cand);
+    if (it != anonTypes_.end()) {
+      Btype *existing = *it;
+      assert(existing->castToBStructType());
+      return existing;
+    }
+    rval = new BStructType(fields, llst);
   }
-
-  // Create finished product
-  BStructType *rval = new BStructType(fields, llst);
-  rval->setPlaceholder(addPlaceholderRefs(rval));
 
   if (traceLevel() > 1) {
     std::cerr << "\n^ struct type "
               << ((void*)rval) << " [llvm type "
-              << ((void*) llst) << "] fields:\n";
+              << ((void*)llst) << "] fields:\n";
     for (unsigned i = 0; i < fields.size(); ++i)
       std::cerr << i << ": " << ((void*)fields[i].btype) << "\n";
     rval->dump();
@@ -697,22 +708,22 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
 
   // Do some book-keeping
   bool isPlace = false;
-  if (result_struct && result_struct->isPlaceholder()) {
+  if (result_struct && result_struct->isUnresolvedPlaceholder()) {
     placeholderRefs_[result_struct].insert(rval);
     isPlace = true;
   }
-  if (receiver.btype && receiver.btype->isPlaceholder()) {
+  if (receiver.btype && receiver.btype->isUnresolvedPlaceholder()) {
     placeholderRefs_[receiver.btype].insert(rval);
     isPlace = true;
   }
   for (auto p : paramTypes) {
-    if (p->isPlaceholder()) {
+    if (p->isUnresolvedPlaceholder()) {
       placeholderRefs_[p].insert(rval);
       isPlace = true;
     }
   }
   for (auto r : resultTypes) {
-    if (r->isPlaceholder()) {
+    if (r->isUnresolvedPlaceholder()) {
       placeholderRefs_[r].insert(rval);
       isPlace = true;
     }
@@ -843,30 +854,25 @@ void Llvm_backend::postProcessResolvedStructPlaceholder(BStructType *bst,
                   << "placeholder struct type "
                   << ((void*)bst) << " to concrete field type\n";
       }
-    } else if (fields[i].btype->isPlaceholder()) {
+    } else if (fields[i].btype->isUnresolvedPlaceholder()) {
       hasPl = true;
     }
   }
-  if (!hasPl) {
-    // pluck out of anonTypes if stored there
-    bool wasHashed = removeAnonType(bst);
+  if (! hasPl) {
 
-    // Perform the update
+    // No need to unhash the type -- we can simple update it in place.
     llvm::SmallVector<llvm::Type *, 64> elems(fields.size());
     for (unsigned i = 0; i < fields.size(); ++i)
       elems[i] = fields[i].btype->type();
-    llvm::Type *newlst = llvm::StructType::get(context_, elems);
-    bst->setType(newlst);
+    llvm::StructType *llst = llvm::cast<llvm::StructType>(bst->type());
+    llst->setBody(elems);
+    bst->setPlaceholder(false);
+
     if (traceLevel() > 1) {
       std::cerr << "\n^ resolving placeholder struct type "
                 << ((void*)bst) << " to concrete struct type:\n";
       bst->dump();
     }
-    bst->setPlaceholder(false);
-
-    // put back into anonTypes if it was there previously
-    if (wasHashed)
-      reinstallAnonType(bst);
 
     postProcessResolvedPlaceholder(bst);
   }
@@ -927,9 +933,7 @@ void Llvm_backend::postProcessResolvedPlaceholder(Btype *btype)
   for (auto refType : it->second) {
 
     if (!refType->isPlaceholder())
-      std::cerr << "refType " << ((void*)refType) << " not a placeholder\n";
-
-    assert(refType->isPlaceholder());
+      continue;
 
     BPointerType *bpt = refType->castToBPointerType();
     if (bpt) {
@@ -986,7 +990,7 @@ bool Llvm_backend::set_placeholder_pointer_type(Btype *placeholder,
   placeholder->setType(to_type->type());
 
   // Decide what to do next.
-  if (to_type->isPlaceholder()) {
+  if (to_type->isUnresolvedPlaceholder()) {
     // We're redirecting this type to another placeholder -- delay the
     // creation of the final LLVM type and record the reference.
     placeholderRefs_[to_type].insert(placeholder);
@@ -1059,24 +1063,30 @@ Llvm_backend::set_placeholder_struct_type(Btype *placeholder,
   BStructType *phst = placeholder->castToBStructType();
   assert(phst);
   phst->setFields(fields);
-  bool isplace = addPlaceholderRefs(phst);
 
-  llvm::Type *newllst = makeLLVMStructType(fields);
-  Btype *stype = makeAuxType(newllst);
-  stype->setPlaceholder(isplace);
+  // If we still have fields with placeholder types, then we still can't
+  // manufacture a concrete LLVM type. If no placeholders, then we can
+  // materialize the final LLVM type using a setBody call.
+  bool isplace = addPlaceholderRefs(phst);
+  if (! isplace) {
+    llvm::StructType *llst = llvm::cast<llvm::StructType>(phst->type());
+    llvm::SmallVector<llvm::Type *, 8> fieldtypes(fields.size());
+    for (unsigned idx = 0; idx < fields.size(); ++idx)
+      fieldtypes[idx] = fields[idx].btype->type();
+    llst->setBody(fieldtypes);
+    phst->setPlaceholder(false);
+  }
 
   if (traceLevel() > 1) {
     std::cerr << "\n^ placeholder struct "
               << ((void*)placeholder) << " [llvm type "
               << ((void*) placeholder->type())
-              << "] redirected to " << ((void*) stype)
-              << " [llvm type " << ((void*) stype->type())
-              << "]\n";
+              << "] body redirected:\n";
     std::cerr << "placeholder: "; placeholder->dump();
-    std::cerr << "redir: "; stype->dump();
   }
 
-  updatePlaceholderUnderlyingType(placeholder, stype);
+  if (! isplace)
+    postProcessResolvedPlaceholder(phst);
 
   return true;
 }
@@ -1624,6 +1634,10 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
 
   // Create new expression with proper type.
   Btype *pt = pointer_type(bexpr->btype());
+#if 0
+  Bexpression *rval =
+      makeExpression(bexpr->value(), pt, location, bexpr, nullptr);
+#endif
   Bexpression *rval =
       makeValueExpression(bexpr->value(), pt, LocalScope, location);
   std::string adtag(bexpr->tag());
@@ -3390,7 +3404,8 @@ llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
   // Walk false block if present
   if (ifst->falseStmt()) {
     llvm::BasicBlock *fsucc = fsucc = walk(ifst->falseStmt(), fblock);
-    llvm::BranchInst::Create(ft, fsucc);
+    if (! fsucc->getTerminator())
+      llvm::BranchInst::Create(ft, fsucc);
   }
 
   return ft;

@@ -47,13 +47,26 @@ class Btype {
 
   TyFlavor flavor() const { return flavor_; }
 
+  // Underlying LLVM type.
   llvm::Type *type() const { return type_; }
   void setType(llvm::Type *t) { assert(t); type_ = t; }
+
+  // Name of type if named.
   const std::string &name() const { return name_; }
   void setName(const std::string &name) { name_ = name; }
 
+  // Whether this type is a placeholder. This can be set for type
+  // explicitly created as placeholders (for example, something
+  // returned from ::placeholder_pointer_type()) or it can be set in
+  // cases where a primary type creation call is made by some sub-type
+  // is a placeholder (for example, invoking ::pointer_type() with an
+  // element type that is still a placeholder).
   bool isPlaceholder() const { return isPlaceholder_; }
   void setPlaceholder(bool v) { isPlaceholder_ = v; }
+
+  // Similar to the above, but returns true for placeholder
+  // struct types.
+  bool isUnresolvedPlaceholder() const;
 
   // Create a shallow copy of this type
   Btype *clone() const;

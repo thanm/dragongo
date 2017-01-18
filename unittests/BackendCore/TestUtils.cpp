@@ -267,6 +267,19 @@ llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...) {
   return llvm::FunctionType::get(rtyp, elems, false);
 }
 
+bool llvmTypesEquiv(llvm::Type *t1, llvm::Type *t2)
+{
+  if (t1->getTypeID() != t2->getTypeID())
+    return false;
+  if (t1->getNumContainedTypes() != t2->getNumContainedTypes())
+    return false;
+  for (unsigned idx = 0; idx < t1->getNumContainedTypes(); ++idx)
+    if (!llvmTypesEquiv(t1->getContainedType(idx),
+                        t2->getContainedType(idx)))
+      return false;
+  return true;
+}
+
 Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams) {
   Btype *bi64t = be->integer_type(false, 64);
   Btype *bi32t = be->integer_type(false, 32);

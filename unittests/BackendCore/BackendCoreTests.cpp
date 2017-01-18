@@ -213,7 +213,8 @@ TEST(BackendCoreTests, PlaceholderTypes) {
                                  Location())};
   be->set_placeholder_struct_type(phst1, fields);
   Type *i64t = IntegerType::get(C, 64);
-  EXPECT_TRUE(phst1->type() == mkTwoFieldLLvmStruct(C, i64t, i64t));
+  EXPECT_TRUE(llvmTypesEquiv(phst1->type(),
+                             mkTwoFieldLLvmStruct(C, i64t, i64t)));
 
   // Placeholder array type
   Btype *phat1 = be->placeholder_array_type("pha", loc);

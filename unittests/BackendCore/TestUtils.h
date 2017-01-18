@@ -87,8 +87,14 @@ llvm::StructType *mkLlvmThreeFieldStruct(llvm::LLVMContext &context);
 Btype *mkTwoFieldStruct(Backend *be, Btype *t1, Btype *t2);
 
 // Create an LLVM struct type with two fields, specified by t1 and t2
- llvm::Type *mkTwoFieldLLvmStruct(llvm::LLVMContext &context,
-                                  llvm::Type *t1, llvm::Type *t2);
+llvm::Type *mkTwoFieldLLvmStruct(llvm::LLVMContext &context,
+                                 llvm::Type *t1, llvm::Type *t2);
+
+// Check two LLVM types for structural equality. Hacky, but it helps
+// to have this for unit testing of placeholder struct types. Note
+// that this ignores type names and type attributes (ex: whether a
+// function type is varargs).
+bool llvmTypesEquiv(llvm::Type *t1, llvm::Type *t2);
 
 // Create Btyped_identifier from type (uses static counter
 // to insure unique name each time).
