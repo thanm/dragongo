@@ -1,0 +1,436 @@
+diff --git a/llvm-gofrontend/CMakeLists.txt b/llvm-gofrontend/CMakeLists.txt
+index 2ea31c7..2a6a99c 100644
+--- a/llvm-gofrontend/CMakeLists.txt
++++ b/llvm-gofrontend/CMakeLists.txt
+@@ -31,6 +31,7 @@ go-llvm-btype.cpp
+ go-llvm-bexpression.cpp
+ go-llvm-bstatement.cpp
+ go-llvm-bfunction.cpp
++go-llvm-bvariable.cpp
+ go-llvm-tree-integrity.cpp
+ go-llvm.cpp
+ go-sha1.cpp
+diff --git a/llvm-gofrontend/go-llvm-bvariable.cpp b/llvm-gofrontend/go-llvm-bvariable.cpp
+new file mode 100644
+index 0000000..a798267
+--- /dev/null
++++ b/llvm-gofrontend/go-llvm-bvariable.cpp
+@@ -0,0 +1,51 @@
++//===-- go-llvm-bvariable.cpp - implementation of 'Bvariable' class ---===//
++//
++//                     The LLVM Compiler Infrastructure
++//
++// This file is distributed under the University of Illinois Open Source
++// License. See LICENSE.TXT for details.
++//
++//===----------------------------------------------------------------------===//
++//
++// Methods for class Bvariable.
++//
++//===----------------------------------------------------------------------===//
++
++#include "go-llvm-bvariable.h"
++
++#include "llvm/Support/raw_ostream.h"
++
++static void indent(llvm::raw_ostream &os, unsigned ilevel) {
++  for (unsigned i = 0; i < ilevel; ++i)
++    os << " ";
++}
++
++void Bvariable::dump()
++{
++  std::string s;
++  llvm::raw_string_ostream os(s);
++  osdump(os, 0, nullptr, false);
++  std::cerr << os.str();
++}
++
++void Bvariable::srcDump(Linemap *linemap)
++{
++  std::string s;
++  llvm::raw_string_ostream os(s);
++  osdump(os, 0, linemap, false);
++  std::cerr << os.str();
++}
++
++void Bvariable::osdump(llvm::raw_ostream &os, unsigned ilevel,
++                       Linemap *linemap, bool terse) {
++  if (! terse) {
++    if (linemap) {
++      indent(os, ilevel);
++      os << linemap->to_string(location_) << "\n";
++    }
++  }
++  indent(os, ilevel);
++  os << "var '" << name_ << "' type: ";
++  type_->osdump(os, 0);
++  os << "\n";
++}
+diff --git a/llvm-gofrontend/go-llvm-bvariable.h b/llvm-gofrontend/go-llvm-bvariable.h
+index 9c4239c..91a2c1b 100644
+--- a/llvm-gofrontend/go-llvm-bvariable.h
++++ b/llvm-gofrontend/go-llvm-bvariable.h
+@@ -45,6 +45,16 @@ public:
+   bool addrtaken() { return addrtaken_; }
+   WhichVar flavor() const { return which_; }
+ 
++  // debugging
++  void dump();
++
++  // dump with source line info
++  void srcDump(Linemap *);
++
++  // dump to raw_ostream
++  void osdump(llvm::raw_ostream &os, unsigned ilevel = 0,
++              Linemap *linemap = nullptr, bool terse = false);
++
+ private:
+   Bvariable() = delete;
+   const std::string name_;
+diff --git a/llvm-gofrontend/go-llvm.cpp b/llvm-gofrontend/go-llvm.cpp
+index 7a445a8..c65c452 100644
+--- a/llvm-gofrontend/go-llvm.cpp
++++ b/llvm-gofrontend/go-llvm.cpp
+@@ -181,6 +181,12 @@ void Llvm_backend::dumpStmt(Bstatement *s)
+     s->srcDump(linemap_);
+ }
+ 
++void Llvm_backend::dumpVar(Bvariable *v)
++{
++  if (v)
++    v->srcDump(linemap_);
++}
++
+ std::pair<bool, std::string>
+ Llvm_backend::checkTreeIntegrity(Bexpression *e, bool includePointers)
+ {
+@@ -551,9 +557,9 @@ Btype *Llvm_backend::pointer_type(Btype *toType)
+ // structs, so the general strategy for placeholders is to create an
+ // opaque struct (corresponding to the thing being pointed to) and then
+ // make a pointer to it. Since LLVM allows only a single opaque struct
+-// type with a given name within a given context, we generally throw
+-// out the name/location information passed into the placeholder type
+-// creation routines.
++// type with a given name within a given context, we capture the provided
++// name but we don't try to hand that specific name to LLVM to use
++// for the identified struct (so as to avoid collisions).
+ 
+ // Create a placeholder for a pointer type.
+ 
+@@ -1573,13 +1579,14 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
+   if (bexpr == errorExpression_.get())
+     return errorExpression_.get();
+ 
+-  // Gofrontend tends to take the address of things like strings
+-  // and arrays, which is an issue here since an array type in LLVM
+-  // is already effectively a pointer (you can feed it directly into
+-  // a GEP as opposed to having to take the address of it first).
+-  // Bypass the effects of the address operator here if this is the
+-  // case. This is hacky, maybe I can come up with a better solution
+-  // for this issue(?).
++  // Gofrontend tends to take the address of things that are already
++  // pointer-like to begin with (for example, C strings and and
++  // arrays). This presents wrinkles here, since since an array type
++  // in LLVM is already effectively a pointer (you can feed it
++  // directly into a GEP as opposed to having to take the address of
++  // it first).  Bypass the effects of the address operator if
++  // this is the case. This is hacky, maybe I can come up with a
++  // better solution for this issue(?).
+   if (llvm::isa<llvm::ConstantArray>(bexpr->value()))
+     return bexpr;
+   if (bexpr->value()->getType() == stringType_->type() &&
+@@ -1915,7 +1922,6 @@ llvm::Type *Llvm_backend::isAcceptableBitcastConvert(Bexpression *expr,
+                                                      llvm::Type *fromType,
+                                                      llvm::Type *toType)
+ {
+-  // Case 1: function pointer cast
+   if (fromType->isPointerTy() && toType->isPointerTy()) {
+     if (expr->varExprPending()) {
+       llvm::Type *ptt = llvm::PointerType::get(toType, addressSpace_);
+@@ -2622,17 +2628,82 @@ Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
+   return result;
+ }
+ 
++bool Llvm_backend::isFuncDescriptorType(llvm::Type *typ)
++{
++  if (! typ->isStructTy())
++    return false;
++  llvm::StructType *st = llvm::cast<llvm::StructType>(typ);
++  if (st->getNumElements() != 1)
++    return false;
++  if (st->getElementType(0) != llvmIntegerType_ &&
++      !st->getElementType(0)->isFunctionTy())
++    return false;
++  return true;
++}
++
++bool Llvm_backend::isPtrToFuncDescriptorType(llvm::Type *typ)
++{
++  if (! typ->isPointerTy())
++    return false;
++  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
++  return isFuncDescriptorType(pt->getElementType());
++}
++
++bool Llvm_backend::isPtrToFuncType(llvm::Type *typ)
++{
++  if (! typ->isPointerTy())
++    return false;
++  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
++  return pt->getElementType()->isFunctionTy();
++}
++
++llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
++                                                llvm::Type *dstType)
++{
++  assert(dstType->isPointerTy());
++  llvm::PointerType *dpt = llvm::cast<llvm::PointerType>(dstType);
++  llvm::Type *dstToType = dpt->getElementType();
++  llvm::Type *srcType = src->value()->getType();
++
++  if (dstToType == srcType)
++    return nullptr;
++
++  // Case 1: handle discrepancies between representations of function
++  // descriptors. All front end function descriptor types are structs
++  // with a single field, however this field can sometimes be a pointer
++  // to function, and sometimes it can be of uintptr type.
++  bool srcPtrToFD = isPtrToFuncDescriptorType(srcType);
++  bool dstPtrToFD = isPtrToFuncDescriptorType(dstToType);
++  if (srcPtrToFD && dstPtrToFD) {
++    LIRBuilder builder(context_, llvm::ConstantFolder());
++    std::string tag("cast");
++    llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
++    if (llvm::isa<llvm::Instruction>(bitcast))
++      src->appendInstruction(llvm::cast<llvm::Instruction>(bitcast));
++    return bitcast;
++  }
++
++  return nullptr;
++}
++
+ Bstatement *Llvm_backend::makeAssignment(Bfunction *function,
+                                          llvm::Value *lval, Bexpression *lhs,
+                                          Bexpression *rhs, Location location) {
++  assert(lval->getType()->isPointerTy());
+   llvm::PointerType *pt = llvm::cast<llvm::PointerType>(lval->getType());
+-  assert(pt);
+   llvm::Value *rval = rhs->value();
+-  assert(rval->getType() == pt->getElementType());
+ 
+   // These cases should have been handled in the caller
+   assert(!rhs->varExprPending() && !rhs->compositeInitPending());
+ 
++  // Work around type inconsistencies in gofrontend.
++  llvm::Value *cval = convertForAssignment(rhs, pt);
++  if (cval)
++    rval = cval;
++
++  // At this point the types should agree
++  assert(rval->getType() == pt->getElementType());
++
+   // FIXME: alignment?
+   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
+ 
+@@ -2729,7 +2800,8 @@ Bstatement *Llvm_backend::switch_statement(
+ // Pair of statements.
+ 
+ Bstatement *Llvm_backend::compound_statement(Bstatement *s1, Bstatement *s2) {
+-  assert(s1->function() == s2->function());
++  assert(!s1->function() || !s2->function() ||
++         s1->function() == s2->function());
+   CompoundStatement *st = new CompoundStatement(s1->function());
+   std::vector<Bstatement *> &stlist = st->stlist();
+   stlist.push_back(s1);
+@@ -2849,10 +2921,13 @@ Bvariable *Llvm_backend::global_variable(const std::string &var_name,
+                                          bool is_hidden,
+                                          bool in_unique_section,
+                                          Location location) {
+-
++#if 0
+   llvm::GlobalValue::LinkageTypes linkage =
+       (is_external || is_hidden ? llvm::GlobalValue::ExternalLinkage
+        : llvm::GlobalValue::InternalLinkage);
++#endif
++  llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
++
+   ModVarSec inUniqSec =
+       (in_unique_section ? MV_UniqueSection : MV_DefaultSection);
+   ModVarVis varVis =
+diff --git a/llvm-gofrontend/go-llvm.h b/llvm-gofrontend/go-llvm.h
+index c68e5da..3be4a00 100644
+--- a/llvm-gofrontend/go-llvm.h
++++ b/llvm-gofrontend/go-llvm.h
+@@ -321,6 +321,7 @@ public:
+   // Dump expression or stmt with line information
+   void dumpExpr(Bexpression *);
+   void dumpStmt(Bstatement *);
++  void dumpVar(Bvariable *);
+ 
+   // Exposed for unit testing
+ 
+@@ -558,11 +559,32 @@ public:
+     return false;
+   }
+ 
++  // Type helpers
++  bool isFuncDescriptorType(llvm::Type *typ);
++  bool isPtrToFuncDescriptorType(llvm::Type *typ);
++  bool isPtrToFuncType(llvm::Type *typ);
++
+   // Conversion helper.
+   llvm::Type *isAcceptableBitcastConvert(Bexpression *expr,
+                                          llvm::Type *fromType,
+                                          llvm::Type *toType);
+ 
++  // Converts value "src" for assignment to container of type
++  // "dstType" in assignment-like contexts. This helper exists to
++  // help with cases where the frontend is creating an assignment of
++  // form "X = Y" where X and Y's types are considered matching by
++  // the front end, but are non-matching in an LLVM context. For example,
++  //
++  //   type Ifi func(int) int
++  //   ...
++  //   var fp Ifi = myfunctionfoobar
++  //
++  // Here the right hand side will come out as pointer-to-descriptor,
++  // whereas variable "fp" will have type "pointer to functon", which are
++  // not the same. Return value will be a new convert Bexpression if a
++  // convert is needed, NULL otherwise.
++  llvm::Value *convertForAssignment(Bexpression *src, llvm::Type *dstType);
++
+ private:
+   template <typename T1, typename T2> class pairvalmap_hash {
+     typedef std::pair<T1, T2> pairtype;
+diff --git a/unittests/BackendCore/BackendExprTests.cpp b/unittests/BackendCore/BackendExprTests.cpp
+index 9ebfa06..bb0939b 100644
+--- a/unittests/BackendCore/BackendExprTests.cpp
++++ b/unittests/BackendCore/BackendExprTests.cpp
+@@ -222,8 +222,6 @@ TEST(BackendExprTests, TestMoreConversionExpressions) {
+   EXPECT_FALSE(broken && "Module failed to verify.");
+ }
+ 
+-
+-
+ TEST(BackendExprTests, MakeVarExpressions) {
+   llvm::LLVMContext C;
+ 
+@@ -928,19 +926,51 @@ TEST(BackendExprTests, CreateFunctionCodeExpression) {
+   Bfunction *func = h.func();
+   Location loc;
+ 
+-  // Assign function address to local variable
+-  Bexpression *fp = be->function_code_expression(func, loc);
+-  h.mkLocal("fploc", fp->btype(), fp);
+-
+-  // Cast function to pointer-sized int and store to local
+-  Btype *bt = be->bool_type();
+-  Btype *pbt = be->pointer_type(bt);
+-  Btype *uintptrt = be->integer_type(true, be->type_size(pbt)*8);
+-  h.mkLocal("ui", uintptrt, be->convert_expression(uintptrt, fp, loc));
++  // Local variables of pointer-to-function-descriptor type. A key
++  // item to note here is that we want to verify that the backend methods
++  // allow flexibility in terms of the concrete LLVM type for the
++  // function descriptor. The FE sometimes creates a struct with a
++  // uintptr field, and sometimes a struct with a function pointer field.
++
++  // Function descriptor type with uintptr, e.g. { i64 }
++  Btype *fdesct1 = mkFuncDescType(be);
++
++  // Function descriptor type with function pointer, e.g. { i64 (i64, ...) }
++  Btype *fdesct2 = mkBackendStruct(be, func->fcnType(), "f1", nullptr);
++
++  // Function descriptor variable
++  Bvariable *bfdv1 = h.mkLocal("fdloc1", fdesct1, mkFuncDescExpr(be, func));
++
++  // Pointer-to-FD variables
++  Btype *pfd1t = be->pointer_type(fdesct1);
++  Btype *pfd2t = be->pointer_type(fdesct2);
++  Bexpression *vex1 = be->var_expression(bfdv1, VE_rvalue, loc);
++  Bexpression *adfd1 = be->address_expression(vex1, loc);
++  Bvariable *bfpv1 = h.mkLocal("fploc1", pfd1t, adfd1);
++  Bvariable *bfpv2 = h.mkLocal("fploc2", pfd2t);
++
++  // Assignment of function descriptor pointer values. Note that the
++  // types here are not going to agree strictly; this test verifies
++  // that this flexibility is allowed.
++  Bexpression *vex2 = be->var_expression(bfpv2, VE_lvalue, loc);
++  Bexpression *rvex2 = be->var_expression(bfpv1, VE_rvalue, loc);
++  h.mkAssign(vex2, rvex2);
++  Bexpression *vex3 = be->var_expression(bfpv1, VE_lvalue, loc);
++  Bexpression *rvex3 = be->var_expression(bfpv2, VE_rvalue, loc);
++  h.mkAssign(vex3, rvex3);
+ 
+   const char *exp = R"RAW_RESULT(
+-    store i64 (i32, i32, i64*)* @foo, i64 (i32, i32, i64*)** %fploc
+-    store i64 ptrtoint (i64 (i32, i32, i64*)* @foo to i64), i64* %ui
++      store { i64 } { i64 ptrtoint (i64 (i32, i32, i64*)* @foo to i64) },
++             { i64 }* %fdloc1
++      store { i64 }* %fdloc1, { i64 }** %fploc1
++      store { i64 (i32, i32, i64*) }* null, { i64 (i32, i32, i64*) }** %fploc2
++      %fploc1.ld.0 = load { i64 }*, { i64 }** %fploc1
++      %cast = bitcast { i64 }* %fploc1.ld.0 to { i64 (i32, i32, i64*) }*
++      store { i64 (i32, i32, i64*) }* %cast, { i64 (i32, i32, i64*) }** %fploc2
++      %fploc2.ld.0 = load { i64 (i32, i32, i64*) }*,
++            { i64 (i32, i32, i64*) }** %fploc2
++      %cast = bitcast { i64 (i32, i32, i64*) }* %fploc2.ld.0 to { i64 }*
++      store { i64 }* %cast, { i64 }** %fploc1
+   )RAW_RESULT";
+ 
+   bool isOK = h.expectBlock(exp);
+diff --git a/unittests/BackendCore/TestUtils.cpp b/unittests/BackendCore/TestUtils.cpp
+index 112aa02..08c82d4 100644
+--- a/unittests/BackendCore/TestUtils.cpp
++++ b/unittests/BackendCore/TestUtils.cpp
+@@ -348,6 +348,33 @@ Bexpression *mkInt32Const(Backend *be, int32_t val)
+   return rval;
+ }
+ 
++// Return func desc type
++Btype *mkFuncDescType(Backend *be)
++{
++  assert(be);
++  Btype *bt = be->bool_type();
++  Btype *pbt = be->pointer_type(bt);
++  Btype *uintptrt = be->integer_type(true, be->type_size(pbt)*8);
++  Btype *fdescst = mkBackendStruct(be, uintptrt, "f1", nullptr);
++  return fdescst;
++}
++
++Bexpression *mkFuncDescExpr(Backend *be, Bfunction *fcn)
++{
++  assert(be);
++  assert(fcn);
++  Location loc;
++  Btype *bt = be->bool_type();
++  Btype *pbt = be->pointer_type(bt);
++  Btype *uintptrt = be->integer_type(true, be->type_size(pbt)*8);
++  Btype *fdescst = mkFuncDescType(be);
++  Bexpression *fp = be->function_code_expression(fcn, loc);
++  Bexpression *fpuint = be->convert_expression(uintptrt, fp, loc);
++  std::vector<Bexpression *> vals;
++  vals.push_back(fpuint);
++  return be->constructor_expression(fdescst, vals, loc);
++}
++
+ // Produce a call expression targeting the specified function. Variable
+ // args are parameter values, terminated by nullptr.
+ Bexpression *mkCallExpr(Backend *be, Bfunction *fun, ...)
+diff --git a/unittests/BackendCore/TestUtils.h b/unittests/BackendCore/TestUtils.h
+index b6f0179..f19545a 100644
+--- a/unittests/BackendCore/TestUtils.h
++++ b/unittests/BackendCore/TestUtils.h
+@@ -141,6 +141,12 @@ Bexpression *mkFloat64Const(Backend *be, double val);
+ // Manufacture a signed 32-bit integer constant
+ Bexpression *mkInt32Const(Backend *be, int32_t val);
+ 
++// Return func desc type
++Btype *mkFuncDescType(Backend *be);
++
++// Create a function descriptor value for specified func
++Bexpression *mkFuncDescExpr(Backend *be, Bfunction *fcn);
++
+ // Create a basic block from a single statement
+ Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st);
+ 

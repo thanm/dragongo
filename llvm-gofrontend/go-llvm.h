@@ -585,6 +585,25 @@ public:
   // convert is needed, NULL otherwise.
   llvm::Value *convertForAssignment(Bexpression *src, llvm::Type *dstType);
 
+  // Apply type conversion for a binary operation. This helper exists
+  // to resolve situations where expressions are created by the front
+  // end have incomplete or "polymorphic" type. A good example is pointer
+  // comparison with nil, e.g.
+  //
+  //    var ip *A = foobar()
+  //    if ip == nil { ...
+  //
+  // The type of the right hand side of the '==' above will be a generic
+  // "*i64" as opposed to "*A", since the backend "nil_pointer_expression"
+  // does not allow for creation of nil pointers of specific types.
+  //
+  // Input expressions 'left' and 'right' correspond to the original
+  // uncoerced expressions; if conversions are needed, any additional
+  // instructions will be added to the args and the resulting LLVM
+  // values will be returned.
+  std::pair<llvm::Value *, llvm::Value *>
+  convertForBinary(Bexpression *left, Bexpression *right);
+
 private:
   template <typename T1, typename T2> class pairvalmap_hash {
     typedef std::pair<T1, T2> pairtype;

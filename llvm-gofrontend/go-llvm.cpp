@@ -32,7 +32,36 @@
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
 
+// Generic "no insert" builder
 typedef llvm::IRBuilder<> LIRBuilder;
+
+class BexprInserter {
+ public:
+  BexprInserter() : expr_(nullptr) { }
+  void setDestExpr(Bexpression *expr) { assert(!expr_); expr_ = expr; }
+
+  void InsertHelper(llvm::Instruction *I, const llvm::Twine &Name,
+                    llvm::BasicBlock *BB,
+                    llvm::BasicBlock::iterator InsertPt) const {
+    assert(expr_);
+    expr_->appendInstruction(I);
+    I->setName(Name);
+  }
+
+ private:
+    mutable Bexpression *expr_;
+};
+
+// Builder that appends to a specified Bexpression
+class BexprLIRBuilder :
+    public llvm::IRBuilder<llvm::ConstantFolder, BexprInserter> {
+  typedef llvm::IRBuilder<llvm::ConstantFolder, BexprInserter> IRBuilderBase;
+ public:
+  BexprLIRBuilder(llvm::LLVMContext &context, Bexpression *expr) :
+      IRBuilderBase(context, llvm::ConstantFolder()) {
+    setDestExpr(expr);
+  }
+};
 
 #define CHKTREE(x) if (checkIntegrity_ && traceLevel()) \
       enforceTreeIntegrity(x)
@@ -2237,6 +2266,42 @@ static llvm::CmpInst::Predicate compare_op_to_pred(Operator op, llvm::Type *typ,
   return llvm::CmpInst::BAD_ICMP_PREDICATE;
 }
 
+std::pair<llvm::Value *, llvm::Value *>
+Llvm_backend::convertForBinary(Bexpression *left, Bexpression *right)
+{
+  llvm::Value *leftVal = left->value();
+  llvm::Value *rightVal = right->value();
+  std::pair<llvm::Value *, llvm::Value *> rval =
+      std::make_pair(leftVal, rightVal);
+
+  llvm::Type *leftType = leftVal->getType();
+  llvm::Type *rightType = rightVal->getType();
+  if (leftType == rightType)
+    return rval;
+
+  // Case 1: nil op X
+  if (llvm::isa<llvm::ConstantPointerNull>(leftVal) &&
+      rightType->isPointerTy()) {
+    BexprLIRBuilder builder(context_, left);
+    std::string tag("cast");
+    llvm::Value *bitcast = builder.CreateBitCast(leftVal, rightType, tag);
+    rval.first = bitcast;
+    return rval;
+  }
+
+  // Case 2: X op nil
+  if (llvm::isa<llvm::ConstantPointerNull>(rightVal) &&
+      leftType->isPointerTy()) {
+    BexprLIRBuilder builder(context_, right);
+    std::string tag("cast");
+    llvm::Value *bitcast = builder.CreateBitCast(rightVal, leftType, tag);
+    rval.second = bitcast;
+    return rval;
+  }
+
+  return rval;
+}
+
 // Return an expression for the binary operation LEFT OP RIGHT.
 
 Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
@@ -2251,8 +2316,12 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
 
   Btype *bltype = left->btype();
   Btype *brtype = right->btype();
-  llvm::Type *ltype = left->value()->getType();
-  llvm::Type *rtype = right->value()->getType();
+  std::pair<llvm::Value *, llvm::Value *> converted =
+      convertForBinary(left, right);
+  llvm::Value *leftVal = converted.first;
+  llvm::Value *rightVal = converted.second;
+  llvm::Type *ltype = leftVal->getType();
+  llvm::Type *rtype = rightVal->getType();
   assert(ltype == rtype);
   BIntegerType *blitype = bltype->castToBIntegerType();
   BIntegerType *britype = brtype->castToBIntegerType();
@@ -2274,11 +2343,9 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
   case OPERATOR_GE: {
     llvm::CmpInst::Predicate pred = compare_op_to_pred(op, ltype, isUnsigned);
     if (ltype->isFloatingPointTy())
-      val = builder.CreateFCmp(pred, left->value(), right->value(),
-                                 namegen("fcmp"));
+      val = builder.CreateFCmp(pred, leftVal, rightVal, namegen("fcmp"));
     else
-      val = builder.CreateICmp(pred, left->value(), right->value(),
-                               namegen("icmp"));
+      val = builder.CreateICmp(pred, leftVal, rightVal, namegen("icmp"));
     // Widen to boolean type
     Bexpression *cmpex =
         makeExpression(val, bltype, location, left, right, nullptr);
@@ -2286,34 +2353,30 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
   }
   case OPERATOR_MINUS: {
     if (ltype->isFloatingPointTy())
-      val = builder.CreateFSub(left->value(), right->value(),
-                                 namegen("fsub"));
+      val = builder.CreateFSub(leftVal, rightVal, namegen("fsub"));
     else
-      val = builder.CreateSub(left->value(), right->value(),
-                                namegen("sub"));
+      val = builder.CreateSub(leftVal, rightVal, namegen("sub"));
     break;
   }
   case OPERATOR_PLUS: {
     if (ltype->isFloatingPointTy())
-      val = builder.CreateFAdd(left->value(), right->value(),
-                                 namegen("fadd"));
+      val = builder.CreateFAdd(leftVal, rightVal, namegen("fadd"));
     else
-      val = builder.CreateAdd(left->value(), right->value(),
-                                namegen("add"));
+      val = builder.CreateAdd(leftVal, rightVal, namegen("add"));
     break;
   }
   case OPERATOR_OROR: {
     // Note that the FE will have already expanded out || in a control
     // flow context (short circuiting)
     assert(!ltype->isFloatingPointTy());
-    val = builder.CreateOr(left->value(), right->value(), namegen("ior"));
+    val = builder.CreateOr(leftVal, rightVal, namegen("ior"));
     break;
   }
   case OPERATOR_ANDAND: {
     // Note that the FE will have already expanded out && in a control
     // flow context (short circuiting)
     assert(!ltype->isFloatingPointTy());
-    val = builder.CreateAnd(left->value(), right->value(), namegen("iand"));
+    val = builder.CreateAnd(leftVal, rightVal, namegen("iand"));
     break;
   }
   default:
@@ -2675,11 +2738,9 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
   bool srcPtrToFD = isPtrToFuncDescriptorType(srcType);
   bool dstPtrToFD = isPtrToFuncDescriptorType(dstToType);
   if (srcPtrToFD && dstPtrToFD) {
-    LIRBuilder builder(context_, llvm::ConstantFolder());
+    BexprLIRBuilder builder(context_, src);
     std::string tag("cast");
     llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
-    if (llvm::isa<llvm::Instruction>(bitcast))
-      src->appendInstruction(llvm::cast<llvm::Instruction>(bitcast));
     return bitcast;
   }
 
@@ -3323,7 +3384,8 @@ llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
 
   // Visit true block
   llvm::BasicBlock *tsucc = walk(ifst->trueStmt(), tblock);
-  llvm::BranchInst::Create(ft, tsucc);
+  if (! tsucc->getTerminator())
+    llvm::BranchInst::Create(ft, tsucc);
 
   // Walk false block if present
   if (ifst->falseStmt()) {

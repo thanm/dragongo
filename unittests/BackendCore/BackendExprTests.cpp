@@ -984,14 +984,55 @@ TEST(BackendExprTests, CreateNilPointerExpression) {
 
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
-  Bexpression *npe = be->nil_pointer_expression();
 
-  const char *exp = R"RAW_RESULT(
+  // Manufacture a nil pointer expression
+  Bexpression *npe = be->nil_pointer_expression();
+  const char *exp1 = R"RAW_RESULT(
     i64* null
   )RAW_RESULT";
-
-  bool isOK = h.expectValue(npe->value(), exp);
+  bool isOK = h.expectValue(npe->value(), exp1);
   EXPECT_TRUE(isOK && "Value does not have expected contents");
+
+  // Expressions involving nil pointers.
+  Location loc;
+  Btype *bt = be->bool_type();
+  Btype *pbt = be->pointer_type(bt);
+  Bvariable *b1 = h.mkLocal("b1", bt);
+  Bvariable *pb1 = h.mkLocal("pb1", pbt);
+
+  {
+    // b1 = (pb1 == nil)
+    Bexpression *vel = be->var_expression(b1, VE_lvalue, loc);
+    Bexpression *ver = be->var_expression(pb1, VE_rvalue, loc);
+    Bexpression *npe = be->nil_pointer_expression();
+    Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, ver, npe, loc);
+    h.mkAssign(vel, cmp);
+  }
+
+  {
+    // b1 = (nil == pb1)
+    Bexpression *vel = be->var_expression(b1, VE_lvalue, loc);
+    Bexpression *ver = be->var_expression(pb1, VE_rvalue, loc);
+    Bexpression *npe = be->nil_pointer_expression();
+    Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, npe, ver, loc);
+    h.mkAssign(vel, cmp);
+  }
+
+  const char *exp2 = R"RAW_RESULT(
+      store i8 0, i8* %b1
+      store i8* null, i8** %pb1
+      %pb1.ld.0 = load i8*, i8** %pb1
+      %icmp.0 = icmp eq i8* %pb1.ld.0, null
+      %zext.0 = zext i1 %icmp.0 to i8
+      store i8 %zext.0, i8* %b1
+      %pb1.ld.1 = load i8*, i8** %pb1
+      %icmp.1 = icmp eq i8* null, %pb1.ld.1
+      %zext.1 = zext i1 %icmp.1 to i8
+      store i8 %zext.1, i8* %b1
+    )RAW_RESULT";
+
+  bool isOK2 = h.expectBlock(exp2);
+  EXPECT_TRUE(isOK2 && "Block does not have expected contents");
 
   bool broken = h.finish();
   EXPECT_FALSE(broken && "Module failed to verify.");
