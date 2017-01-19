@@ -475,9 +475,17 @@ public:
                            llvm::Constant *initializer,
                            unsigned alignmentInBytes = 0);
 
-  // Combing the contents of a list of src expressions to produce
-  // a new expression.
+
+  enum MkExprAction { AppendInst, DontAppend };
+
+  // Create a new Bexpression with the specified LLMV value and Btype,
+  // based on the contents of a list of source expressions (list terminated
+  // with a null pointer). If 'action' is set to AppendInst, then the
+  // specified value is an instruction that should be appended to the
+  // result Bexpression; if 'action' is DontAppend then the value
+  // is not an inst that should be appended.
   Bexpression *makeExpression(llvm::Value *value,
+                              MkExprAction action,
                               Btype *btype,
                               Location location,
                               Bexpression *src, ...);

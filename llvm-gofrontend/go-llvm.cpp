@@ -1532,6 +1532,39 @@ Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val,
   return rval;
 }
 
+Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
+                                          MkExprAction action,
+                                          Btype *btype,
+                                          Location location,
+                                          Bexpression *srcExpr,
+                                          ...)
+{
+  Bexpression *result = makeValueExpression(value, btype, LocalScope, location);
+  Bexpression *src = srcExpr;
+  va_list ap;
+  std::set<llvm::Instruction *> visited;
+  va_start(ap, srcExpr);
+  while (src) {
+    result->incorporateStmt(src->stmt());
+    for (auto inst : src->instructions()) {
+      assert(inst->getParent() == nullptr);
+      result->appendInstruction(inst);
+      assert(visited.find(inst) == visited.end());
+      visited.insert(inst);
+    }
+    src = va_arg(ap, Bexpression *);
+  }
+  if (action == AppendInst && llvm::isa<llvm::Instruction>(value)) {
+    // We need this guard to deal with situations where we've done
+    // something like x | 0, in which the IRBuilder will simply return
+    // the left operand.
+    llvm::Instruction *inst = llvm::cast<llvm::Instruction>(value);
+      if (visited.find(inst) == visited.end())
+        result->appendInstruction(inst);
+  }
+  return result;
+}
+
 // Return the zero value for a type.
 
 Bexpression *Llvm_backend::zero_expression(Btype *btype) {
@@ -1573,7 +1606,7 @@ Bexpression *Llvm_backend::loadFromExpr(Bexpression *expr,
     loadResultType = tctyp;
   }
   llvm::Instruction *ldinst = new llvm::LoadInst(space->value(), ldname);
-  Bexpression *rval = makeExpression(ldinst, loadResultType,
+  Bexpression *rval = makeExpression(ldinst, AppendInst, loadResultType,
                                      expr->location(), space, nullptr);
   return rval;
 }
@@ -1634,12 +1667,8 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
 
   // Create new expression with proper type.
   Btype *pt = pointer_type(bexpr->btype());
-#if 0
   Bexpression *rval =
-      makeExpression(bexpr->value(), pt, location, bexpr, nullptr);
-#endif
-  Bexpression *rval =
-      makeValueExpression(bexpr->value(), pt, LocalScope, location);
+      makeExpression(bexpr->value(), DontAppend, pt, location, bexpr, nullptr);
   std::string adtag(bexpr->tag());
   adtag += ".ad";
   rval->setTag(adtag);
@@ -2362,7 +2391,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
       val = builder.CreateICmp(pred, leftVal, rightVal, namegen("icmp"));
     // Widen to boolean type
     Bexpression *cmpex =
-        makeExpression(val, bltype, location, left, right, nullptr);
+        makeExpression(val, AppendInst, bltype, location, left, right, nullptr);
     return convert_expression(bool_type(), cmpex, location);
   }
   case OPERATOR_MINUS: {
@@ -2398,7 +2427,8 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
     assert(false);
   }
 
-  return makeExpression(val, bltype, location, left, right, nullptr);
+  return makeExpression(val, AppendInst, bltype, location,
+                        left, right, nullptr);
 }
 
 bool
@@ -2570,7 +2600,7 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
 
   // Wrap in a Bexpression, encapsulating contents of source exprs
   Btype *bet = elementTypeByIndex(barray->btype(), 0);
-  Bexpression *rval = makeExpression(gep, bet, location,
+  Bexpression *rval = makeExpression(gep, AppendInst, bet, location,
                                      barray, index, nullptr);
   if (barray->varExprPending())
     rval->setVarExprPending(barray->varContext());
@@ -2673,38 +2703,6 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
   return st;
 }
 
-Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
-                                          Btype *btype,
-                                          Location location,
-                                          Bexpression *srcExpr,
-                                          ...)
-{
-  Bexpression *result = makeValueExpression(value, btype, LocalScope, location);
-  Bexpression *src = srcExpr;
-  va_list ap;
-  std::set<llvm::Instruction *> visited;
-  va_start(ap, srcExpr);
-  while (src) {
-    result->incorporateStmt(src->stmt());
-    for (auto inst : src->instructions()) {
-      assert(inst->getParent() == nullptr);
-      result->appendInstruction(inst);
-      assert(visited.find(inst) == visited.end());
-      visited.insert(inst);
-    }
-    src = va_arg(ap, Bexpression *);
-  }
-  if (llvm::isa<llvm::Instruction>(value)) {
-    // We need this guard to deal with situations where we've done
-    // something like x | 0, in which the IRBuilder will simply return
-    // the left operand.
-    llvm::Instruction *inst = llvm::cast<llvm::Instruction>(value);
-      if (visited.find(inst) == visited.end())
-        result->appendInstruction(inst);
-  }
-  return result;
-}
-
 bool Llvm_backend::isFuncDescriptorType(llvm::Type *typ)
 {
   if (! typ->isStructTy())
@@ -2782,7 +2780,7 @@ Bstatement *Llvm_backend::makeAssignment(Bfunction *function,
   // FIXME: alignment?
   llvm::Instruction *si = new llvm::StoreInst(rval, lval);
 
-  Bexpression *stexp = makeExpression(si, rhs->btype(), location,
+  Bexpression *stexp = makeExpression(si, AppendInst, rhs->btype(), location,
                                       rhs, lhs, nullptr);
   ExprListStatement *els = stmtFromExpr(function, stexp);
   return els;
@@ -2825,7 +2823,8 @@ Llvm_backend::return_statement(Bfunction *bfunction,
 
   Bexpression *toret = resolve(vals[0], bfunction);
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, toret->value());
-  Bexpression *rexp = makeExpression(ri, btype, location, toret, nullptr);
+  Bexpression *rexp = makeExpression(ri, AppendInst, btype, location,
+                                     toret, nullptr);
   ExprListStatement *els = stmtFromExpr(bfunction, rexp);
   return els;
 }
