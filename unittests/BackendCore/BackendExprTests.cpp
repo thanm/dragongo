@@ -1417,4 +1417,58 @@ TEST(BackendExprTests, TestCompoundExpression) {
   EXPECT_TRUE(isOK && "Function does not have expected contents");
 }
 
+TEST(BackendExprTests, TestUnaryExpression) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+  Location loc;
+
+  // var x bool
+  // var y bool = !x
+  Btype *bt = be->bool_type();
+  Bvariable *xv = h.mkLocal("x", bt);
+  Bexpression *vex = be->var_expression(xv, VE_rvalue, loc);
+  h.mkLocal("y", bt, be->unary_expression(OPERATOR_NOT, vex, loc));
+
+  // var a i32
+  // var b i32 = -a
+  Btype *bi32t = be->integer_type(false, 32);
+  Bvariable *av = h.mkLocal("a", bi32t);
+  Bexpression *vea = be->var_expression(av, VE_rvalue, loc);
+  h.mkLocal("b", bi32t, be->unary_expression(OPERATOR_MINUS, vea, loc));
+
+#if 0
+  // Not yet implemented
+
+  // var z i64
+  // var w i64 = ^x
+  Btype *bi64t = be->integer_type(false, 64);
+  Bvariable *zv = h.mkLocal("z", bi64t);
+  Bexpression *vez = be->var_expression(zv, VE_rvalue, loc);
+  h.mkLocal("w", bi64t, be->unary_expression(OPERATOR_XOR, vez, loc));
+#endif
+
+
+  const char *exp = R"RAW_RESULT(
+      store i8 0, i8* %x
+      %x.ld.0 = load i8, i8* %x
+      %icmp.0 = icmp ne i8 %x.ld.0, 0
+      %xor.0 = xor i1 %icmp.0, true
+      %zext.0 = zext i1 %xor.0 to i8
+      store i8 %zext.0, i8* %y
+      store i32 0, i32* %a
+      %a.ld.0 = load i32, i32* %a
+      %sub.0 = sub i32 0, %a.ld.0
+      store i32 %sub.0, i32* %b
+    )RAW_RESULT";
+
+  // Note that this
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 }

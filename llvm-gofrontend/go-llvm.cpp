@@ -2275,7 +2275,47 @@ Bexpression *Llvm_backend::conditional_expression(Bfunction *function,
 
 Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
                                             Location location) {
-  assert(false && "Llvm_backend::unary_expression not yet impl");
+  if (expr == errorExpression_.get())
+    return errorExpression_.get();
+
+  expr = resolveVarContext(expr);
+  Btype *bt = expr->btype();
+
+  switch (op) {
+    case OPERATOR_MINUS: {
+      // FIXME: for floating point zero expr should be -0.0
+      return binary_expression(OPERATOR_MINUS, zero_expression(bt),
+                               expr, location);
+    }
+
+    case OPERATOR_NOT: {
+      LIRBuilder builder(context_, llvm::ConstantFolder());
+      assert(bt == bool_type());
+
+      // FIXME: is this additional compare-to-zero needed? Or can we be certain
+      // that the value in question has a single bit set?
+      llvm::Constant *zero = llvm::ConstantInt::get(bt->type(), 0);
+      llvm::Value *cmp =
+          builder.CreateICmpNE(expr->value(), zero, namegen("icmp"));
+      Btype *lbt = makeAuxType(llvmBoolType_);
+      Bexpression *cmpex =
+          makeExpression(cmp, AppendInst, lbt, location, expr, nullptr);
+      llvm::Constant *one = llvm::ConstantInt::get(llvmBoolType_, 1);
+      llvm::Value *xorExpr = builder.CreateXor(cmp, one, namegen("xor"));
+      Bexpression *notex =
+          makeExpression(xorExpr, AppendInst, lbt, location, cmpex, nullptr);
+      Bexpression *tobool = convert_expression(bool_type(), notex, location);
+      return tobool;
+    }
+    case OPERATOR_XOR:{
+      // ^x    bitwise complement    is m ^ x  with m = "all bits set to 1"
+      //                             for unsigned x and  m = -1 for signed x
+      assert(false && "not yet implemented");
+      break;
+    }
+    default:
+      assert(false && "unexpected unary opcode");
+  }
   return nullptr;
 }
 
@@ -2407,9 +2447,11 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
       val = builder.CreateFCmp(pred, leftVal, rightVal, namegen("fcmp"));
     else
       val = builder.CreateICmp(pred, leftVal, rightVal, namegen("icmp"));
-    // Widen to boolean type
+    Btype *bcmpt = makeAuxType(llvmBoolType_);
+    // gen compare...
     Bexpression *cmpex =
-        makeExpression(val, AppendInst, bltype, location, left, right, nullptr);
+        makeExpression(val, AppendInst, bcmpt, location, left, right, nullptr);
+    // ... widen to go boolean type
     return convert_expression(bool_type(), cmpex, location);
   }
   case OPERATOR_MINUS: {
@@ -2438,6 +2480,13 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
     // flow context (short circuiting)
     assert(!ltype->isFloatingPointTy());
     val = builder.CreateAnd(leftVal, rightVal, namegen("iand"));
+    break;
+  }
+  case OPERATOR_XOR: {
+    // Note that the FE will have already expanded out && in a control
+    // flow context (short circuiting)
+    assert(!ltype->isFloatingPointTy() && !rtype->isFloatingPointTy());
+    val = builder.CreateXor(leftVal, rightVal, namegen("xor"));
     break;
   }
   default:
@@ -2875,8 +2924,8 @@ Bstatement *Llvm_backend::if_statement(Bfunction *bfunction,
     return errorStatement_.get();
   condition = resolve(condition, bfunction);
   assert(then_block);
-  Btype *onebit = makeAuxType(llvmBoolType_);
-  Bexpression *conv = convert_expression(onebit, condition, location);
+  Btype *bt = makeAuxType(llvmBoolType_);
+  Bexpression *conv = convert_expression(bt, condition, location);
   IfPHStatement *ifst =
       new IfPHStatement(bfunction, conv, then_block, else_block, location);
   CHKTREE(ifst);
