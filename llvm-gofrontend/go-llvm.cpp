@@ -1539,12 +1539,16 @@ Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
                                           Bexpression *srcExpr,
                                           ...)
 {
-  Bexpression *result = makeValueExpression(value, btype, LocalScope, location);
+  ValExprScope scope =
+      moduleScopeValue(value, btype) ? GlobalScope : LocalScope;
+  Bexpression *result = makeValueExpression(value, btype, scope, location);
   Bexpression *src = srcExpr;
   va_list ap;
   std::set<llvm::Instruction *> visited;
   va_start(ap, srcExpr);
+  unsigned numSrcs = 0;
   while (src) {
+    numSrcs += 1;
     result->incorporateStmt(src->stmt());
     for (auto inst : src->instructions()) {
       assert(inst->getParent() == nullptr);
@@ -1562,6 +1566,8 @@ Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
       if (visited.find(inst) == visited.end())
         result->appendInstruction(inst);
   }
+  if (numSrcs == 1 && srcExpr->varExprPending())
+    result->setVarExprPending(srcExpr->varContext());
   return result;
 }
 
@@ -1707,7 +1713,9 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
       return expr;
     }
     Btype *btype = expr->btype();
-    return loadFromExpr(expr, btype, Location());
+    Bexpression *rval = loadFromExpr(expr, btype, Location());
+    rval->resetVarExprContext();
+    return rval;
   }
   return expr;
 }
@@ -1814,8 +1822,8 @@ Bexpression *Llvm_backend::var_expression(Bvariable *var,
   // FIXME: record debug location
 
   Bexpression *varexp =
-      makeValueExpression(var->value(), var->getType(), LocalScope, location);
-  varexp->setTag(var->getName().c_str());
+      makeValueExpression(var->value(), var->btype(), LocalScope, location);
+  varexp->setTag(var->name().c_str());
   varexp->setVarExprPending(in_lvalue_pos == VE_lvalue, 0);
   return varexp;
 }
@@ -1981,6 +1989,7 @@ Bexpression *Llvm_backend::complex_expression(Bexpression *breal,
   return nullptr;
 }
 
+#if 0
 // This helper is designed to handle a couple of the cases that
 // we see from the front end for pointer conversions. The FE introduces
 // pointer type conversions (ex: *int8 => *int64) frequently when
@@ -2006,6 +2015,7 @@ llvm::Type *Llvm_backend::isAcceptableBitcastConvert(Bexpression *expr,
   }
   return nullptr;
 }
+#endif
 
 // An expression that converts an expression to a different type.
 
@@ -2020,45 +2030,57 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   assert(val);
 
   // No-op casts are ok
-  if (type->type() == expr->value()->getType())
+  llvm::Type *toType = type->type();
+  if (toType == expr->value()->getType())
     return expr;
 
   // When the frontend casts something to function type, what this
-  // really means in the LLVM realm is "pointer to function" type
-  if (type->type()->isFunctionTy())
+  // really means in the LLVM realm is "pointer to function" type.
+  if (toType->isFunctionTy()) {
     type = pointer_type(type);
+    toType = type->type();
+  }
 
   LIRBuilder builder(context_, llvm::ConstantFolder());
+
+  // Adjust the "to" type if pending var expr.
+  if (expr->varExprPending()) {
+    llvm::Type *pet = llvm::PointerType::get(expr->btype()->type(),
+                                             addressSpace_);
+    if (val->getType() == pet)
+      toType = llvm::PointerType::get(toType, addressSpace_);
+  }
 
   // Pointer type to pointer-sized-integer type. Comes up when
   // converting function pointer to function descriptor (during
   // creation of function descriptor vals) or constant array to
   // uintptr (as part of GC symbol initializer creation), and in other
   // places in FE-generated code (ex: array index checks).
-  if (val->getType()->isPointerTy() && type->type() == llvmIntegerType_) {
+  if (val->getType()->isPointerTy() && toType == llvmIntegerType_) {
     std::string tname(namegen("pticast"));
     llvm::Value *pticast = builder.CreatePtrToInt(val, type->type(), tname);
-    ValExprScope scope =
-        moduleScopeValue(val, expr->btype()) ? GlobalScope : LocalScope;
-    Bexpression *rval = makeValueExpression(pticast, type, scope, location);
-    rval->appendInstructions(expr->instructions());
+    Bexpression *rval = makeExpression(pticast, AppendInst, type, location,
+                                       expr, nullptr);
+    return rval;
+  }
+
+  // Pointer-sized-integer type pointer type. This comes up
+  // in type hash/compare functions.
+  if (toType && val->getType() == llvmIntegerType_) {
+    std::string tname(namegen("itpcast"));
+    llvm::Value *itpcast = builder.CreateIntToPtr(val, type->type(), tname);
+    Bexpression *rval = makeExpression(itpcast, AppendInst, type, location,
+                                       expr, nullptr);
     return rval;
   }
 
   // For pointer conversions (ex: *int32 => *int64) create an
   // appropriate bitcast.
-  llvm::Type *toType =
-      isAcceptableBitcastConvert(expr, val->getType(), type->type());
-  if (toType) {
+  if (val->getType()->isPointerTy() && toType->isPointerTy()) {
     std::string tag("cast");
     llvm::Value *bitcast = builder.CreateBitCast(val, toType, tag);
-    Bexpression *rval = makeValueExpression(bitcast, type,
-                                            LocalScope, location);
-    rval->appendInstructions(expr->instructions());
-    if (llvm::isa<llvm::Instruction>(bitcast))
-      rval->appendInstruction(llvm::cast<llvm::Instruction>(bitcast));
-    if (expr->varExprPending())
-      rval->setVarExprPending(expr->varContext());
+    Bexpression *rval = makeExpression(bitcast, AppendInst, type, location,
+                                       expr, nullptr);
     return rval;
   }
 
@@ -2079,12 +2101,8 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
     } else {
       conv = builder.CreateTrunc(val, type->type(), namegen("trunc"));
     }
-    Bexpression *rval = makeValueExpression(conv, type, LocalScope, location);
-    rval->appendInstructions(expr->instructions());
-    if (llvm::isa<llvm::Instruction>(conv))
-      rval->appendInstruction(llvm::cast<llvm::Instruction>(conv));
-    if (expr->varExprPending())
-      rval->setVarExprPending(expr->varContext());
+    Bexpression *rval = makeExpression(conv, AppendInst, type, location,
+                                       expr, nullptr);
     return rval;
   }
 
@@ -2689,14 +2707,18 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
   if (var == errorVariable_.get() || init == errorExpression_.get() ||
       bfunction == errorFunction_.get())
     return errorStatement_.get();
-  if (init->compositeInitPending()) {
-    init = resolveCompositeInit(init, bfunction, var->value());
-    ExprListStatement *els = new ExprListStatement(bfunction);
-    els->appendExpression(init);
-    CHKTREE(els);
-    return els;
+  if (init) {
+    if (init->compositeInitPending()) {
+      init = resolveCompositeInit(init, bfunction, var->value());
+      ExprListStatement *els = new ExprListStatement(bfunction);
+      els->appendExpression(init);
+      CHKTREE(els);
+      return els;
+    }
+    init = resolveVarContext(init);
+  } else {
+    init = zero_expression(var->btype());
   }
-  init = resolveVarContext(init);
   Bstatement *st = makeAssignment(bfunction, var->value(),
                                   nullptr, init, Location());
   CHKTREE(st);

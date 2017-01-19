@@ -191,10 +191,14 @@ int main(int argc, char **argv)
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
 
-  std::unique_ptr<Linemap> linemap(go_get_linemap());
+  std::unique_ptr<Llvm_linemap> linemap(new Llvm_linemap());
 
   Llvm_backend *backend = init_gogo(Target.get(), Context, linemap.get());
   backend->setTraceLevel(TraceLevel);
+
+  // Support -fgo-dump-ast
+  if (DumpAst)
+    go_enable_dump("ast");
 
   // Include dirs
   if (! IncludeDirs.empty()) {
@@ -220,6 +224,8 @@ int main(int argc, char **argv)
     backend->verifyModule();
   if (DumpIR)
     backend->dumpModule();
+  if (TraceLevel)
+    std::cerr << "linemap stats:\n" << linemap->statistics();
 
   return 0;
 }

@@ -38,9 +38,9 @@ public:
         which_(which), addrtaken_(address_taken) {}
 
   // Common to all varieties of variables
-  Location getLocation() { return location_; }
-  Btype *getType() { return type_; }
-  const std::string &getName() { return name_; }
+  Location location() { return location_; }
+  Btype *btype() { return type_; }
+  const std::string &name() { return name_; }
   llvm::Value *value() { return value_; }
   bool addrtaken() { return addrtaken_; }
   WhichVar flavor() const { return which_; }

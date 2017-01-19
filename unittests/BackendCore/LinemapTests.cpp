@@ -67,7 +67,8 @@ TEST(LinemapTests, BasicLinemap) {
   EXPECT_EQ(lm->to_string(x12), lm->to_string(f12));
 
   std::string stats = lm->statistics();
-  EXPECT_EQ(stats, "accesses: 9 files: 4 segments: 3 locmem: 22");
+  EXPECT_EQ(stats, "accesses=9 files=4 segments=3 "
+            "locmem=22 bytes/location=2.4");
 }
 
 }

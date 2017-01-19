@@ -10,6 +10,7 @@
 #include "llvm/Support/LEB128.h"
 
 #include <sstream>
+#include <iomanip>
 
 static constexpr unsigned NoHandle = 0xffffffff;
 
@@ -188,11 +189,14 @@ Llvm_linemap::is_unknown(Location loc)
 
 std::string Llvm_linemap::statistics()
 {
+  double nbl = (encoded_locations_.size() ?
+                ((double)encoded_locations_.size())/((double)lookups_) : 0);
   std::stringstream ss;
-  ss << "accesses: " << lookups_
-     << " files: " << files_.size()
-     << " segments: " << segments_.size()
-     << " locmem: " << encoded_locations_.size();
+  ss << "accesses=" << lookups_
+     << " files=" << files_.size()
+     << " segments=" << segments_.size()
+     << " locmem=" << encoded_locations_.size()
+     << " bytes/location=" << std::setprecision(2) << nbl;
   return ss.str();
 }
 

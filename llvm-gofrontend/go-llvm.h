@@ -572,11 +572,6 @@ public:
   bool isPtrToFuncDescriptorType(llvm::Type *typ);
   bool isPtrToFuncType(llvm::Type *typ);
 
-  // Conversion helper.
-  llvm::Type *isAcceptableBitcastConvert(Bexpression *expr,
-                                         llvm::Type *fromType,
-                                         llvm::Type *toType);
-
   // Converts value "src" for assignment to container of type
   // "dstType" in assignment-like contexts. This helper exists to
   // help with cases where the frontend is creating an assignment of
