@@ -1449,7 +1449,6 @@ TEST(BackendExprTests, TestUnaryExpression) {
   h.mkLocal("w", bi64t, be->unary_expression(OPERATOR_XOR, vez, loc));
 #endif
 
-
   const char *exp = R"RAW_RESULT(
       store i8 0, i8* %x
       %x.ld.0 = load i8, i8* %x

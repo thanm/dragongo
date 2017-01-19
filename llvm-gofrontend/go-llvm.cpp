@@ -1532,6 +1532,20 @@ Bexpression *Llvm_backend::makeValueExpression(llvm::Value *val,
   return rval;
 }
 
+void Llvm_backend::incorporateExpression(Bexpression *dst,
+                                         Bexpression *src,
+                                         std::set<llvm::Instruction *> *visited)
+{
+  dst->incorporateStmt(src->stmt());
+  for (auto inst : src->instructions()) {
+    dst->appendInstruction(inst);
+    if (visited) {
+      assert(visited->find(inst) == visited->end());
+      visited->insert(inst);
+    }
+  }
+}
+
 Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
                                           MkExprAction action,
                                           Btype *btype,
@@ -1539,24 +1553,32 @@ Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
                                           Bexpression *srcExpr,
                                           ...)
 {
+  std::vector<Bexpression *> srcs;
+  va_list ap;
+  va_start(ap, srcExpr);
+  Bexpression *src = srcExpr;
+  while (src) {
+    srcs.push_back(src);
+    src = va_arg(ap, Bexpression *);
+  }
+  return makeExpression(value, action, btype, location, srcs);
+}
+
+Bexpression *
+Llvm_backend::makeExpression(llvm::Value *value,
+                             MkExprAction action,
+                             Btype *btype,
+                             Location location,
+                             const std::vector<Bexpression *> &srcs)
+{
   ValExprScope scope =
       moduleScopeValue(value, btype) ? GlobalScope : LocalScope;
   Bexpression *result = makeValueExpression(value, btype, scope, location);
-  Bexpression *src = srcExpr;
-  va_list ap;
   std::set<llvm::Instruction *> visited;
-  va_start(ap, srcExpr);
   unsigned numSrcs = 0;
-  while (src) {
+  for (auto src : srcs) {
+    incorporateExpression(result, src, &visited);
     numSrcs += 1;
-    result->incorporateStmt(src->stmt());
-    for (auto inst : src->instructions()) {
-      assert(inst->getParent() == nullptr);
-      result->appendInstruction(inst);
-      assert(visited.find(inst) == visited.end());
-      visited.insert(inst);
-    }
-    src = va_arg(ap, Bexpression *);
   }
   if (action == AppendInst && llvm::isa<llvm::Instruction>(value)) {
     // We need this guard to deal with situations where we've done
@@ -1566,8 +1588,8 @@ Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
       if (visited.find(inst) == visited.end())
         result->appendInstruction(inst);
   }
-  if (numSrcs == 1 && srcExpr->varExprPending())
-    result->setVarExprPending(srcExpr->varContext());
+  if (numSrcs == 1 && srcs[0]->varExprPending())
+    result->setVarExprPending(srcs[0]->varContext());
   return result;
 }
 
@@ -2171,12 +2193,8 @@ Bexpression *Llvm_backend::struct_field_expression(Bexpression *bstruct,
 
   // Wrap result in a Bexpression
   Btype *bft = elementTypeByIndex(bstruct->btype(), index);
-  Bexpression *rval = makeValueExpression(gep, bft, LocalScope, location);
-  rval->appendInstructions(bstruct->instructions());
-  if (llvm::isa<llvm::Instruction>(gep))
-    rval->appendInstruction(llvm::cast<llvm::Instruction>(gep));
-  if (bstruct->varExprPending())
-    rval->setVarExprPending(bstruct->varContext());
+  Bexpression *rval = makeExpression(gep, AppendInst, bft,
+                                     location, bstruct, nullptr);
   std::string tag(bstruct->tag());
   tag += ".field";
   rval->setTag(tag);
@@ -2689,8 +2707,18 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
       chain_expr == errorExpression_.get())
     return errorExpression_.get();
 
-  if (fn_expr->varExprPending())
-    fn_expr = resolveVarContext(fn_expr);
+  // Resolve fcn
+  fn_expr = resolveVarContext(fn_expr);
+
+    // Unpack / resolve arguments
+  llvm::SmallVector<llvm::Value *, 64> llargs;
+  std::vector<Bexpression *> resolvedArgs;
+  resolvedArgs.push_back(fn_expr);
+  for (auto fnarg : fn_args) {
+    Bexpression *resarg = resolveVarContext(fnarg);
+    resolvedArgs.push_back(resarg);
+    llargs.push_back(resarg->value());
+  }
 
   // Expect pointer-to-function type here
   assert(fn_expr->btype()->type()->isPointerTy());
@@ -2699,31 +2727,16 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
   llvm::FunctionType *llft =
       llvm::cast<llvm::FunctionType>(pt->getElementType());
 
-  // FIXME: do something with location
-
-  // Unpack / resolve arguments
-  llvm::SmallVector<llvm::Value *, 64> llargs;
-  llvm::SmallVector<Bexpression *, 64> resolvedArgs;
-  for (auto fnarg : fn_args) {
-    Bexpression *resarg = resolveVarContext(fnarg);
-    resolvedArgs.push_back(resarg);
-    llargs.push_back(resarg->value());
-  }
-
   // Return type
   Btype *rbtype = functionReturnType(fn_expr->btype());
 
   // FIXME: create struct to hold result from multi-return call
-
-  std::string callname(llft->getReturnType()->isVoidTy() ? "" : namegen("call"));
+  bool isvoid = llft->getReturnType()->isVoidTy();
+  std::string callname(isvoid ? "" : namegen("call"));
   llvm::CallInst *call =
       llvm::CallInst::Create(llft, fn_expr->value(), llargs, callname);
   Bexpression *rval =
-      makeValueExpression(call, rbtype, LocalScope, location);
-  rval->appendInstructions(fn_expr->instructions());
-  for (auto resarg : resolvedArgs)
-    rval->appendInstructions(resarg->instructions());
-  rval->appendInstruction(call);
+      makeExpression(call, AppendInst, rbtype, location, resolvedArgs);
   return rval;
 }
 

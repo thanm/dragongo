@@ -475,6 +475,10 @@ public:
                            llvm::Constant *initializer,
                            unsigned alignmentInBytes = 0);
 
+  // Helper to fold contents of one instruction into another.
+  void incorporateExpression(Bexpression *dst,
+                             Bexpression *src,
+                             std::set<llvm::Instruction *> *visited);
 
   enum MkExprAction { AppendInst, DontAppend };
 
@@ -489,6 +493,13 @@ public:
                               Btype *btype,
                               Location location,
                               Bexpression *src, ...);
+
+  // Similar to the method above, but array-based and not varargs.
+  Bexpression *makeExpression(llvm::Value *value,
+                              MkExprAction action,
+                              Btype *btype,
+                              Location location,
+                              const std::vector<Bexpression *> &srcs);
 
   // Helper for creating a constant-valued array/struct expression.
   Bexpression *makeConstCompositeExpr(Btype *btype,
