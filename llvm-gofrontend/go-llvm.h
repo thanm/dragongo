@@ -362,6 +362,15 @@ public:
   // do any later post-processing or checking.
   Btype *makeAuxType(llvm::Type *lt);
 
+  // Create a new anonymous BFunctionType based on a corresponding
+  // LLVM function type. This is slightly different from the routine
+  // above in that it replicates information about parameter types and
+  // results and creates a BFunctionType based on them (whereas
+  // everything created by makeAuxTpe is an AuxT container). Not for
+  // general use (should be used only for things like builtins), since
+  // there is no way to express things like signed/unsigned param types.
+  BFunctionType *makeAuxFcnType(llvm::FunctionType *eft);
+
   // Is this a placeholder type?
   bool isPlaceholderType(Btype *t);
 
@@ -597,7 +606,7 @@ public:
   // whereas variable "fp" will have type "pointer to functon", which are
   // not the same. Return value will be a new convert Bexpression if a
   // convert is needed, NULL otherwise.
-  llvm::Value *convertForAssignment(Bexpression *src, llvm::Type *dstType);
+  llvm::Value *convertForAssignment(Bexpression *src, llvm::Type *dstToType);
 
   // Apply type conversion for a binary operation. This helper exists
   // to resolve situations where expressions are created by the front

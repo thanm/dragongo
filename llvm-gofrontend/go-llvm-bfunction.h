@@ -35,11 +35,12 @@ class raw_ostream;
 
 class Bfunction {
 public:
-  Bfunction(llvm::Function *f, Btype *fcnType, const std::string &asmName);
+  Bfunction(llvm::Function *f, BFunctionType *fcnType,
+            const std::string &asmName);
   ~Bfunction();
 
   llvm::Function *function() const { return function_; }
-  Btype *fcnType() const { return fcnType_; }
+  BFunctionType *fcnType() const { return fcnType_; }
   const std::string &asmName() const { return asmName_; }
 
   enum SplitStackDisposition { YesSplit, NoSplit };
@@ -107,7 +108,7 @@ private:
   std::vector<Bstatement *> labelmap_;
   std::vector<Blabel *> labels_;
   llvm::Function *function_;
-  Btype *fcnType_;
+  BFunctionType *fcnType_;
   std::string asmName_;
   unsigned labelCount_;
   SplitStackDisposition splitStack_;

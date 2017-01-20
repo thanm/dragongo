@@ -1421,7 +1421,6 @@ TEST(BackendExprTests, TestUnaryExpression) {
 
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
-  Bfunction *func = h.func();
   Location loc;
 
   // var x bool
@@ -1438,16 +1437,12 @@ TEST(BackendExprTests, TestUnaryExpression) {
   Bexpression *vea = be->var_expression(av, VE_rvalue, loc);
   h.mkLocal("b", bi32t, be->unary_expression(OPERATOR_MINUS, vea, loc));
 
-#if 0
-  // Not yet implemented
-
   // var z i64
-  // var w i64 = ^x
+  // var w i64 = ^z
   Btype *bi64t = be->integer_type(false, 64);
   Bvariable *zv = h.mkLocal("z", bi64t);
   Bexpression *vez = be->var_expression(zv, VE_rvalue, loc);
   h.mkLocal("w", bi64t, be->unary_expression(OPERATOR_XOR, vez, loc));
-#endif
 
   const char *exp = R"RAW_RESULT(
       store i8 0, i8* %x
@@ -1460,6 +1455,41 @@ TEST(BackendExprTests, TestUnaryExpression) {
       %a.ld.0 = load i32, i32* %a
       %sub.0 = sub i32 0, %a.ld.0
       store i32 %sub.0, i32* %b
+      store i64 0, i64* %z
+      %z.ld.0 = load i64, i64* %z
+      %xor.1 = xor i64 %z.ld.0, -1
+      store i64 %xor.1, i64* %w
+    )RAW_RESULT";
+
+  // Note that this
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+TEST(BackendExprTests, TestCallArgCOnversions) {
+
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+  Btype *bi8t = be->integer_type(false, 8);
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bi64t = be->integer_type(false, 64);
+  Btype *befty1 = mkFuncTyp(be,
+                            L_PARM, be->pointer_type(bi8t),
+                            L_PARM, be->pointer_type(bi32t),
+                            L_PARM, be->pointer_type(bi64t),
+                            L_END);
+  Bfunction *func = h.mkFunction("foo", befty1);
+  Location loc;
+
+  Bexpression *nil = be->nil_pointer_expression();
+  Bexpression *call1 = mkCallExpr(be, func, nil, nil, nil, nullptr);
+  h.mkExprStmt(call1);
+
+  const char *exp = R"RAW_RESULT(
+     call void @foo(i8* null, i32* null, i64* null)
     )RAW_RESULT";
 
   // Note that this

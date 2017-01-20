@@ -25,7 +25,7 @@
 #include "llvm/IR/Value.h"
 
 Bfunction::Bfunction(llvm::Function *f,
-                     Btype *fcnType,
+                     BFunctionType *fcnType,
                      const std::string &asmName)
     : function_(f), fcnType_(fcnType), asmName_(asmName), labelCount_(0),
       splitStack_(YesSplit) {}

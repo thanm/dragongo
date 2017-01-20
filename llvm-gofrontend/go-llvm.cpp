@@ -138,7 +138,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
   llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
   llvm::Function *ef = llvm::Function::Create(eft, plinkage, "",
                                               module_.get());
-  errorFunction_.reset(new Bfunction(ef, makeAuxType(eft), ""));
+  errorFunction_.reset(new Bfunction(ef, makeAuxFcnType(eft), ""));
 
   // Reuse the error function as the value for error_expression
   errorExpression_.reset(
@@ -309,6 +309,29 @@ void Llvm_backend::updatePlaceholderUnderlyingType(Btype *pht,
     postProcessResolvedPlaceholder(pht);
 }
 
+BFunctionType *Llvm_backend::makeAuxFcnType(llvm::FunctionType *ft)
+{
+  assert(ft);
+
+  auto it = auxTypeMap_.find(ft);
+  if (it != auxTypeMap_.end())
+    return it->second->castToBFunctionType();
+
+  Btype *recvTyp = nullptr;
+  Btype *rStructTyp = nullptr;
+  std::vector<Btype *> params;
+  std::vector<Btype *> results;
+  if (ft->getReturnType() != llvmVoidType_)
+    results.push_back(makeAuxType(ft->getReturnType()));
+  for (unsigned ii = 0; ii < ft->getNumParams(); ++ii)
+    params.push_back(makeAuxType(ft->getParamType(ii)));
+  BFunctionType *rval =
+      new BFunctionType(recvTyp, params, results,
+                        rStructTyp, ft);
+  auxTypeMap_[ft] = rval;
+  return rval;
+}
+
 Btype *Llvm_backend::makeAuxType(llvm::Type *lt) {
   assert(lt);
 
@@ -316,7 +339,6 @@ Btype *Llvm_backend::makeAuxType(llvm::Type *lt) {
   if (it != auxTypeMap_.end())
     return it->second;
   Btype *rval = new Btype(Btype::AuxT, lt);
-  rval->setType(lt);
   auxTypeMap_[lt] = rval;
   return rval;
 }
@@ -1083,6 +1105,11 @@ Llvm_backend::set_placeholder_struct_type(Btype *placeholder,
               << ((void*) placeholder->type())
               << "] body redirected:\n";
     std::cerr << "placeholder: "; placeholder->dump();
+    std::cerr << "fields:\n";
+    for (unsigned i = 0; i < fields.size(); ++i) {
+      std::cerr << i << ": ";
+      fields[i].btype->dump();
+    }
   }
 
   if (! isplace)
@@ -1340,6 +1367,10 @@ void Llvm_backend::defineIntrinsicBuiltin(const char *name, const char *libname,
   defineBuiltinFcn(name, libname, fcn);
 }
 
+// Create a BType function type based on an equivalent LLVM function type.
+
+//
+
 // Define name -> fcn mapping for a builtin.
 // Notes:
 // - LLVM makes a distinction between libcalls (such as
@@ -1352,7 +1383,11 @@ void Llvm_backend::defineIntrinsicBuiltin(const char *name, const char *libname,
 void Llvm_backend::defineBuiltinFcn(const char *name, const char *libname,
                                     llvm::Function *fcn)
 {
-  Btype *fcnType = makeAuxType(fcn->getType());
+  llvm::PointerType *llpft =
+      llvm::cast<llvm::PointerType>(fcn->getType());
+  llvm::FunctionType *llft =
+      llvm::cast<llvm::FunctionType>(llpft->getElementType());
+  BFunctionType *fcnType = makeAuxFcnType(llft);
   Bfunction *bfunc = new Bfunction(fcn, fcnType, name);
   assert(builtinMap_.find(name) == builtinMap_.end());
   builtinMap_[name] = bfunc;
@@ -1538,6 +1573,8 @@ void Llvm_backend::incorporateExpression(Bexpression *dst,
 {
   dst->incorporateStmt(src->stmt());
   for (auto inst : src->instructions()) {
+    if (llvm::isa<llvm::AllocaInst>(inst))
+      continue;
     dst->appendInstruction(inst);
     if (visited) {
       assert(visited->find(inst) == visited->end());
@@ -2011,34 +2048,6 @@ Bexpression *Llvm_backend::complex_expression(Bexpression *breal,
   return nullptr;
 }
 
-#if 0
-// This helper is designed to handle a couple of the cases that
-// we see from the front end for pointer conversions. The FE introduces
-// pointer type conversions (ex: *int8 => *int64) frequently when
-// creating initializers for things like type descriptors; this
-// translates fairly directly to the LLVM equivalent.
-//
-// Return value for this routine is NULL if the cast in question
-// is not acceptable, or the correct "to" type if it is.
-
-llvm::Type *Llvm_backend::isAcceptableBitcastConvert(Bexpression *expr,
-                                                     llvm::Type *fromType,
-                                                     llvm::Type *toType)
-{
-  if (fromType->isPointerTy() && toType->isPointerTy()) {
-    if (expr->varExprPending()) {
-      llvm::Type *ptt = llvm::PointerType::get(toType, addressSpace_);
-      llvm::Type *pet = llvm::PointerType::get(expr->btype()->type(),
-                                               addressSpace_);
-      if (fromType == pet)
-        return ptt;
-    }
-    return toType;
-  }
-  return nullptr;
-}
-#endif
-
 // An expression that converts an expression to a different type.
 
 Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
@@ -2325,10 +2334,17 @@ Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
       Bexpression *tobool = convert_expression(bool_type(), notex, location);
       return tobool;
     }
-    case OPERATOR_XOR:{
+    case OPERATOR_XOR: {
       // ^x    bitwise complement    is m ^ x  with m = "all bits set to 1"
       //                             for unsigned x and  m = -1 for signed x
-      assert(false && "not yet implemented");
+      assert(bt->type()->isIntegerTy());
+      LIRBuilder builder(context_, llvm::ConstantFolder());
+      llvm::Value *onesval = llvm::Constant::getAllOnesValue(bt->type());
+      llvm::Value *xorExpr = builder.CreateXor(expr->value(), onesval,
+                                               namegen("xor"));
+      Bexpression *rval =
+          makeExpression(xorExpr, AppendInst, bt, location, expr, nullptr);
+      return rval;
       break;
     }
     default:
@@ -2710,14 +2726,24 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
   // Resolve fcn
   fn_expr = resolveVarContext(fn_expr);
 
-    // Unpack / resolve arguments
+  // Pick out function type
+  BPointerType *bpft = fn_expr->btype()->castToBPointerType();
+  BFunctionType *bft = bpft->toType()->castToBFunctionType();
+  assert(bft);
+  const std::vector<Btype *> &paramTypes = bft->paramTypes();
+
+  // Unpack / resolve arguments
   llvm::SmallVector<llvm::Value *, 64> llargs;
   std::vector<Bexpression *> resolvedArgs;
   resolvedArgs.push_back(fn_expr);
-  for (auto fnarg : fn_args) {
-    Bexpression *resarg = resolveVarContext(fnarg);
+  for (unsigned idx = 0; idx < fn_args.size(); ++idx) {
+    Bexpression *resarg = resolveVarContext(fn_args[idx]);
     resolvedArgs.push_back(resarg);
-    llargs.push_back(resarg->value());
+    Btype *paramTyp = paramTypes[idx];
+    llvm::Value *val = resarg->value();
+    if (val->getType()->isPointerTy())
+      val = convertForAssignment(resarg, paramTyp->type());
+    llargs.push_back(val);
   }
 
   // Expect pointer-to-function type here
@@ -2817,15 +2843,12 @@ bool Llvm_backend::isPtrToFuncType(llvm::Type *typ)
 }
 
 llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
-                                                llvm::Type *dstType)
+                                                llvm::Type *dstToType)
 {
-  assert(dstType->isPointerTy());
-  llvm::PointerType *dpt = llvm::cast<llvm::PointerType>(dstType);
-  llvm::Type *dstToType = dpt->getElementType();
   llvm::Type *srcType = src->value()->getType();
 
   if (dstToType == srcType)
-    return nullptr;
+    return src->value();
 
   // Case 1: handle discrepancies between representations of function
   // descriptors. All front end function descriptor types are structs
@@ -2840,7 +2863,17 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
     return bitcast;
   }
 
-  return nullptr;
+  // Case 2: handle polymorphic nil pointer expressions-- these are
+  // generated without a type initially, so we need to convert them
+  // to the appropriate type if they appear in an assignment context.
+  if (src == nil_pointer_expression()) {
+    BexprLIRBuilder builder(context_, src);
+    std::string tag("cast");
+    llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
+    return bitcast;
+  }
+
+  return src->value();
 }
 
 Bstatement *Llvm_backend::makeAssignment(Bfunction *function,
@@ -2854,9 +2887,8 @@ Bstatement *Llvm_backend::makeAssignment(Bfunction *function,
   assert(!rhs->varExprPending() && !rhs->compositeInitPending());
 
   // Work around type inconsistencies in gofrontend.
-  llvm::Value *cval = convertForAssignment(rhs, pt);
-  if (cval)
-    rval = cval;
+  llvm::Type *dstToType = pt->getElementType();
+  rval = convertForAssignment(rhs, dstToType);
 
   // At this point the types should agree
   assert(rval->getType() == pt->getElementType());
@@ -3368,7 +3400,9 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   if (!is_inlinable)
     fcn->addFnAttr(llvm::Attribute::NoInline);
 
-  Bfunction *bfunc = new Bfunction(fcn, fntype, asm_name);
+  BFunctionType *fcnType = fntype->castToBFunctionType();
+  assert(fcnType);
+  Bfunction *bfunc = new Bfunction(fcn, fcnType, asm_name);
 
   // TODO: unique section support. llvm::GlobalObject has support for
   // setting COMDAT groups and section names, but nothing to manage how
