@@ -348,6 +348,12 @@ Btype *Llvm_backend::error_type() { return errorType_; }
 
 Btype *Llvm_backend::void_type() { return makeAuxType(llvmVoidType_); }
 
+bool Llvm_backend::isBooleanType(Btype *bt) {
+  BIntegerType *bit = bt->castToBIntegerType();
+  return (bit && bit->isUnsigned() &&
+          bit->type() == llvm::IntegerType::get(context_, 8));
+}
+
 Btype *Llvm_backend::bool_type() {
   // LLVM has no predefined boolean type. Use int8 for this purpose.
   return integer_type(true, 8);
@@ -1894,8 +1900,11 @@ Bexpression *Llvm_backend::named_constant_expression(Btype *btype,
                                                      const std::string &name,
                                                      Bexpression *val,
                                                      Location location) {
-  assert(false && "LLvm_backend::named_constant_expression not yet impl");
-  return nullptr;
+  if (btype == errorType_ || val == errorExpression_.get())
+    return errorExpression_.get();
+
+  // FIXME: declare named read-only variable with initial value 'val'
+  return val;
 }
 
 template <typename wideint_t>
@@ -2317,7 +2326,7 @@ Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
 
     case OPERATOR_NOT: {
       LIRBuilder builder(context_, llvm::ConstantFolder());
-      assert(bt == bool_type());
+      assert(isBooleanType(bt));
 
       // FIXME: is this additional compare-to-zero needed? Or can we be certain
       // that the value in question has a single bit set?

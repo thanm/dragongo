@@ -374,6 +374,9 @@ public:
   // Is this a placeholder type?
   bool isPlaceholderType(Btype *t);
 
+  // Is this a Go boolean type
+  bool isBooleanType(Btype *);
+
   // Replace the underlying type for a given placeholder type once
   // we've determined what the final type will be.
   void updatePlaceholderUnderlyingType(Btype *plt, Btype *totype);
