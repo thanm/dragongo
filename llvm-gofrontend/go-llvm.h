@@ -318,7 +318,7 @@ public:
   // Dump LLVM IR for module
   void dumpModule();
 
-  // Dump expression or stmt with line information
+  // Dump expression or stmt with line information. For debugging purposes.
   void dumpExpr(Bexpression *);
   void dumpStmt(Bstatement *);
   void dumpVar(Bvariable *);
@@ -349,8 +349,11 @@ public:
   void setTraceLevel(unsigned level) { traceLevel_ = level; }
   unsigned traceLevel() const { return traceLevel_; }
 
-  // For creating useful inst and block names. Exposed to help unit testing.
-  std::string namegen(const std::string &tag, unsigned expl = 0xffffffff);
+  // Tells namegen to choose its own version number for the created name
+  static constexpr unsigned ChooseVer = 0xffffffff;
+
+  // For creating useful inst and block names.
+  std::string namegen(const std::string &tag, unsigned expl = ChooseVer);
 
  private:
 
@@ -583,12 +586,11 @@ public:
 
   // Check a vector of Bexpression's to see if any are the
   // error expression, returning TRUE if so.
-  bool exprVectorHasError(const std::vector<Bexpression *> &vals) {
-    for (auto v : vals)
-      if (v == errorExpression_.get())
-        return true;
-    return false;
-  }
+  bool exprVectorHasError(const std::vector<Bexpression *> &vals);
+
+  // Check a vector of Bstatement's to see if any are the
+  // error statement, returning TRUE if so.
+  bool stmtVectorHasError(const std::vector<Bstatement *> &stmts);
 
   // Type helpers
   bool isFuncDescriptorType(llvm::Type *typ);

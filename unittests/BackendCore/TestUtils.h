@@ -185,14 +185,27 @@ class FcnTestHarness {
   // Create a local variable in the function.
   Bvariable *mkLocal(const char *name, Btype *typ, Bexpression *init = nullptr);
 
+  // Whether to append created stmt to current block
+  enum AppendDisp { YesAppend, NoAppend };
+
   // Create an assignment LHS = RHS and append to block
-  void mkAssign(Bexpression *lhs, Bexpression *rhs);
+  void mkAssign(Bexpression *lhs, Bexpression *rhs, AppendDisp d = YesAppend);
 
   // Create and append an expression stmt
-  Bstatement *mkExprStmt(Bexpression *expr);
+  Bstatement *mkExprStmt(Bexpression *expr, AppendDisp disp = YesAppend);
 
   // Append a return stmt to block
-  Bstatement *mkReturn(Bexpression *expr);
+  Bstatement *mkReturn(Bexpression *expr, AppendDisp disp = YesAppend);
+
+  // Create and append an "if" statement.
+  Bstatement *mkIf(Bexpression *cond, Bstatement *trueStmt,
+                   Bstatement *falseStmt, AppendDisp disp = YesAppend);
+
+  // Create and append a switch statement
+  Bstatement *mkSwitch(Bexpression *swval,
+                       const std::vector<std::vector<Bexpression*> >& cases,
+                       const std::vector<Bstatement*>& statements,
+                       AppendDisp disp = YesAppend);
 
   // Add a previously created statement to the current block
   void addStmt(Bstatement *stmt);

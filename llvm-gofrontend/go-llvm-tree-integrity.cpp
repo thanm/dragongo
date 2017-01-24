@@ -175,9 +175,25 @@ bool IntegrityVisitor::visit(Bstatement *stmt)
     case Bstatement::ST_Goto:
       // not interesting
       break;
-    case Bstatement::ST_SwitchPlaceholder:
-      assert(false && "not yet implemented\n");
+    case Bstatement::ST_SwitchPlaceholder: {
+      SwitchPHStatement *swst = stmt->castToSwitchPHStatement();
+      eors parsw = makeStmtParent(swst);
+      rval = (visit(swst->switchValue()) && rval);
+      rval = (setParent(swst->switchValue(), parsw) && rval);
+      const std::vector<std::vector<Bexpression *>> &cases = swst->cases();
+      for (auto &cs : cases) {
+        for (auto &cv : cs) {
+          rval = (visit(cv) && rval);
+          rval = (setParent(cv, parsw) && rval);
+        }
+      }
+      const std::vector<Bstatement *> &statements = swst->statements();
+      for (auto st : statements) {
+        rval = (visit(st) && rval);
+        rval = (setParent(st, parsw) && rval);
+      }
       break;
+    }
   }
   return rval;
 }

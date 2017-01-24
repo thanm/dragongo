@@ -200,14 +200,22 @@ Llvm_backend::dumpModule()
 
 void Llvm_backend::dumpExpr(Bexpression *e)
 {
-  if (e)
+  if (e) {
     e->srcDump(linemap_);
+    auto p = checkTreeIntegrity(e, true);
+    if (p.first)
+      std::cerr << p.second;
+  }
 }
 
 void Llvm_backend::dumpStmt(Bstatement *s)
 {
-  if (s)
+  if (s) {
     s->srcDump(linemap_);
+    auto p = checkTreeIntegrity(s, true);
+    if (p.first)
+      std::cerr << p.second;
+  }
 }
 
 void Llvm_backend::dumpVar(Bvariable *v)
@@ -255,11 +263,11 @@ std::string Llvm_backend::namegen(const std::string &tag, unsigned expl) {
   unsigned count = 0;
   if (it != nametags_.end())
     count = it->second + 1;
-  if (expl != 0xffffffff)
+  if (expl != ChooseVer)
     count = expl;
   std::stringstream ss;
   ss << tag << "." << count;
-  if (expl == 0xffffffff)
+  if (expl == ChooseVer)
     nametags_[tag] = count;
   return ss.str();
 }
@@ -1614,8 +1622,11 @@ Llvm_backend::makeExpression(llvm::Value *value,
                              Location location,
                              const std::vector<Bexpression *> &srcs)
 {
-  ValExprScope scope =
-      moduleScopeValue(value, btype) ? GlobalScope : LocalScope;
+  ValExprScope scope = LocalScope;
+  if (moduleScopeValue(value, btype))
+    scope = GlobalScope;
+  if (! llvm::isa<llvm::Instruction>(value))
+    scope = GlobalScope;
   Bexpression *result = makeValueExpression(value, btype, scope, location);
   std::set<llvm::Instruction *> visited;
   unsigned numSrcs = 0;
@@ -1623,6 +1634,8 @@ Llvm_backend::makeExpression(llvm::Value *value,
     incorporateExpression(result, src, &visited);
     numSrcs += 1;
   }
+  // globally scoped values should not include instructions
+  assert(scope == LocalScope || result->instructions().size() == 0);
   if (action == AppendInst && llvm::isa<llvm::Instruction>(value)) {
     // We need this guard to deal with situations where we've done
     // something like x | 0, in which the IRBuilder will simply return
@@ -1755,6 +1768,21 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
   }
 
   return rval;
+}
+
+bool Llvm_backend::exprVectorHasError(const std::vector<Bexpression *> &vals) {
+  for (auto v : vals)
+    if (v == errorExpression_.get())
+      return true;
+  return false;
+}
+
+bool Llvm_backend::stmtVectorHasError(const std::vector<Bstatement *> &stmts)
+{
+  for (auto s : stmts)
+    if (s == errorStatement_.get())
+      return true;
+  return false;
 }
 
 Bexpression *Llvm_backend::resolve(Bexpression *expr, Bfunction *func)
@@ -2511,6 +2539,22 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
       val = builder.CreateAdd(leftVal, rightVal, namegen("add"));
     break;
   }
+  case OPERATOR_MULT: {
+    if (ltype->isFloatingPointTy())
+      val = builder.CreateFMul(leftVal, rightVal, namegen("fmul"));
+    else
+      val = builder.CreateMul(leftVal, rightVal, namegen("mul"));
+    break;
+  }
+  case OPERATOR_DIV: {
+    if (ltype->isFloatingPointTy())
+      val = builder.CreateFDiv(leftVal, rightVal, namegen("fdiv"));
+    else if (isUnsigned)
+      val = builder.CreateUDiv(leftVal, rightVal, namegen("div"));
+    else
+      val = builder.CreateSDiv(leftVal, rightVal, namegen("div"));
+    break;
+  }
   case OPERATOR_OROR: {
     // Note that the FE will have already expanded out || in a control
     // flow context (short circuiting)
@@ -2518,9 +2562,13 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
     val = builder.CreateOr(leftVal, rightVal, namegen("ior"));
     break;
   }
-  case OPERATOR_ANDAND: {
+  case OPERATOR_ANDAND:
     // Note that the FE will have already expanded out && in a control
-    // flow context (short circuiting)
+    // flow context (short circuiting).
+
+    // fall through...
+
+  case OPERATOR_AND: {
     assert(!ltype->isFloatingPointTy());
     val = builder.CreateAnd(leftVal, rightVal, namegen("iand"));
     break;
@@ -2988,12 +3036,35 @@ Bstatement *Llvm_backend::if_statement(Bfunction *bfunction,
 
 // Switch.
 
-Bstatement *Llvm_backend::switch_statement(
-    Bfunction *function, Bexpression *value,
+Bstatement *Llvm_backend::switch_statement(Bfunction *bfunction,
+                                           Bexpression *value,
     const std::vector<std::vector<Bexpression *>> &cases,
-    const std::vector<Bstatement *> &statements, Location switch_location) {
-  assert(false && "Llvm_backend::switch_statement not yet impl");
-  return nullptr;
+    const std::vector<Bstatement *> &statements, Location switch_location)
+{
+  // Error handling
+  if (value == errorExpression_.get())
+    return errorStatement_.get();
+  for (auto casev : cases)
+    if (exprVectorHasError(casev))
+      return errorStatement_.get();
+  if (stmtVectorHasError(statements))
+      return errorStatement_.get();
+
+  // Resolve value
+  value = resolve(value, bfunction);
+
+  // Case expressions are all expected to be constants
+  for (auto &bexpvec : cases)
+    for (auto &exp : bexpvec)
+      if (! llvm::cast<llvm::Constant>(exp->value()))
+        go_assert(false && "bad case value expression");
+
+  // Store results in placeholder
+  SwitchPHStatement *swst =
+      new SwitchPHStatement(bfunction, value, cases, statements,
+                            switch_location);
+  CHKTREE(swst);
+  return swst;
 }
 
 // Pair of statements.
@@ -3457,13 +3528,19 @@ bool Llvm_backend::function_set_parameters(
 class GenBlocks {
 public:
   GenBlocks(llvm::LLVMContext &context, Llvm_backend *be, Bfunction *function)
-      : context_(context), be_(be), function_(function) {}
+      : context_(context), be_(be), function_(function),
+        emitOrphanedCode_(false) {}
 
   llvm::BasicBlock *walk(Bstatement *stmt, llvm::BasicBlock *curblock);
   Bfunction *function() { return function_; }
-  llvm::BasicBlock *genIf(IfPHStatement *ifst, llvm::BasicBlock *curblock);
+  llvm::BasicBlock *genIf(IfPHStatement *ifst,
+                          llvm::BasicBlock *curblock);
+  llvm::BasicBlock *genSwitch(SwitchPHStatement *swst,
+                              llvm::BasicBlock *curblock);
 
-private:
+ private:
+  llvm::BasicBlock *mkBlock(const std::string &name,
+                            unsigned expl = Llvm_backend::ChooseVer);
   llvm::BasicBlock *getBlockForLabel(LabelId lab);
   llvm::BasicBlock *walkExpr(llvm::BasicBlock *curblock, Bexpression *expr);
 
@@ -3472,15 +3549,22 @@ private:
   Llvm_backend *be_;
   Bfunction *function_;
   std::map<LabelId, llvm::BasicBlock *> labelmap_;
+  bool emitOrphanedCode_;
 };
+
+llvm::BasicBlock *GenBlocks::mkBlock(const std::string &name,
+                                     unsigned expl)
+{
+  std::string tname = be_->namegen(name, expl);
+  llvm::Function *func = function()->function();
+  return llvm::BasicBlock::Create(context_, tname, func);
+}
 
 llvm::BasicBlock *GenBlocks::getBlockForLabel(LabelId lab) {
   auto it = labelmap_.find(lab);
   if (it != labelmap_.end())
     return it->second;
-  std::string lname = be_->namegen("label", lab);
-  llvm::Function *func = function()->function();
-  llvm::BasicBlock *bb = llvm::BasicBlock::Create(context_, lname, func);
+  llvm::BasicBlock *bb = mkBlock("label", lab);
   labelmap_[lab] = bb;
   return bb;
 }
@@ -3491,7 +3575,10 @@ llvm::BasicBlock *GenBlocks::walkExpr(llvm::BasicBlock *curblock,
   if (expr->stmt())
     curblock = walk(expr->stmt(), curblock);
   for (auto inst : expr->instructions()) {
-    curblock->getInstList().push_back(inst);
+    if (curblock)
+      curblock->getInstList().push_back(inst);
+    else
+      delete inst;
   }
   return curblock;
 }
@@ -3503,19 +3590,15 @@ llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
   curblock = walkExpr(curblock, ifst->cond());
 
   // Create true block
-  std::string tname = be_->namegen("then");
-  llvm::Function *func = function()->function();
-  llvm::BasicBlock *tblock = llvm::BasicBlock::Create(context_, tname, func);
+  llvm::BasicBlock *tblock = mkBlock("then");
 
   // Push fallthrough block
-  std::string ftname = be_->namegen("fallthrough");
-  llvm::BasicBlock *ft = llvm::BasicBlock::Create(context_, ftname, func);
+  llvm::BasicBlock *ft = mkBlock("fallthrough");
 
   // Create false block if present
   llvm::BasicBlock *fblock = ft;
   if (ifst->falseStmt()) {
-    std::string fname = be_->namegen("else");
-    fblock = llvm::BasicBlock::Create(context_, fname, func);
+    fblock = mkBlock("else");
   }
 
   // Insert conditional branch into current block
@@ -3524,17 +3607,72 @@ llvm::BasicBlock *GenBlocks::genIf(IfPHStatement *ifst,
 
   // Visit true block
   llvm::BasicBlock *tsucc = walk(ifst->trueStmt(), tblock);
-  if (! tsucc->getTerminator())
+  if (tsucc && ! tsucc->getTerminator())
     llvm::BranchInst::Create(ft, tsucc);
 
   // Walk false block if present
   if (ifst->falseStmt()) {
     llvm::BasicBlock *fsucc = fsucc = walk(ifst->falseStmt(), fblock);
-    if (! fsucc->getTerminator())
+    if (fsucc && ! fsucc->getTerminator())
       llvm::BranchInst::Create(ft, fsucc);
   }
 
   return ft;
+}
+
+llvm::BasicBlock *GenBlocks::genSwitch(SwitchPHStatement *swst,
+                                       llvm::BasicBlock *curblock) {
+  // Walk switch value first
+  Bexpression *swval = swst->switchValue();
+  curblock = walkExpr(curblock, swval);
+
+  // Unpack switch
+  const std::vector<std::vector<Bexpression *>> &cases = swst->cases();
+  const std::vector<Bstatement *> &statements = swst->statements();
+
+  // No need to walk switch values -- they should all be constants.
+
+  // Create blocks
+  llvm::BasicBlock *defBB = nullptr;
+  std::vector<llvm::BasicBlock *> blocks(statements.size());
+  for (unsigned idx = 0; idx < statements.size(); ++idx) {
+    bool isDefault = (cases[idx].size() == 0);
+    std::string bname(isDefault ? "default" : "case");
+    blocks[idx] = mkBlock(bname);
+    if (isDefault) {
+      assert(! defBB);
+      defBB = blocks[idx];
+    }
+  }
+  llvm::BasicBlock *epilogBB = mkBlock("epilog");
+  if (!defBB)
+    defBB = epilogBB;
+
+  LIRBuilder builder(context_, llvm::ConstantFolder());
+
+  // Walk statement/block
+  for (unsigned idx = 0; idx < statements.size(); ++idx) {
+    walk(statements[idx], blocks[idx]);
+    if (! blocks[idx]->getTerminator()) {
+      builder.SetInsertPoint(blocks[idx]);
+      builder.CreateBr(epilogBB);
+    }
+  }
+
+  // Create switch
+  builder.SetInsertPoint(curblock);
+  llvm::SwitchInst *swinst = builder.CreateSwitch(swval->value(), defBB);
+
+  // Connect values with blocks
+  for (unsigned idx = 0; idx < blocks.size(); ++idx) {
+    auto &bexpvec = cases[idx];
+    for (auto &exp : bexpvec) {
+      llvm::ConstantInt *ci = llvm::cast<llvm::ConstantInt>(exp->value());
+      swinst->addCase(ci, blocks[idx]);
+    }
+  }
+
+  return epilogBB;
 }
 
 llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
@@ -3557,23 +3695,32 @@ llvm::BasicBlock *GenBlocks::walk(Bstatement *stmt,
     curblock = genIf(ifst, curblock);
     break;
   }
+  case Bstatement::ST_SwitchPlaceholder: {
+    SwitchPHStatement *swst = stmt->castToSwitchPHStatement();
+    curblock = genSwitch(swst, curblock);
+    break;
+  }
   case Bstatement::ST_Goto: {
     GotoStatement *gst = stmt->castToGotoStatement();
     llvm::BasicBlock *lbb = getBlockForLabel(gst->targetLabel());
-    llvm::BranchInst::Create(lbb, curblock);
-    // FIXME: don't bother generating an orphan block, just zero
-    // the current block and don't emit whatever statically unreachable
-    // code is there.
-    std::string n = be_->namegen("orphan");
-    llvm::Function *func = function()->function();
-    llvm::BasicBlock *orphan = llvm::BasicBlock::Create(context_, n, func, lbb);
-    curblock = orphan;
+    if (curblock && ! curblock->getTerminator())
+      llvm::BranchInst::Create(lbb, curblock);
+    if (emitOrphanedCode_) {
+      std::string n = be_->namegen("orphan");
+      llvm::Function *func = function()->function();
+      llvm::BasicBlock *orphan =
+          llvm::BasicBlock::Create(context_, n, func, lbb);
+      curblock = orphan;
+    } else {
+      curblock = nullptr;
+    }
     break;
   }
   case Bstatement::ST_Label: {
     LabelStatement *lbst = stmt->castToLabelStatement();
     llvm::BasicBlock *lbb = getBlockForLabel(lbst->definedLabel());
-    llvm::BranchInst::Create(lbb, curblock);
+    if (curblock)
+      llvm::BranchInst::Create(lbb, curblock);
     curblock = lbb;
     break;
   }

@@ -104,14 +104,43 @@ void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel,
     break;
   }
 
-  case ST_SwitchPlaceholder:
-    os << "not yet implemented\n";
+  case ST_SwitchPlaceholder: {
+    SwitchPHStatement *swst = castToSwitchPHStatement();
+    indent(os, ilevel);
+    os << "switch";
+    if (! terse)
+      os << " " << ((void*) swst);
+    os << ":\n";
+    indent(os, ilevel + 2);
+    os << "swval:\n";
+    swst->switchValue()->osdump(os, ilevel + 2, linemap, terse);
+    const std::vector<std::vector<Bexpression *>> &cases = swst->cases();
+    const std::vector<Bstatement *> &statements = swst->statements();
+    for (unsigned idx = 0; idx < cases.size(); ++idx) {
+      auto &cs = cases[idx];
+      indent(os, ilevel + 2);
+      os << idx << ": ";
+      if (cs.empty())
+        os << "default: {\n";
+      else
+        os << cs.size() << " values: {\n";
+      for (auto &cv : cs) {
+        cv->osdump(os, ilevel+4, linemap, terse);
+      }
+      indent(os, ilevel + 2);
+      os << idx << "} =>\n";
+      auto &stmt = statements[idx];
+      indent(os, ilevel + 2);
+      stmt->osdump(os, ilevel+4, linemap, terse);
+    }
     break;
+  }
   }
 }
 
 void Bstatement::destroy(Bstatement *stmt, WhichDel which) {
   assert(stmt);
+
   switch (stmt->flavor()) {
   case ST_Compound: {
     CompoundStatement *cst = stmt->castToCompoundStatement();
@@ -140,10 +169,19 @@ void Bstatement::destroy(Bstatement *stmt, WhichDel which) {
     break;
   }
 
-  case ST_SwitchPlaceholder:
-    assert(false && "not yet implemented");
-    break;
+  case ST_SwitchPlaceholder: {
+    SwitchPHStatement *swst = stmt->castToSwitchPHStatement();
+    Bexpression::destroy(swst->switchValue(), which);
+    const std::vector<std::vector<Bexpression *>> &cases = swst->cases();
+    for (auto &bexpvec : cases)
+      for (auto &exp : bexpvec)
+        Bexpression::destroy(exp, which);
+    const std::vector<Bstatement *> &statements = swst->statements();
+    for (auto &st : statements)
+      Bstatement::destroy(st, which);
   }
+  }
+
   if (which != DelInstructions)
     delete stmt;
 }

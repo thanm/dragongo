@@ -496,29 +496,68 @@ Bvariable *FcnTestHarness::mkLocal(const char *name,
   return v;
 }
 
-void FcnTestHarness::mkAssign(Bexpression *lhs, Bexpression *rhs)
+void FcnTestHarness::mkAssign(Bexpression *lhs,
+                              Bexpression *rhs,
+                              AppendDisp disp)
 {
   assert(func_);
   Bstatement *as = be()->assignment_statement(func_, lhs, rhs, loc_);
-  addStmtToBlock(be(), curBlock_, as);
+  if (disp == YesAppend)
+    addStmtToBlock(be(), curBlock_, as);
 }
 
-Bstatement *FcnTestHarness::mkExprStmt(Bexpression *expr)
+Bstatement *FcnTestHarness::mkExprStmt(Bexpression *expr, AppendDisp disp)
 {
   assert(func_);
-  return addExprToBlock(be(), func_, curBlock_, expr);
+  Bstatement *es = be()->expression_statement(func_, expr);
+  if (disp == YesAppend)
+    addStmtToBlock(be(), curBlock_, es);
+  return es;
 }
 
-Bstatement *FcnTestHarness::mkReturn(Bexpression *expr)
+Bstatement *FcnTestHarness::mkReturn(Bexpression *expr, AppendDisp disp)
 {
   assert(func_);
   std::vector<Bexpression *> vals;
   vals.push_back(expr);
   Bstatement *ret = be()->return_statement(func_, vals, loc_);
-  addStmtToBlock(be(), curBlock_, ret);
-  returnAdded_ = true;
+  if (disp == YesAppend) {
+    addStmtToBlock(be(), curBlock_, ret);
+    returnAdded_ = true;
+  }
   return ret;
 }
+
+Bstatement *FcnTestHarness::mkIf(Bexpression *cond,
+                                 Bstatement *trueStmt,
+                                 Bstatement *falseStmt,
+                                 AppendDisp disp)
+{
+  assert(func_);
+  Bblock *trueBlock = mkBlockFromStmt(be(), func_, trueStmt);
+  Bblock *falseBlock = nullptr;
+  if (falseStmt)
+    falseBlock = mkBlockFromStmt(be(), func_, falseStmt);
+  Bstatement *ifst = be()->if_statement(func_, cond,
+                                        trueBlock, falseBlock, loc_);
+  if (disp == YesAppend)
+    addStmtToBlock(be(), curBlock_, ifst);
+  return ifst;
+}
+
+Bstatement *FcnTestHarness::mkSwitch(Bexpression *swval,
+                       const std::vector<std::vector<Bexpression*> >& cases,
+                       const std::vector<Bstatement*>& statements,
+                                     AppendDisp disp)
+{
+  assert(func_);
+  Bstatement *swst = be()->switch_statement(func_, swval,
+                                            cases, statements, loc_);
+  if (disp == YesAppend)
+    addStmtToBlock(be(), curBlock_, swst);
+  return swst;
+}
+
 
 void FcnTestHarness::addStmt(Bstatement *stmt)
 {
