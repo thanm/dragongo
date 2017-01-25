@@ -208,7 +208,7 @@ Btype *mkFuncTyp(Backend *be, ...) {
       result_type = va_arg(ap, Btype *);
       break;
     default: {
-      assert("internal error");
+      assert(false && "internal error");
       return NULL;
     }
     }

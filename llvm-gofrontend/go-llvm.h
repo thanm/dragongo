@@ -573,12 +573,14 @@ public:
   // Array init helper
   Bexpression *genArrayInit(llvm::ArrayType *llat,
                             Bexpression *expr,
-                            llvm::Value *storage);
+                            llvm::Value *storage,
+                            Bfunction *bfunc);
 
   // Struct init helper
   Bexpression *genStructInit(llvm::StructType *llst,
                              Bexpression *expr,
-                             llvm::Value *storage);
+                             llvm::Value *storage,
+                             Bfunction *bfunc);
 
   // General-purpose resolver, handles var expr context and
   // composite init context.

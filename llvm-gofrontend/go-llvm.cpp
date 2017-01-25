@@ -1340,7 +1340,7 @@ void Llvm_backend::defineLibcallBuiltin(const char *name, const char *libname,
   const bool isVarargs = false;
   llvm::FunctionType *ft =
       llvm::FunctionType::get(resultType, ptypes, isVarargs);
-  llvm::LibFunc::Func lf = static_cast<llvm::LibFunc::Func>(libfunc);
+  llvm::LibFunc lf = static_cast<llvm::LibFunc>(libfunc);
   llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
   llvm::Function *fcn =
       llvm::Function::Create(ft, plinkage, name, module_.get());
@@ -1443,7 +1443,8 @@ void Llvm_backend::defineIntrinsicBuiltins() {
   defineIntrinsicBuiltin("__builtin_expect", nullptr, llvm::Intrinsic::expect,
                          llvmIntegerType_, nullptr);
 
-  defineLibcallBuiltin("__builtin_memcmp", "memcmp", llvm::LibFunc::memcmp,
+  defineLibcallBuiltin("__builtin_memcmp", "memcmp",
+                       llvm::LibFunc::LibFunc_memcmp,
                        llvmInt32Type_, llvmPtrType_, llvmPtrType_,
                        llvmSizeType_, nullptr);
 
@@ -1479,7 +1480,7 @@ typedef enum {
 typedef struct {
   const char *name;
   mflav nargs;
-  llvm::LibFunc::Func lf;
+  llvm::LibFunc lf;
 } mathfuncdesc;
 }
 
@@ -1502,26 +1503,26 @@ void Llvm_backend::defineTrigBuiltins() {
       &onearg_long_double, &twoargs_long_double, &mixed_long_double};
 
   static const mathfuncdesc funcs[] = {
-      {"acos", OneArg, llvm::LibFunc::acos},
-      {"asin", OneArg, llvm::LibFunc::asin},
-      {"atan", OneArg, llvm::LibFunc::atan},
-      {"atan2", TwoArgs, llvm::LibFunc::atan2},
-      {"ceil", OneArg, llvm::LibFunc::ceil},
-      {"cos", OneArg, llvm::LibFunc::cos},
-      {"exp", OneArg, llvm::LibFunc::exp},
-      {"expm1", OneArg, llvm::LibFunc::expm1},
-      {"fabs", OneArg, llvm::LibFunc::fabs},
-      {"floor", OneArg, llvm::LibFunc::floor},
-      {"fmod", TwoArgs, llvm::LibFunc::fmod},
-      {"log", OneArg, llvm::LibFunc::log},
-      {"log1p", OneArg, llvm::LibFunc::log1p},
-      {"log10", OneArg, llvm::LibFunc::log10},
-      {"log2", OneArg, llvm::LibFunc::log2},
-      {"sin", OneArg, llvm::LibFunc::sin},
-      {"sqrt", OneArg, llvm::LibFunc::sqrt},
-      {"tan", OneArg, llvm::LibFunc::tan},
-      {"trunc", OneArg, llvm::LibFunc::trunc},
-      {"ldexp", TwoMixed, llvm::LibFunc::trunc},
+      {"acos", OneArg, llvm::LibFunc::LibFunc_acos},
+      {"asin", OneArg, llvm::LibFunc::LibFunc_asin},
+      {"atan", OneArg, llvm::LibFunc::LibFunc_atan},
+      {"atan2", TwoArgs, llvm::LibFunc::LibFunc_atan2},
+      {"ceil", OneArg, llvm::LibFunc::LibFunc_ceil},
+      {"cos", OneArg, llvm::LibFunc::LibFunc_cos},
+      {"exp", OneArg, llvm::LibFunc::LibFunc_exp},
+      {"expm1", OneArg, llvm::LibFunc::LibFunc_expm1},
+      {"fabs", OneArg, llvm::LibFunc::LibFunc_fabs},
+      {"floor", OneArg, llvm::LibFunc::LibFunc_floor},
+      {"fmod", TwoArgs, llvm::LibFunc::LibFunc_fmod},
+      {"log", OneArg, llvm::LibFunc::LibFunc_log},
+      {"log1p", OneArg, llvm::LibFunc::LibFunc_log1p},
+      {"log10", OneArg, llvm::LibFunc::LibFunc_log10},
+      {"log2", OneArg, llvm::LibFunc::LibFunc_log2},
+      {"sin", OneArg, llvm::LibFunc::LibFunc_sin},
+      {"sqrt", OneArg, llvm::LibFunc::LibFunc_sqrt},
+      {"tan", OneArg, llvm::LibFunc::LibFunc_tan},
+      {"trunc", OneArg, llvm::LibFunc::LibFunc_trunc},
+      {"ldexp", TwoMixed, llvm::LibFunc::LibFunc_trunc},
   };
 
   const unsigned nfuncs = sizeof(funcs) / sizeof(mathfuncdesc);
@@ -1818,7 +1819,8 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
 
 Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
                                         Bexpression *expr,
-                                        llvm::Value *storage)
+                                        llvm::Value *storage,
+                                        Bfunction *bfunc)
 {
   CompositeInitContext &cic = expr->compositeInitContext();
   const std::vector<Bexpression *> &aexprs = cic.elementExpressions();
@@ -1834,7 +1836,7 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
       expr->appendInstruction(llvm::cast<llvm::Instruction>(gep));
 
     // Store value into gep
-    Bexpression *valexp = resolveVarContext(aexprs[eidx]);
+    Bexpression *valexp = resolve(aexprs[eidx], bfunc);
     for (auto inst : valexp->instructions()) {
       assert(inst->getParent() == nullptr);
       expr->appendInstruction(inst);
@@ -1852,7 +1854,8 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
 
 Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
                                          Bexpression *expr,
-                                         llvm::Value *storage)
+                                         llvm::Value *storage,
+                                         Bfunction *bfunc)
 {
   CompositeInitContext &cic = expr->compositeInitContext();
   const std::vector<Bexpression *> &fexprs = cic.elementExpressions();
@@ -1868,7 +1871,7 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
 
     // Store value into gep
     assert(fexprs[fidx]);
-    Bexpression *valexp = resolveVarContext(fexprs[fidx]);
+    Bexpression *valexp = resolve(fexprs[fidx], bfunc);
     for (auto inst : valexp->instructions()) {
       assert(inst->getParent() == nullptr);
       expr->appendInstruction(inst);
@@ -1898,10 +1901,13 @@ Bexpression *Llvm_backend::resolveCompositeInit(Bexpression *expr,
   // Call separate helper depending on array or struct
   llvm::Type *llt = expr->btype()->type();
   assert(llt->isStructTy() || llt->isArrayTy());
-  if (llt->isStructTy())
-    return genStructInit(llvm::cast<llvm::StructType>(llt), expr, storage);
-  else
-    return genArrayInit(llvm::cast<llvm::ArrayType>(llt), expr, storage);
+  if (llt->isStructTy()) {
+    llvm::StructType *llst = llvm::cast<llvm::StructType>(llt);
+    return genStructInit(llst, expr, storage, func);
+  } else {
+    llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(llt);
+    return genArrayInit(llat, expr, storage, func);
+  }
 }
 
 // An expression that references a variable.

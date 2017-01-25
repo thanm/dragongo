@@ -142,10 +142,16 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel,
       os << linemap->to_string(location()) << "\n";
     }
     if (compositeInitPending()) {
+      const std::vector<Bexpression *> &eevec =
+          compositeInitContext().elementExpressions();
       indent(os, ilevel);
-      os << "composite init pending:\n";
-      for (auto exp : compositeInitContext().elementExpressions())
+      os << "composite init pending [" << eevec.size() << "]:\n";
+      unsigned idx = 0;
+      for (auto exp : eevec) {
+        indent(os, ilevel+2);
+        os << "EE" << idx << ":\n";
         exp->osdump(os, ilevel+2, linemap, terse);
+      }
     }
   }
   for (auto inst : instructions()) {
@@ -170,10 +176,12 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel,
   }
   if (!terse && varExprPending()) {
     const VarContext &vc = varContext();
+    indent(os, ilevel);
     os << "var pending: lvalue=" <<  (vc.lvalue() ? "yes" : "no")
        << " addrLevel=" << vc.addrLevel() << "\n";
   }
   if (!terse && stmt()) {
+    indent(os, ilevel);
     os << "enclosed stmt:\n";
     stmt()->osdump(os, ilevel+2, linemap, terse);
   }
