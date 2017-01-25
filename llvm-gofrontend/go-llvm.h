@@ -598,10 +598,10 @@ public:
   bool isPtrToFuncType(llvm::Type *typ);
 
   // Converts value "src" for assignment to container of type
-  // "dstType" in assignment-like contexts. This helper exists to
-  // help with cases where the frontend is creating an assignment of
-  // form "X = Y" where X and Y's types are considered matching by
-  // the front end, but are non-matching in an LLVM context. For example,
+  // "dstType" in assignment-like contexts. This helper exists to help
+  // with cases where the frontend is creating an assignment of form
+  // "X = Y" where X and Y's types are considered matching by the
+  // front end, but are non-matching in an LLVM context. For example,
   //
   //   type Ifi func(int) int
   //   ...
@@ -609,8 +609,19 @@ public:
   //
   // Here the right hand side will come out as pointer-to-descriptor,
   // whereas variable "fp" will have type "pointer to functon", which are
-  // not the same. Return value will be a new convert Bexpression if a
-  // convert is needed, NULL otherwise.
+  // not the same. Another example is assignments involving nil, e.g.
+  //
+  //   var ip *float32
+  //   ...
+  //   ip = nil
+  //
+  // The type of the right hand side of the assignment will be a
+  // generic "*i64" as opposed to "*float32", since the backend
+  // "nil_pointer_expression" does not allow for creation of nil
+  // pointers of specific types.
+  //
+  // Return value will be a new convert Bexpression if a convert is
+  // needed, NULL otherwise.
   llvm::Value *convertForAssignment(Bexpression *src, llvm::Type *dstToType);
 
   // Apply type conversion for a binary operation. This helper exists
@@ -778,7 +789,8 @@ private:
   // used to cache + reuse things like global constants.
   btyped_value_expr_maptyp valueExprmap_;
 
-  // Map from LLVM values to Bvariable.
+  // Map from LLVM values to Bvariable. This is used for
+  // module-scope variables, not vars local to a function.
   std::unordered_map<llvm::Value *, Bvariable *> valueVarMap_;
 
   // For creation of useful block and inst names. Key is tag (ex: "add")
