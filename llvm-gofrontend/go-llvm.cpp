@@ -1788,10 +1788,9 @@ bool Llvm_backend::stmtVectorHasError(const std::vector<Bstatement *> &stmts)
 
 Bexpression *Llvm_backend::resolve(Bexpression *expr, Bfunction *func)
 {
-  assert(!(expr->compositeInitPending() && expr->varExprPending()));
   if (expr->compositeInitPending())
     expr = resolveCompositeInit(expr, func, nullptr);
-  else if (expr->varExprPending())
+  if (expr->varExprPending())
     expr = resolveVarContext(expr);
   return expr;
 }
@@ -1837,10 +1836,8 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
 
     // Store value into gep
     Bexpression *valexp = resolve(aexprs[eidx], bfunc);
-    for (auto inst : valexp->instructions()) {
-      assert(inst->getParent() == nullptr);
-      expr->appendInstruction(inst);
-    }
+    std::set<llvm::Instruction *> vis;
+    incorporateExpression(expr, valexp, &vis);
     llvm::Instruction *si = new llvm::StoreInst(valexp->value(), gep);
     expr->appendInstruction(si);
   }
@@ -1872,10 +1869,8 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
     // Store value into gep
     assert(fexprs[fidx]);
     Bexpression *valexp = resolve(fexprs[fidx], bfunc);
-    for (auto inst : valexp->instructions()) {
-      assert(inst->getParent() == nullptr);
-      expr->appendInstruction(inst);
-    }
+    std::set<llvm::Instruction *> vis;
+    incorporateExpression(expr, valexp, &vis);
     llvm::Instruction *si = new llvm::StoreInst(valexp->value(), gep);
     expr->appendInstruction(si);
   }
@@ -1890,24 +1885,30 @@ Bexpression *Llvm_backend::resolveCompositeInit(Bexpression *expr,
 {
   if (expr == errorExpression_.get() || func == errorFunction_.get())
     return errorExpression_.get();
+  bool setPending = false;
   if (!storage) {
     assert(func);
     std::string tname(namegen("tmp"));
     Bvariable *tvar = local_variable(func, tname, expr->btype(), true,
                                      Location());
     storage = tvar->value();
+    setPending = true;
   }
 
   // Call separate helper depending on array or struct
   llvm::Type *llt = expr->btype()->type();
   assert(llt->isStructTy() || llt->isArrayTy());
+  Bexpression *rval = nullptr;
   if (llt->isStructTy()) {
     llvm::StructType *llst = llvm::cast<llvm::StructType>(llt);
-    return genStructInit(llst, expr, storage, func);
+    rval = genStructInit(llst, expr, storage, func);
   } else {
     llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(llt);
-    return genArrayInit(llat, expr, storage, func);
+    rval = genArrayInit(llat, expr, storage, func);
   }
+  if (setPending)
+    rval->setVarExprPending(false, 0);
+  return rval;
 }
 
 // An expression that references a variable.

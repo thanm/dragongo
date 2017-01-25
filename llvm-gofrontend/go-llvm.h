@@ -491,9 +491,10 @@ public:
                            unsigned alignmentInBytes = 0);
 
   // Helper to fold contents of one instruction into another.
-  void incorporateExpression(Bexpression *dst,
-                             Bexpression *src,
-                             std::set<llvm::Instruction *> *visited);
+  static void
+  incorporateExpression(Bexpression *dst,
+                        Bexpression *src,
+                        std::set<llvm::Instruction *> *visited);
 
   enum MkExprAction { AppendInst, DontAppend };
 
