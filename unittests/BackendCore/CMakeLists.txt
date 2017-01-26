@@ -24,6 +24,7 @@ set(BackendCoreSources
   BackendStmtTests.cpp
   BackendVarTests.cpp
   BackendTreeIntegrity.cpp
+  BackendNodeTests.cpp
   LinemapTests.cpp
   TestUtilsTest.cpp
   TestUtils.cpp

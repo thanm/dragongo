@@ -35,6 +35,7 @@ go-llvm-bvariable.cpp
 go-llvm-tree-integrity.cpp
 go-llvm.cpp
 go-sha1.cpp
+bnode.cpp
 )
 
 add_dependencies(LLVMCppGoFrontEnd intrinsics_gen)
