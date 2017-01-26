@@ -1707,8 +1707,6 @@ Bexpression *Llvm_backend::indirect_expression(Btype *btype,
 
   assert(expr->btype()->type()->isPointerTy());
 
-  // FIXME: add check for nil pointer
-
   const VarContext *vc = nullptr;
   if (expr->varExprPending()) {
     vc = &expr->varContext();
