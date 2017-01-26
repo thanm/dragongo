@@ -81,4 +81,80 @@ TEST(BackendCallTests, CallToVoid) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendCallTests, MultiReturnCall) {
+
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+
+  // Create function with multiple returns
+  Btype *bi64t = be->integer_type(false, 64);
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bi8t = be->integer_type(false, 8);
+  BFunctionType *befty1 = mkFuncTyp(be,
+                            L_PARM, be->pointer_type(bi8t),
+                            L_RES, be->pointer_type(bi8t),
+                            L_RES, be->pointer_type(bi32t),
+                            L_RES, be->pointer_type(bi64t),
+                            L_RES, bi64t,
+                            L_END);
+  Bfunction *func = h.mkFunction("foo", befty1);
+
+  // Emit a suitable return suitable for "foo" as declared above.
+  // This returns a constant expression.
+  std::vector<Bexpression *> rvals = {
+    be->nil_pointer_expression(),
+    be->nil_pointer_expression(),
+    be->nil_pointer_expression(),
+    mkInt64Const(be, 101) };
+  Bstatement *s1 = h.mkReturn(rvals, FcnTestHarness::NoAppend);
+
+  {
+    const char *exp = R"RAW_RESULT(
+     ret { i8*, i32*, i64*, i64 } { i8* null, i32* null, i64* null, i64 101 }
+    )RAW_RESULT";
+
+    bool isOK = h.expectStmt(s1, exp);
+    EXPECT_TRUE(isOK && "First return stmt does not have expected contents");
+  }
+
+  // This returns value with non-constant elements.
+  Bvariable *p1 = func->getBvarForValue(func->getNthArgValue(0));
+  Bexpression *vex = be->var_expression(p1, VE_rvalue, Location());
+  std::vector<Bexpression *> rvals2 = {
+    vex,
+    be->nil_pointer_expression(),
+    be->nil_pointer_expression(),
+    mkInt64Const(be, 101) };
+  Bstatement *s2 = h.mkReturn(rvals2, FcnTestHarness::NoAppend);
+
+  {
+    const char *exp = R"RAW_RESULT(
+      %field.0 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 0
+      %p0.ld.0 = load i8*, i8** %p0.addr
+      store i8* %p0.ld.0, i8** %field.0
+      %field.1 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 1
+      store i32* null, i32** %field.1
+      %field.2 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 2
+      store i64* null, i64** %field.2
+      %field.3 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 3
+      store i64 101, i64* %field.3
+      %.ld.0 = load { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0
+      ret { i8*, i32*, i64*, i64 } %.ld.0
+    )RAW_RESULT";
+
+    bool isOK = h.expectStmt(s2, exp);
+    EXPECT_TRUE(isOK && "Second return stmt does not have expected contents");
+  }
+
+  // If statement
+  Location loc;
+  Bexpression *ve2 = be->var_expression(p1, VE_rvalue, Location());
+  Bexpression *npe = be->nil_pointer_expression();
+  Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, ve2, npe, loc);
+  h.mkIf(cmp, s1, s2);
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 }

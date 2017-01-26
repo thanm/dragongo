@@ -22,7 +22,7 @@ TEST(BackendFcnTests, MakeEmptyFunction) {
   // Create empty function
   FcnTestHarness h;
   Llvm_backend *be = h.be();
-  Btype *befty1 = mkFuncTyp(be, L_END);
+  BFunctionType *befty1 = mkFuncTyp(be, L_END);
   h.mkFunction("foo", befty1);
 
   const char *exp = R"RAW_RESULT(
@@ -44,7 +44,7 @@ TEST(BackendFcnTests, MakeFunction) {
   Btype *bi32t = be->integer_type(false, 32);
 
   // func foo(i1, i2 int32) int64 { }
-  Btype *befty =
+  BFunctionType *befty =
       mkFuncTyp(be.get(), L_PARM, bi32t, L_PARM, bi32t, L_RES, bi64t, L_END);
 
   // FIXME: this is not supported yet.

@@ -1272,7 +1272,7 @@ TEST(BackendExprTests, TestConditionalExpression1) {
 
   FcnTestHarness h;
   Llvm_backend *be = h.be();
-  Btype *befty1 = mkFuncTyp(be, L_END);
+  BFunctionType *befty1 = mkFuncTyp(be, L_END);
   Bfunction *func = h.mkFunction("foo", befty1);
   Location loc;
 
@@ -1326,7 +1326,7 @@ TEST(BackendExprTests, TestConditionalExpression2) {
 
   FcnTestHarness h;
   Llvm_backend *be = h.be();
-  Btype *befty1 = mkFuncTyp(be, L_END);
+  BFunctionType *befty1 = mkFuncTyp(be, L_END);
   Bfunction *func = h.mkFunction("foo", befty1);
   Location loc;
 
@@ -1476,7 +1476,7 @@ TEST(BackendExprTests, TestCallArgCOnversions) {
   Btype *bi8t = be->integer_type(false, 8);
   Btype *bi32t = be->integer_type(false, 32);
   Btype *bi64t = be->integer_type(false, 64);
-  Btype *befty1 = mkFuncTyp(be,
+  BFunctionType *befty1 = mkFuncTyp(be,
                             L_PARM, be->pointer_type(bi8t),
                             L_PARM, be->pointer_type(bi32t),
                             L_PARM, be->pointer_type(bi64t),

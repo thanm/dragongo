@@ -1866,12 +1866,20 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
     if (llvm::isa<llvm::Instruction>(gep))
       expr->appendInstruction(llvm::cast<llvm::Instruction>(gep));
 
-    // Store value into gep
+    // Unpack/post-process the value in question
     assert(fexprs[fidx]);
     Bexpression *valexp = resolve(fexprs[fidx], bfunc);
     std::set<llvm::Instruction *> vis;
     incorporateExpression(expr, valexp, &vis);
-    llvm::Instruction *si = new llvm::StoreInst(valexp->value(), gep);
+
+    // Store value into gep
+    llvm::Value *val = valexp->value();
+    if (val->getType()->isPointerTy()) {
+      llvm::PointerType *geppt =
+          llvm::cast<llvm::PointerType>(gep->getType());
+      val = convertForAssignment(valexp, geppt->getElementType());
+    }
+    llvm::Instruction *si = new llvm::StoreInst(val, gep);
     expr->appendInstruction(si);
   }
 
@@ -2752,8 +2760,6 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
   if (barray == errorExpression_.get() || index == errorExpression_.get())
     return errorExpression_.get();
 
-  // FIXME: add array bounds checking
-
   index = resolveVarContext(index);
 
   // Construct an appropriate GEP
@@ -2993,15 +2999,26 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   if (bfunction == error_function() || exprVectorHasError(vals))
     return errorStatement_.get();
 
-  // Temporary
-  assert(vals.size() == 1);
-
   // For the moment return instructions are going to have null type,
   // since their values should not be feeding into anything else (and
   // since Go functions can return multiple values).
   Btype *btype = nullptr;
 
-  Bexpression *toret = resolve(vals[0], bfunction);
+  // Resolve arguments
+  std::vector<Bexpression *> resolvedVals;
+  for (auto &val : vals)
+    resolvedVals.push_back(resolve(val, bfunction));
+
+  Bexpression *toret = nullptr;
+  if (vals.size() == 1) {
+    toret = resolvedVals[0];
+  } else {
+    Btype *rtyp = bfunction->fcnType()->resultType();
+    Bexpression *structVal =
+        constructor_expression(rtyp, resolvedVals, location);
+    structVal = resolve(structVal, bfunction);
+    toret = structVal;
+  }
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, toret->value());
   Bexpression *rexp = makeExpression(ri, AppendInst, btype, location,
                                      toret, nullptr);
@@ -3023,7 +3040,7 @@ Bstatement *Llvm_backend::exception_handler_statement(Bstatement *bstat,
   return nullptr;
 }
 
-// If.
+// If statement.
 
 Bstatement *Llvm_backend::if_statement(Bfunction *bfunction,
                                        Bexpression *condition,
@@ -3060,7 +3077,7 @@ Bstatement *Llvm_backend::switch_statement(Bfunction *bfunction,
   // Resolve value
   value = resolve(value, bfunction);
 
-  // Case expressions are all expected to be constants
+  // Case expressions are expected to be constants for this flavor of switch
   for (auto &bexpvec : cases)
     for (auto &exp : bexpvec)
       if (! llvm::cast<llvm::Constant>(exp->value()))

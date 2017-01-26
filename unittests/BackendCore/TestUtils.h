@@ -119,7 +119,7 @@ typedef enum {
 //                            L_RES, bi32t,
 //                            L_END);
 //
-Btype *mkFuncTyp(Backend *be, ...);
+BFunctionType *mkFuncTyp(Backend *be, ...);
 
 // Varargs helper to create llvm function type, similar to "mkFuncTyp"
 // above (same token-value pair list).
@@ -133,7 +133,7 @@ Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams = true);
 Bexpression *mkCallExpr(Backend *be, Bfunction *fun, ...);
 
 // Returns function created from type
-Bfunction *mkFuncFromType(Backend *be, const char *fname, Btype *befty);
+Bfunction *mkFuncFromType(Backend *be, const char *fname, BFunctionType *befty);
 
 // Manufacture an unsigned 64-bit integer constant
 Bexpression *mkUint64Const(Backend *be, uint64_t val);
@@ -171,7 +171,7 @@ class FcnTestHarness {
   ~FcnTestHarness();
 
   // Create function to work on
-  Bfunction *mkFunction(const char *fcnName, Btype *befty);
+  Bfunction *mkFunction(const char *fcnName, BFunctionType *befty);
 
   // Return pointer to backend
   Llvm_backend *be() { return be_.get(); }
@@ -197,6 +197,10 @@ class FcnTestHarness {
   // Append a return stmt to block
   Bstatement *mkReturn(Bexpression *expr, AppendDisp disp = YesAppend);
 
+  // Append a multi-value return stmt to block
+  Bstatement *mkReturn(const std::vector<Bexpression *> &vals,
+                       AppendDisp disp = YesAppend);
+
   // Create and append an "if" statement.
   Bstatement *mkIf(Bexpression *cond, Bstatement *trueStmt,
                    Bstatement *falseStmt, AppendDisp disp = YesAppend);
@@ -216,6 +220,10 @@ class FcnTestHarness {
   // Verify that block contains specified contents. Return false
   // and emit diagnostics if not.
   bool expectBlock(const std::string &expected);
+
+  // Verify that stmt contains specified contents. Return false
+  // and emit diagnostics if not.
+  bool expectStmt(Bstatement *st, const std::string &expected);
 
   // Verify that value contains specified contents. Return false
   // and emit diagnostics if not.

@@ -182,7 +182,7 @@ Backend::Btyped_identifier mkid(Btype *t) {
   return Backend::Btyped_identifier(buf, t, Location());
 }
 
-Btype *mkFuncTyp(Backend *be, ...) {
+BFunctionType *mkFuncTyp(Backend *be, ...) {
   va_list ap;
 
   va_start(ap, be);
@@ -214,8 +214,13 @@ Btype *mkFuncTyp(Backend *be, ...) {
     }
     tok = va_arg(ap, unsigned);
   }
-  Location loc;
-  return be->function_type(receiver, params, results, result_type, loc);
+
+  if (results.size() > 1)
+    result_type = be->struct_type(results);
+
+  Btype *ft = be->function_type(receiver, params, results,
+                                result_type, Location());
+  return ft->castToBFunctionType();
 }
 
 llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...) {
@@ -305,7 +310,7 @@ Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams) {
   return func;
 }
 
-Bfunction *mkFuncFromType(Backend *be, const char *fname, Btype *befty)
+Bfunction *mkFuncFromType(Backend *be, const char *fname, BFunctionType *befty)
 {
   bool visible = true;
   bool is_declaration = false;
@@ -316,6 +321,12 @@ Bfunction *mkFuncFromType(Backend *be, const char *fname, Btype *befty)
   Bfunction *func = be->function(befty, fname, fname, visible,
                                  is_declaration, is_inl,
                                  split_stack, unique_sec, loc);
+  const std::vector<Btype *> &paramTypes = befty->paramTypes();
+  for (unsigned idx = 0; idx < paramTypes.size(); ++idx) {
+    std::stringstream ss;
+    ss << "p" << idx;
+    be->parameter_variable(func, ss.str(), paramTypes[idx], false, loc);
+  }
   return func;
 }
 
@@ -475,7 +486,7 @@ FcnTestHarness::~FcnTestHarness()
   assert(finished_);
 }
 
-Bfunction *FcnTestHarness::mkFunction(const char *fcnName, Btype *befty)
+Bfunction *FcnTestHarness::mkFunction(const char *fcnName, BFunctionType *befty)
 {
   func_ = mkFuncFromType(be(), fcnName, befty);
   entryBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
@@ -517,9 +528,15 @@ Bstatement *FcnTestHarness::mkExprStmt(Bexpression *expr, AppendDisp disp)
 
 Bstatement *FcnTestHarness::mkReturn(Bexpression *expr, AppendDisp disp)
 {
-  assert(func_);
   std::vector<Bexpression *> vals;
   vals.push_back(expr);
+  return mkReturn(vals, disp);
+}
+
+Bstatement *FcnTestHarness::mkReturn(const std::vector<Bexpression *> &vals,
+                                     AppendDisp disp)
+{
+  assert(func_);
   Bstatement *ret = be()->return_statement(func_, vals, loc_);
   if (disp == YesAppend) {
     addStmtToBlock(be(), curBlock_, ret);
@@ -588,6 +605,18 @@ void FcnTestHarness::newBlock()
 
   // New block
   curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
+}
+
+bool FcnTestHarness::expectStmt(Bstatement *st, const std::string &expected)
+{
+ std::string reason;
+  bool equal = difftokens(expected, repr(st), reason);
+  if (! equal) {
+    std::cerr << reason << "\n";
+    std::cerr << "expected dump:\n" << expected << "\n";
+    std::cerr << "statement dump:\n" << repr(st) << "\n";
+  }
+  return equal;
 }
 
 bool FcnTestHarness::expectValue(llvm::Value *val, const std::string &expected)
