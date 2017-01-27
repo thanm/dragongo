@@ -70,68 +70,28 @@ static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
                            Linemap *linemap)
-    : context_(context)
+    : TypeManager(context)
+    , context_(context)
     , module_(new llvm::Module("gomodule", context))
     , datalayout_(module_->getDataLayout())
     , linemap_(linemap)
     , addressSpace_(0)
     , traceLevel_(0)
     , checkIntegrity_(true)
-    , complexFloatType_(nullptr)
-    , complexDoubleType_(nullptr)
-    , errorType_(nullptr)
-    , stringType_(nullptr)
-    , llvmVoidType_(nullptr)
-    , llvmBoolType_(nullptr)
-    , llvmPtrType_(nullptr)
-    , llvmSizeType_(nullptr)
-    , llvmIntegerType_(nullptr)
-    , llvmInt8Type_(nullptr)
-    , llvmInt32Type_(nullptr)
-    , llvmInt64Type_(nullptr)
-    , llvmFloatType_(nullptr)
-    , llvmDoubleType_(nullptr)
-    , llvmLongDoubleType_(nullptr)
     , TLI_(nullptr)
     , errorFunction_(nullptr)
 {
-  // LLVM doesn't have anything that corresponds directly to the
-  // gofrontend notion of an error type. For now we create a so-called
-  // 'identified' anonymous struct type and have that act as a
-  // stand-in. See http://llvm.org/docs/LangRef.html#structure-type
-  errorType_ = makeAuxType(llvm::StructType::create(context_, "$Error$"));
-
   // If nobody passed in a linemap, create one for internal use.
   if (!linemap_) {
     ownLinemap_.reset(go_get_linemap());
     linemap_ = ownLinemap_.get();
   }
 
-  // For builtin creation
-  llvmPtrType_ =
-      llvm::PointerType::get(llvm::StructType::create(context), addressSpace_);
-
-  // Assorted pre-computer types for use in builtin function creation
-  llvmVoidType_ = llvm::Type::getVoidTy(context_);
-  llvmBoolType_ = llvm::IntegerType::get(context_, 1);
-  llvmIntegerType_ =
-      llvm::IntegerType::get(context_, datalayout_.getPointerSizeInBits());
-  llvmSizeType_ = llvmIntegerType_;
-  llvmInt8Type_ = llvm::IntegerType::get(context_, 8);
-  llvmInt32Type_ = llvm::IntegerType::get(context_, 32);
-  llvmInt64Type_ = llvm::IntegerType::get(context_, 64);
-  llvmFloatType_ = llvm::Type::getFloatTy(context_);
-  llvmDoubleType_ = llvm::Type::getDoubleTy(context_);
-  llvmLongDoubleType_ = llvm::Type::getFP128Ty(context_);
-
-  // Predefined C string type
-  stringType_ = pointer_type(integer_type(true, 8));
-
   // Create and record an error function. By marking it as varargs this will
   // avoid any collisions with things that the front end might create, since
   // Go varargs is handled/lowered entirely by the front end.
   llvm::SmallVector<llvm::Type *, 1> elems(0);
-  elems.push_back(errorType_->type());
+  elems.push_back(errorType()->type());
   const bool isVarargs = true;
   llvm::FunctionType *eft = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context_), elems, isVarargs);
@@ -142,14 +102,20 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
 
   // Reuse the error function as the value for error_expression
   errorExpression_.reset(
-      new Bexpression(errorFunction_->function(), errorType_, Location()));
+      new Bexpression(errorFunction_->function(), errorType(), Location()));
+
+  // We now have the necessary bits to finish initialization of the
+  // type manager.
+  initializeTypeManager(errorExpression_.get(),
+                        &module_->getDataLayout(),
+                        nameTags());
 
   // Error statement
   errorStatement_.reset(stmtFromExpr(nullptr, errorExpression_.get()));
 
   // Reuse the error function as the value for errorVariable_
   errorVariable_.reset(
-      new Bvariable(errorType_, Location(), "", ErrorVar, false, nullptr));
+      new Bvariable(errorType(), Location(), "", ErrorVar, false, nullptr));
 
   defineAllBuiltins();
 }
@@ -157,16 +123,6 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
 Llvm_backend::~Llvm_backend() {
   for (auto &expr : expressions_)
     delete expr;
-  for (auto &t : anonTypes_)
-    delete t;
-  for (auto &t : placeholders_)
-    delete t;
-  for (auto &t : duplicates_)
-    delete t;
-  for (auto &kv : auxTypeMap_)
-    delete kv.second;
-  for (auto &t : namedTypes_)
-    delete t;
   for (auto &kv : valueExprmap_)
     delete kv.second;
   for (auto &kv : valueVarMap_)
@@ -183,6 +139,12 @@ ExprListStatement *Llvm_backend::stmtFromExpr(Bfunction *function,
   st->appendExpression(expr);
   CHKTREE(st);
   return st;
+}
+
+void Llvm_backend::setTraceLevel(unsigned level)
+{
+  traceLevel_ = level;
+  setTypeManagerTraceLevel(level);
 }
 
 void
@@ -258,432 +220,51 @@ void Llvm_backend::enforceTreeIntegrity(Bstatement *s)
   }
 }
 
-std::string Llvm_backend::namegen(const std::string &tag, unsigned expl) {
-  auto it = nametags_.find(tag);
-  unsigned count = 0;
-  if (it != nametags_.end())
-    count = it->second + 1;
-  if (expl != ChooseVer)
-    count = expl;
-  std::stringstream ss;
-  ss << tag << "." << count;
-  if (expl == ChooseVer)
-    nametags_[tag] = count;
-  return ss.str();
-}
+Btype *Llvm_backend::error_type() { return errorType(); }
 
-bool Llvm_backend::removeAnonType(Btype *typ)
-{
-  auto it = anonTypes_.find(typ);
-  if (it != anonTypes_.end()) {
-    anonTypes_.erase(it);
-    return true;
-  }
-  return false;
-}
+Btype *Llvm_backend::void_type() { return voidType(); }
 
-void Llvm_backend::reinstallAnonType(Btype *typ)
-{
-  auto it = anonTypes_.find(typ);
-  if (it != anonTypes_.end()) {
-    // type already exists -- take the type we were intending to
-    // install in anonTypes_ and record as duplicate.
-    duplicates_.insert(typ);
-    return;
-  }
-  anonTypes_.insert(typ);
-}
-
-// We have two flavors of placeholders: those created using the
-// ::placeholder_*_type methods, and then concrete types that have
-// placeholder children (for example when ::pointer_type is invoked
-// on a placeholder type). This routine deals only with the first
-// category.
-
-void Llvm_backend::updatePlaceholderUnderlyingType(Btype *pht,
-                                                   Btype *newtyp) {
-  assert(placeholders_.find(pht) != placeholders_.end());
-  assert(anonTypes_.find(pht) == anonTypes_.end());
-  assert(pht->isPlaceholder());
-
-  // make changes
-  pht->setType(newtyp->type());
-  if (! newtyp->isPlaceholder())
-    pht->setPlaceholder(false);
-
-  // Now that this is fully concrete, this may allow us to make
-  // other types concrete if they referred to this one.
-  if (!pht->isPlaceholder())
-    postProcessResolvedPlaceholder(pht);
-}
-
-BFunctionType *Llvm_backend::makeAuxFcnType(llvm::FunctionType *ft)
-{
-  assert(ft);
-
-  auto it = auxTypeMap_.find(ft);
-  if (it != auxTypeMap_.end())
-    return it->second->castToBFunctionType();
-
-  Btype *recvTyp = nullptr;
-  Btype *rStructTyp = nullptr;
-  std::vector<Btype *> params;
-  std::vector<Btype *> results;
-  if (ft->getReturnType() != llvmVoidType_)
-    results.push_back(makeAuxType(ft->getReturnType()));
-  for (unsigned ii = 0; ii < ft->getNumParams(); ++ii)
-    params.push_back(makeAuxType(ft->getParamType(ii)));
-  BFunctionType *rval =
-      new BFunctionType(recvTyp, params, results,
-                        rStructTyp, ft);
-  auxTypeMap_[ft] = rval;
-  return rval;
-}
-
-Btype *Llvm_backend::makeAuxType(llvm::Type *lt) {
-  assert(lt);
-
-  auto it = auxTypeMap_.find(lt);
-  if (it != auxTypeMap_.end())
-    return it->second;
-  Btype *rval = new Btype(Btype::AuxT, lt);
-  auxTypeMap_[lt] = rval;
-  return rval;
-}
-
-
-Btype *Llvm_backend::error_type() { return errorType_; }
-
-Btype *Llvm_backend::void_type() { return makeAuxType(llvmVoidType_); }
-
-bool Llvm_backend::isBooleanType(Btype *bt) {
-  BIntegerType *bit = bt->castToBIntegerType();
-  return (bit && bit->isUnsigned() &&
-          bit->type() == llvm::IntegerType::get(context_, 8));
-}
-
-Btype *Llvm_backend::bool_type() {
-  // LLVM has no predefined boolean type. Use int8 for this purpose.
-  return integer_type(true, 8);
-}
-
-llvm::Type *Llvm_backend::makeLLVMFloatType(int bits)
-{
-  llvm::Type *llft = nullptr;
-  if (bits == 32)
-    llft = llvmFloatType_;
-  else if (bits == 64)
-    llft = llvmDoubleType_;
-  else if (bits == 128)
-    llft = llvmLongDoubleType_;
-  else
-    assert(false && "unsupported float width");
-  return llft;
-}
+Btype *Llvm_backend::bool_type() { return boolType(); }
 
 // Get an unnamed float type.
 
 Btype *Llvm_backend::float_type(int bits)
 {
-  llvm::Type *llft = makeLLVMFloatType(bits);
-
-  // Consult cache
-  BFloatType cand(bits, llft);
-  auto it = anonTypes_.find(&cand);
-  if (it != anonTypes_.end()) {
-    Btype *existing = *it;
-    BFloatType *bft = existing->castToBFloatType();
-    assert(bft);
-    return bft;
-  }
-
-  // Install in cache
-  BFloatType *rval = new BFloatType(bits, llft);
-  anonTypes_.insert(rval);
-  return rval;
+  return floatType(bits);
 }
-
-// Get an unnamed integer type.
-//
-// Note that in the LLVM world, we don't have signed/unsigned types,
-// we only have signed/unsigned operations (e.g. signed addition of
-// two integers).
-//
-// Many frontends for C-like languages have squishyness when it comes
-// to signed/unsigned arithmetic. Example: for the C code
-//
-//       double abc(unsigned x, int y) { return (double) x + y; }
-//
-// What typically happens under the hood is that a C compiler constructs
-// a parse tree that looks like
-//
-//                  op: ADDITION
-//                 /          \.
-//                /            \.
-//            var_ref(x)      var_ref(y)
-//            typ: unsigned   type: signed
-//
-// where the ADD op is generic/polymorphic, and the real nature of the
-// add (signed/unsigned) only becomes apparent during lowering, when
-// the C rules about type conversions are enforced.
-//
-// To account for any potential hazards here, we record whether the
-// frontend has announced that a specific type is unsigned in a side
-// table.  We can then use that table later on to enforce the rules
-// (for example, to insure that we didn't forget to insert a type
-// conversion, or to derive the correct flavor of an integer ADD based
-// on its arguments).
 
 Btype *Llvm_backend::integer_type(bool is_unsigned, int bits)
 {
-  llvm::Type *llit = llvm::IntegerType::get(context_, bits);
-
-  // Check for and return existing anon type if we have one already
-  BIntegerType cand(is_unsigned, bits, llit);
-  auto it = anonTypes_.find(&cand);
-  if (it != anonTypes_.end()) {
-    Btype *existing = *it;
-    BIntegerType *bit = existing->castToBIntegerType();
-    assert(bit);
-    return bit;
-  }
-
-  // Install in cache
-  BIntegerType *rval = new BIntegerType(is_unsigned, bits, llit);
-  anonTypes_.insert(rval);
-  return rval;
+  return integerType(is_unsigned, bits);
 }
-
-llvm::Type *
-Llvm_backend::makeLLVMStructType(const std::vector<Btyped_identifier> &fields) {
-  llvm::SmallVector<llvm::Type *, 64> elems(fields.size());
-  for (unsigned i = 0; i < fields.size(); ++i)
-    elems[i] = fields[i].btype->type();
-  llvm::Type *lst = llvm::StructType::get(context_, elems);
-  return lst;
-}
-
-bool Llvm_backend::addPlaceholderRefs(Btype *btype)
-{
-  bool rval = false;
-  switch(btype->flavor()) {
-    case Btype::ArrayT: {
-      BArrayType *bat = btype->castToBArrayType();
-      if (bat->elemType()->isUnresolvedPlaceholder()) {
-        placeholderRefs_[bat->elemType()].insert(btype);
-        rval = true;
-      }
-      break;
-    }
-    case Btype::PointerT: {
-      BPointerType *bpt = btype->castToBPointerType();
-      if (bpt->toType()->isUnresolvedPlaceholder()) {
-        placeholderRefs_[bpt->toType()].insert(btype);
-        rval = true;
-      }
-      break;
-    }
-    case Btype::StructT: {
-      BStructType *bst = btype->castToBStructType();
-      const std::vector<Backend::Btyped_identifier> &fields = bst->fields();
-      for (unsigned i = 0; i < fields.size(); ++i) {
-        if (fields[i].btype->isUnresolvedPlaceholder()) {
-          placeholderRefs_[fields[i].btype].insert(bst);
-          rval = true;
-        }
-      }
-      break;
-    }
-    default: {
-      // nothing to do here
-    }
-  }
-  return rval;
-}
-
-// Make a struct type.
 
 Btype *Llvm_backend::struct_type(const std::vector<Btyped_identifier> &fields)
 {
-  // Return error type if any field has error type; look for placeholders
-  bool hasPlaceField = false;
-  for (unsigned i = 0; i < fields.size(); ++i) {
-    if (fields[i].btype == errorType_)
-      return errorType_;
-    if (fields[i].btype->isUnresolvedPlaceholder())
-      hasPlaceField = true;
-  }
-
-  BStructType *rval = nullptr;
-  llvm::Type *llst = nullptr;
-  if (hasPlaceField) {
-    // If any of the fields have placeholder type, then we can't
-    // create a concrete LLVM type, so manufacture a placeholder
-    // instead.
-    llst = makeOpaqueLlvmType("IPST");
-    rval = new BStructType(fields, llst);
-    rval->setPlaceholder(addPlaceholderRefs(rval));
-  } else {
-    // No placeholder fields -- manufacture the concrete LLVM, then
-    // check for and return existing anon type if we have one already.
-    llst = makeLLVMStructType(fields);
-    BStructType cand(fields, llst);
-    auto it = anonTypes_.find(&cand);
-    if (it != anonTypes_.end()) {
-      Btype *existing = *it;
-      assert(existing->castToBStructType());
-      return existing;
-    }
-    rval = new BStructType(fields, llst);
-  }
-
-  if (traceLevel() > 1) {
-    std::cerr << "\n^ struct type "
-              << ((void*)rval) << " [llvm type "
-              << ((void*)llst) << "] fields:\n";
-    for (unsigned i = 0; i < fields.size(); ++i)
-      std::cerr << i << ": " << ((void*)fields[i].btype) << "\n";
-    rval->dump();
-  }
-
-  // Done
-  anonTypes_.insert(rval);
-  return rval;
-}
-
-llvm::Type *Llvm_backend::makeOpaqueLlvmType(const char *tag) {
-  std::string tname(namegen(tag));
-  return llvm::StructType::create(context_, tname);
+  return structType(fields);
 }
 
 // Create a placeholder for a struct type.
 Btype *Llvm_backend::placeholder_struct_type(const std::string &name,
                                              Location location)
 {
-  BStructType *pst = new BStructType(name);
-  llvm::Type *opaque = makeOpaqueLlvmType("PST");
-  pst->setType(opaque);
-  placeholders_.insert(pst);
-  return pst;
+  return placeholderStructType(name, location);
 }
 
-// LLVM has no such thing as a complex type -- it expects the front
-// end to lower all complex operations from the get-go, meaning
-// that the back end only sees two-element structs.
-
 Btype *Llvm_backend::complex_type(int bits) {
-  if (bits == 64 && complexFloatType_)
-    return complexFloatType_;
-  if (bits == 128 && complexDoubleType_)
-    return complexDoubleType_;
-  assert(bits == 64 || bits == 128);
-  llvm::Type *elemTy = (bits == 64 ? llvm::Type::getFloatTy(context_)
-                                   : llvm::Type::getDoubleTy(context_));
-  llvm::SmallVector<llvm::Type *, 2> elems(2);
-  elems[0] = elemTy;
-  elems[1] = elemTy;
-  Btype *rval = makeAuxType(llvm::StructType::get(context_, elems));
-  if (bits == 64)
-    complexFloatType_ = rval;
-  else
-    complexDoubleType_ = rval;
-  return rval;
+  return complexType(bits);
 }
 
 // Get a pointer type.
 
 Btype *Llvm_backend::pointer_type(Btype *toType)
 {
-  if (toType == errorType_)
-    return errorType_;
-
-  // Manufacture corresponding LLVM type. Note that LLVM does not
-  // allow creation of a "pointer to void" type -- model this instead
-  // as pointer to char.
-  llvm::Type *lltot =
-      (toType->type() == llvmVoidType_ ? llvmInt8Type_ : toType->type());
-  llvm::Type *llpt = llvm::PointerType::get(lltot, addressSpace_);
-
-  // Check for and return existing anon type if we have one already
-  BPointerType cand(toType, llpt);
-  auto it = anonTypes_.find(&cand);
-  if (it != anonTypes_.end()) {
-    Btype *existing = *it;
-    BPointerType *bpt = existing->castToBPointerType();
-    assert(bpt);
-    return bpt;
-  }
-
-  // Create new type
-  BPointerType *rval = new BPointerType(toType, llpt);
-  rval->setPlaceholder(addPlaceholderRefs(rval));
-  if (traceLevel() > 1) {
-    std::cerr << "\n^ pointer type "
-              << ((void*)rval) << " [llvm type "
-              << ((void*) llpt) << "]\n";
-    rval->dump();
-  }
-
-  // Install in cache
-  anonTypes_.insert(rval);
-  return rval;
+  return pointerType(toType);
 }
-
-// LLVM doesn't directly support placeholder types other than opaque
-// structs, so the general strategy for placeholders is to create an
-// opaque struct (corresponding to the thing being pointed to) and then
-// make a pointer to it. Since LLVM allows only a single opaque struct
-// type with a given name within a given context, we capture the provided
-// name but we don't try to hand that specific name to LLVM to use
-// for the identified struct (so as to avoid collisions).
-
-// Create a placeholder for a pointer type.
 
 Btype *Llvm_backend::placeholder_pointer_type(const std::string &name,
-                                              Location location, bool)
+                                              Location location, bool forfunc)
 {
-  Btype *ppt = new BPointerType(name);
-  llvm::Type *opaque = makeOpaqueLlvmType("PPT");
-  llvm::PointerType *pto = llvm::PointerType::get(opaque, addressSpace_);
-  ppt->setType(pto);
-  placeholders_.insert(ppt);
-  return ppt;
-}
-
-llvm::Type *
-Llvm_backend::makeLLVMFunctionType(Btype *receiverType,
-                                   const std::vector<Btype *> &paramTypes,
-                                   const std::vector<Btype *> &resultTypes,
-                                   Btype *rbtype)
-{
-  llvm::SmallVector<llvm::Type *, 4> elems(0);
-
-  // Receiver type if applicable
-  if (receiverType != nullptr)
-    elems.push_back(receiverType->type());
-
-  // Argument types
-  for (auto pt : paramTypes)
-    elems.push_back(pt->type());
-
-  llvm::Type *rtyp = rbtype->type();
-
-  // https://gcc.gnu.org/PR72814 handling. From the go-gcc.cc
-  // equivalent, here is an explanatory comment:
-  //
-  // The libffi library can not represent a zero-sized object.  To
-  // avoid causing confusion on 32-bit SPARC, we treat a function that
-  // returns a zero-sized value as returning void.  That should do no
-  // harm since there is no actual value to be returned.
-  //
-  if (rtyp->isSized() && datalayout_.getTypeSizeInBits(rtyp) == 0)
-    rtyp = llvm::Type::getVoidTy(context_);
-
-  // from LLVM's perspective, no functions have varargs (all that
-  // is dealt with by the front end).
-  const bool isVarargs = false;
-  llvm::FunctionType *llft = llvm::FunctionType::get(rtyp, elems, isVarargs);
-  return llft;
+  return placeholderPointerType(name, location, forfunc);
 }
 
 // Make a function type.
@@ -692,444 +273,38 @@ Btype *
 Llvm_backend::function_type(const Btyped_identifier &receiver,
                             const std::vector<Btyped_identifier> &parameters,
                             const std::vector<Btyped_identifier> &results,
-                            Btype *result_struct, Location) {
-
-  // Vett the parameters and results
-  std::vector<Btype *> paramTypes;
-  for (auto p : parameters) {
-    if (p.btype == errorType_)
-      return errorType_;
-    paramTypes.push_back(p.btype);
-  }
-  std::vector<Btype *> resultTypes;
-  for (auto r : results) {
-    if (r.btype == errorType_)
-      return errorType_;
-    resultTypes.push_back(r.btype);
-  }
-  if (result_struct && result_struct == errorType_)
-    return errorType_;
-  if (receiver.btype && receiver.btype == errorType_)
-    return errorType_;
-
-  // Determine result Btype
-  Btype *rbtype = nullptr;
-  if (results.empty())
-    rbtype = makeAuxType(llvm::Type::getVoidTy(context_));
-  else if (results.size() == 1) {
-    rbtype = results.front().btype;
-  } else {
-    assert(result_struct != nullptr);
-    rbtype = result_struct;
-  }
-  assert(rbtype != nullptr);
-
-  llvm::Type *llft = makeLLVMFunctionType(receiver.btype, paramTypes,
-                                          resultTypes, rbtype);
-
-  // Consult cache
-  BFunctionType cand(receiver.btype, paramTypes, resultTypes, rbtype, llft);
-  auto it = anonTypes_.find(&cand);
-  if (it != anonTypes_.end()) {
-    Btype *existing = *it;
-    BFunctionType *bft = existing->castToBFunctionType();
-    assert(bft);
-    return bft;
-  }
-
-  // Manufacture new BFunctionType to return
-  BFunctionType *rval = new BFunctionType(receiver.btype,
-                                          paramTypes, resultTypes,
-                                          rbtype, llft);
-
-  // Do some book-keeping
-  bool isPlace = false;
-  if (result_struct && result_struct->isUnresolvedPlaceholder()) {
-    placeholderRefs_[result_struct].insert(rval);
-    isPlace = true;
-  }
-  if (receiver.btype && receiver.btype->isUnresolvedPlaceholder()) {
-    placeholderRefs_[receiver.btype].insert(rval);
-    isPlace = true;
-  }
-  for (auto p : paramTypes) {
-    if (p->isUnresolvedPlaceholder()) {
-      placeholderRefs_[p].insert(rval);
-      isPlace = true;
-    }
-  }
-  for (auto r : resultTypes) {
-    if (r->isUnresolvedPlaceholder()) {
-      placeholderRefs_[r].insert(rval);
-      isPlace = true;
-    }
-  }
-  if (isPlace)
-    rval->setPlaceholder(true);
-
-  // Install in cache and return
-  anonTypes_.insert(rval);
-  return rval;
+                            Btype *result_struct, Location loc) {
+  return functionType(receiver, parameters, results,
+                      result_struct, loc);
 }
 
 Btype *Llvm_backend::array_type(Btype *elemType, Bexpression *length)
 {
-  if (length == errorExpression_.get() || elemType == errorType_)
-    return errorType_;
-
-  // Manufacture corresponding LLVM type
-  llvm::ConstantInt *lc = llvm::dyn_cast<llvm::ConstantInt>(length->value());
-  assert(lc);
-  uint64_t asize = lc->getValue().getZExtValue();
-  llvm::Type *llat = llvm::ArrayType::get(elemType->type(), asize);
-
-  // Check for and return existing anon type if we have one already
-  BArrayType cand(elemType, length, llat);
-  auto it = anonTypes_.find(&cand);
-  if (it != anonTypes_.end()) {
-    Btype *existing = *it;
-    BArrayType *bat = existing->castToBArrayType();
-    assert(bat);
-    return bat;
-  }
-
-  // Create appropriate Btype
-  BArrayType *rval = new BArrayType(elemType, length, llat);
-  rval->setPlaceholder(addPlaceholderRefs(rval));
-
-  if (traceLevel() > 1) {
-    std::cerr << "\n^ array type "
-              << ((void*)rval) << " [llvm type "
-              << ((void*) llat) << "] sz="
-              << asize << " elementType:";
-    std::cerr << ((void*) elemType) << "\n";
-    rval->dump();
-  }
-
-  // Install in cache and return
-  anonTypes_.insert(rval);
-  return rval;
+  return arrayType(elemType, length);
 }
-
-// Create a placeholder for an array type.
 
 Btype *Llvm_backend::placeholder_array_type(const std::string &name,
                                             Location location)
 {
-  Btype *pat = new BArrayType(name);
-  llvm::Type *opaque = makeOpaqueLlvmType("PAT");
-  pat->setType(opaque);
-  placeholders_.insert(pat);
-  return pat;
+  return placeholderArrayType(name, location);
 }
-
-Btype *Llvm_backend::functionReturnType(Btype *typ)
-{
-  assert(typ);
-  assert(typ != errorType_);
-  BPointerType *pt = typ->castToBPointerType();
-  if (pt)
-    typ = pt->toType();
-  BFunctionType *ft = typ->castToBFunctionType();
-  assert(ft);
-  return ft->resultType();
-}
-
-Btype *Llvm_backend::elementTypeByIndex(Btype *btype, unsigned fieldIndex)
-{
-  assert(btype);
-  assert(btype != errorType_);
-  BStructType *st = btype->castToBStructType();
-  if (st)
-    return st->fieldType(fieldIndex);
-  BArrayType *at = btype->castToBArrayType();
-  assert(at);
-  return at->elemType();
-}
-
-void Llvm_backend::postProcessResolvedPointerPlaceholder(BPointerType *bpt,
-                                                         Btype *btype)
-{
-  assert(bpt);
-  assert(bpt->isPlaceholder());
-  llvm::Type *newllpt = llvm::PointerType::get(btype->type(), addressSpace_);
-
-  // pluck out of anonTypes if stored there
-  bool wasHashed = removeAnonType(bpt);
-
-  bpt->setType(newllpt);
-  if (traceLevel() > 1) {
-    std::cerr << "\n^ resolving placeholder pointer type "
-              << ((void*)bpt) << " to concrete target type; "
-              << "new LLVM type "
-              << ((void*) newllpt) << ", resolved type now:\n";
-    bpt->dump();
-  }
-  bpt->setPlaceholder(false);
-
-  // put back into anonTypes if it was there previously
-  if (wasHashed)
-    reinstallAnonType(bpt);
-
-  postProcessResolvedPlaceholder(bpt);
-}
-
-void Llvm_backend::postProcessResolvedStructPlaceholder(BStructType *bst,
-                                                        Btype *btype)
-{
-  assert(bst);
-  assert(bst->isPlaceholder());
-
-  std::vector<Btyped_identifier> fields(bst->fields());
-  bool hasPl = false;
-  for (unsigned i = 0; i < fields.size(); ++i) {
-    const Btype *ft = fields[i].btype;
-    if (btype == ft) {
-      if (traceLevel() > 1) {
-        std::cerr << "\n^ resolving field " << i << " of "
-                  << "placeholder struct type "
-                  << ((void*)bst) << " to concrete field type\n";
-      }
-    } else if (fields[i].btype->isUnresolvedPlaceholder()) {
-      hasPl = true;
-    }
-  }
-  if (! hasPl) {
-
-    // No need to unhash the type -- we can simple update it in place.
-    llvm::SmallVector<llvm::Type *, 64> elems(fields.size());
-    for (unsigned i = 0; i < fields.size(); ++i)
-      elems[i] = fields[i].btype->type();
-    llvm::StructType *llst = llvm::cast<llvm::StructType>(bst->type());
-    llst->setBody(elems);
-    bst->setPlaceholder(false);
-
-    if (traceLevel() > 1) {
-      std::cerr << "\n^ resolving placeholder struct type "
-                << ((void*)bst) << " to concrete struct type:\n";
-      bst->dump();
-    }
-
-    postProcessResolvedPlaceholder(bst);
-  }
-}
-
-void Llvm_backend::postProcessResolvedArrayPlaceholder(BArrayType *bat,
-                                                       Btype *btype)
-{
-  assert(bat);
-  assert(bat->isPlaceholder());
-
-  // Create new resolved LLVM array type.
-  uint64_t asize = bat->nelSize();
-  llvm::Type *newllat = llvm::ArrayType::get(btype->type(), asize);
-
-  // pluck out of anonTypes if stored there
-  bool wasHashed = removeAnonType(bat);
-
-  // update
-  bat->setType(newllat);
-  if (traceLevel() > 1) {
-    std::cerr << "\n^ resolving placeholder array type "
-              << ((void*)bat) << " elem type; "
-              << "new LLVM type "
-              << ((void*) newllat) << ", resolved type now:\n";
-    bat->dump();
-  }
-  bat->setPlaceholder(false);
-
-  // put back into anonTypes if it was there previously
-  if (wasHashed)
-    reinstallAnonType(bat);
-
-  postProcessResolvedPlaceholder(bat);
-}
-
-// When one of the "set_placeholder_*_type()" methods is called to
-// resolve a placeholder type PT to a concrete type CT, we then need
-// to chase down other types that refer to PT. For example, there
-// might be a separate struct type ST that has a field with type ST --
-// if this is ST's only placeholder field, then when PT is
-// "concretized" we can also "concretize" ST. This helper manages this
-// process.  It is worth noting that the types that we're updating may
-// be installed in the anonTypes_ table, meaning that to make any
-// changes we need to unhash it (remove it from the table), then apply
-// the changes, then add it back into the table. During the addition,
-// the new type may collide with some other existing type in the
-// table. If this happens, we record the type in the separate
-// placeholders_ set, so as to make sure we can delete it at the end
-// of the compilation (this is managed by reinstallAnonType).
-//
-void Llvm_backend::postProcessResolvedPlaceholder(Btype *btype)
-{
-  auto it = placeholderRefs_.find(btype);
-  if (it == placeholderRefs_.end())
-    return;
-
-  for (auto refType : it->second) {
-
-    if (!refType->isPlaceholder())
-      continue;
-
-    BPointerType *bpt = refType->castToBPointerType();
-    if (bpt) {
-      postProcessResolvedPointerPlaceholder(bpt, btype);
-      continue;
-    }
-
-    BArrayType *bat = refType->castToBArrayType();
-    if (bat) {
-      postProcessResolvedArrayPlaceholder(bat, btype);
-      continue;
-    }
-
-    BStructType *bst = refType->castToBStructType();
-    if (bst) {
-      postProcessResolvedStructPlaceholder(bst, btype);
-      continue;
-    }
-
-    // Should never get here
-    assert(false);
-  }
-}
-
-// Set the real target type for a placeholder pointer type.
-
-// NB: for reasons that are unclear to me, the front end sometimes
-// calls this more than once on the same type -- this doesn't necessarily
-// seem like a horrible thing, just kind of curious.
 
 bool Llvm_backend::set_placeholder_pointer_type(Btype *placeholder,
                                                 Btype *to_type)
 {
-  assert(placeholder);
-  assert(to_type);
-  if (placeholder == errorType_ || to_type == errorType_)
-    return false;
-  assert(to_type->type()->isPointerTy());
-  assert(anonTypes_.find(placeholder) == anonTypes_.end());
-  assert(placeholders_.find(placeholder) != placeholders_.end());
-
-  if (traceLevel() > 1) {
-    std::cerr << "\n^ placeholder pointer "
-              << ((void*)placeholder) << " [llvm type "
-              << ((void*) placeholder->type()) << "]"
-              << " redirected to " << ((void*) to_type)
-              << " [llvm type " << ((void*) to_type->type())
-              << "]\n";
-    std::cerr << "placeholder: "; placeholder->dump();
-    std::cerr << "redir: "; to_type->dump();
-  }
-
-  // Update the target type for the pointer
-  placeholder->setType(to_type->type());
-
-  // Decide what to do next.
-  if (to_type->isUnresolvedPlaceholder()) {
-    // We're redirecting this type to another placeholder -- delay the
-    // creation of the final LLVM type and record the reference.
-    placeholderRefs_[to_type].insert(placeholder);
-  } else {
-    // The target is a concrete type. Reset the placeholder flag on
-    // this type, then call a helper to update any other types that
-    // might refer to this one.
-    placeholder->setPlaceholder(false);
-    postProcessResolvedPlaceholder(placeholder);
-  }
-
-  // Circular type handling
-
-  unsigned nct = circularPointerLoop_.size();
-  if (nct != 0) {
-    btpair p = circularPointerLoop_[0];
-    Btype *cplTT = p.second;
-    if (to_type == cplTT) {
-      // We've come to the end of a cycle of circular types (in the
-      // sense that we're back visiting the placeholder that initiated
-      // the loop). Record proper values for inserting conversions when
-      // we have operations on this this (load, addr).
-      btpair adPair = circularPointerLoop_[nct == 1 ? 0 : 1];
-      Btype *adConvPH = adPair.first;
-      Btype *adConvTT = adPair.second;
-      btpair loadPair = circularPointerLoop_.back();
-      Btype *loadConvTT = loadPair.second;
-      circularConversionLoadMap_[to_type] = loadConvTT;
-      circularConversionLoadMap_[placeholder] = loadConvTT;
-      circularConversionAddrMap_[adConvPH] = to_type;
-      circularConversionAddrMap_[adConvTT] = to_type;
-
-      if (traceLevel() > 1) {
-        std::cerr << "\n^ finished circular type loop of size " << nct
-                  << ": [" << ((void*) loadConvTT)
-                  << "," << ((void*) adConvPH)
-                  << "," << ((void*) adConvTT)
-                  << "] for to_type: [load, addrPH, addrTT]:\n";
-        loadConvTT->dump();
-        adConvPH->dump();
-        adConvTT->dump();
-      }
-      circularPointerLoop_.clear();
-    } else {
-      circularPointerLoop_.push_back(std::make_pair(placeholder, to_type));
-    }
-  }
-
-  return true;
+  return setPlaceholderPointerType(placeholder, to_type);
 }
-
-// Set the real values for a placeholder function type.
 
 bool Llvm_backend::set_placeholder_function_type(Btype *placeholder,
                                                  Btype *ft) {
-  return set_placeholder_pointer_type(placeholder, ft);
+  return setPlaceholderPointerType(placeholder, ft);
 }
-
-// Fill in the fields of a placeholder struct type.
 
 bool
 Llvm_backend::set_placeholder_struct_type(Btype *placeholder,
                             const std::vector<Btyped_identifier> &fields)
 {
-  if (placeholder == errorType_)
-    return false;
-
-  assert(anonTypes_.find(placeholder) == anonTypes_.end());
-  assert(placeholders_.find(placeholder) != placeholders_.end());
-  BStructType *phst = placeholder->castToBStructType();
-  assert(phst);
-  phst->setFields(fields);
-
-  // If we still have fields with placeholder types, then we still can't
-  // manufacture a concrete LLVM type. If no placeholders, then we can
-  // materialize the final LLVM type using a setBody call.
-  bool isplace = addPlaceholderRefs(phst);
-  if (! isplace) {
-    llvm::StructType *llst = llvm::cast<llvm::StructType>(phst->type());
-    llvm::SmallVector<llvm::Type *, 8> fieldtypes(fields.size());
-    for (unsigned idx = 0; idx < fields.size(); ++idx)
-      fieldtypes[idx] = fields[idx].btype->type();
-    llst->setBody(fieldtypes);
-    phst->setPlaceholder(false);
-  }
-
-  if (traceLevel() > 1) {
-    std::cerr << "\n^ placeholder struct "
-              << ((void*)placeholder) << " [llvm type "
-              << ((void*) placeholder->type())
-              << "] body redirected:\n";
-    std::cerr << "placeholder: "; placeholder->dump();
-    std::cerr << "fields:\n";
-    for (unsigned i = 0; i < fields.size(); ++i) {
-      std::cerr << i << ": ";
-      fields[i].btype->dump();
-    }
-  }
-
-  if (! isplace)
-    postProcessResolvedPlaceholder(phst);
-
-  return true;
+  return setPlaceholderStructType(placeholder, fields);
 }
 
 // Fill in the components of a placeholder array type.
@@ -1137,182 +312,38 @@ Llvm_backend::set_placeholder_struct_type(Btype *placeholder,
 bool Llvm_backend::set_placeholder_array_type(Btype *placeholder,
                                               Btype *element_btype,
                                               Bexpression *length) {
-  if (placeholder == errorType_ || element_btype == errorType_ ||
-      length == errorExpression_.get())
-    return false;
-
-  assert(anonTypes_.find(placeholder) == anonTypes_.end());
-  assert(placeholders_.find(placeholder) != placeholders_.end());
-
-  BArrayType *phat = placeholder->castToBArrayType();
-  assert(phat);
-  phat->setElemType(element_btype);
-  phat->setNelements(length);
-  bool isplace = addPlaceholderRefs(phat);
-
-  uint64_t asize = phat->nelSize();
-  llvm::Type *newllat = llvm::ArrayType::get(element_btype->type(), asize);
-  Btype *atype = makeAuxType(newllat);
-  atype->setPlaceholder(isplace);
-
-  if (traceLevel() > 1) {
-    std::string ls;
-    llvm::raw_string_ostream os(ls);
-    length->osdump(os);
-    std::cerr << "\n^ placeholder array "
-              << ((void*)placeholder) << " [llvm type "
-              << ((void*) placeholder->type())
-              << "] element type updated to " << ((void*) element_btype)
-              << " [llvm type " << ((void*) element_btype->type())
-              << "] length: " << ls
-              << "\n";
-    std::cerr << "placeholder: "; placeholder->dump();
-    std::cerr << "redir: "; atype->dump();
-  }
-
-  updatePlaceholderUnderlyingType(placeholder, atype);
-
-  return true;
+  return setPlaceholderArrayType(placeholder, element_btype, length);
 }
-
-// Return a named version of a type.
 
 Btype *Llvm_backend::named_type(const std::string &name,
                                 Btype *btype,
                                 Location location)
 {
-  // TODO: add support for debug metadata
-
-  Btype *rval = btype->clone();
-  addPlaceholderRefs(rval);
-  rval->setName(name);
-  namedTypes_.insert(rval);
-
-  if (traceLevel() > 1) {
-    std::cerr << "\n^ named type '" << name << "' "
-              << ((void*)rval) << " [llvm type "
-              << ((void*) rval->type()) << "]\n";
-    rval->dump();
-  }
-
-  return rval;
+  return namedType(name, btype, location);
 }
 
-// Return a pointer type used as a marker for a circular type.
-
-// Consider the following Go code:
-//
-//      type s *p
-//      type p *q
-//      type q *r
-//      type r *p
-//
-// Here we have a cycle involving p/q/r, plus another type "p" that
-// points into the cycle. When the front end detects the cycle it will
-// flag "p" as circular, meaning that circular_pointer_type will
-// wind up being invoked twice (once for real due to the cycle and
-// once due to the jump into the cycle). We use a map to detect
-// the second instance (e.g. "s") so that we can just return whatever
-// we created before.
-
-Btype *Llvm_backend::circular_pointer_type(Btype *placeholder, bool) {
-  assert(placeholder);
-  if (placeholder == errorType_)
-    return errorType_;
-
-  // Front end call this multiple times on the same placeholder, so we
-  // cache markers and return the cached value on successive lookups.
-  auto it = circularPointerTypeMap_.find(placeholder);
-  if (it != circularPointerTypeMap_.end())
-    return it->second;
-
-  llvm::Type *opaque = makeOpaqueLlvmType("CPT");
-  llvm::Type *circ_ptr_typ = llvm::PointerType::get(opaque, addressSpace_);
-  Btype *rval = makeAuxType(circ_ptr_typ);
-  circularPointerTypes_.insert(circ_ptr_typ);
-  circularPointerTypeMap_[placeholder] = rval;
-  assert(circularPointerLoop_.size() == 0);
-  circularPointerLoop_.push_back(std::make_pair(placeholder, rval));
-
-  if (traceLevel() > 1) {
-    std::cerr << "\n^ circular_pointer_type "
-              << "for placeholder " << ((void *)placeholder)
-              << " [llvm type " << ((void *)placeholder->type())
-              << "] returned type is " << ((void *)rval) << " [llvm type "
-              << ((void *)rval->type()) << "]\n";
-    placeholder->dump();
-    rval->dump();
-  }
-
-  return rval;
+Btype *Llvm_backend::circular_pointer_type(Btype *placeholder, bool isf) {
+  return circularPointerType(placeholder, isf);
 }
-
-// Return whether we might be looking at a circular type.
 
 bool Llvm_backend::is_circular_pointer_type(Btype *btype) {
-  assert(btype);
-  auto it = circularPointerTypes_.find(btype->type());
-  return it != circularPointerTypes_.end();
+  return isCircularPointerType(btype);
 }
-
-// Return the size of a type.
 
 int64_t Llvm_backend::type_size(Btype *btype) {
-  if (btype == errorType_)
-    return 1;
-  uint64_t uval = datalayout_.getTypeSizeInBits(btype->type());
-  assert((uval & 0x7) == 0);
-  uval /= 8;
-  return static_cast<int64_t>(uval);
+  return typeSize(btype);
 }
-
-// Return the alignment of a type.
 
 int64_t Llvm_backend::type_alignment(Btype *btype) {
-  if (btype == errorType_)
-    return 1;
-  unsigned uval = datalayout_.getPrefTypeAlignment(btype->type());
-  return static_cast<int64_t>(uval);
+  return typeAlignment(btype);
 }
-
-// Return the alignment of a struct field of type BTYPE.
-//
-// One case where type_field_align(X) != type_align(X) is
-// for type 'double' on x86 32-bit, where for compatibility
-// a double field is 4-byte aligned but will be 8-byte aligned
-// otherwise.
 
 int64_t Llvm_backend::type_field_alignment(Btype *btype) {
-  // Corner cases.
-  if (!btype->type()->isSized() || btype == errorType_)
-    return -1;
-
-  // Create a new anonymous struct with two fields: first field is a
-  // single byte, second field is of type btype. Then use
-  // getElementOffset to find out where the second one has been
-  // placed. Finally, return min of alignof(btype) and that value.
-
-  llvm::SmallVector<llvm::Type *, 2> elems(2);
-  elems[0] = llvm::Type::getInt1Ty(context_);
-  elems[1] = btype->type();
-  llvm::StructType *dummyst = llvm::StructType::get(context_, elems);
-  const llvm::StructLayout *sl = datalayout_.getStructLayout(dummyst);
-  uint64_t uoff = sl->getElementOffset(1);
-  unsigned talign = datalayout_.getPrefTypeAlignment(btype->type());
-  int64_t rval = (uoff < talign ? uoff : talign);
-  return rval;
+  return typeFieldAlignment(btype);
 }
 
-// Return the offset of a field in a struct.
-
 int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index) {
-  if (btype == errorType_)
-    return 0;
-  assert(btype->type()->isStructTy());
-  llvm::StructType *llvm_st = llvm::cast<llvm::StructType>(btype->type());
-  const llvm::StructLayout *sl = datalayout_.getStructLayout(llvm_st);
-  uint64_t uoff = sl->getElementOffset(index);
-  return static_cast<int64_t>(uoff);
+  return typeFieldOffset(btype, index);
 }
 
 void Llvm_backend::defineLibcallBuiltin(const char *name, const char *libname,
@@ -1433,40 +464,40 @@ void Llvm_backend::defineIntrinsicBuiltins() {
                          nullptr);
 
   defineIntrinsicBuiltin("__builtin_return_address", nullptr,
-                         llvm::Intrinsic::returnaddress, llvmPtrType_,
-                         llvmInt32Type_, nullptr);
+                         llvm::Intrinsic::returnaddress, llvmPtrType(),
+                         llvmInt32Type(), nullptr);
 
   defineIntrinsicBuiltin("__builtin_frame_address", nullptr,
-                         llvm::Intrinsic::frameaddress, llvmPtrType_,
-                         llvmInt32Type_, nullptr);
+                         llvm::Intrinsic::frameaddress, llvmPtrType(),
+                         llvmInt32Type(), nullptr);
 
   defineIntrinsicBuiltin("__builtin_expect", nullptr, llvm::Intrinsic::expect,
-                         llvmIntegerType_, nullptr);
+                         llvmIntegerType(), nullptr);
 
   defineLibcallBuiltin("__builtin_memcmp", "memcmp",
                        llvm::LibFunc::LibFunc_memcmp,
-                       llvmInt32Type_, llvmPtrType_, llvmPtrType_,
-                       llvmSizeType_, nullptr);
+                       llvmInt32Type(), llvmPtrType(), llvmPtrType(),
+                       llvmSizeType(), nullptr);
 
   // go runtime refers to this intrinsic as "ctz", however the LLVM
   // equivalent is named "cttz".
   defineIntrinsicBuiltin("__builtin_ctz", "ctz", llvm::Intrinsic::cttz,
-                         llvmIntegerType_, nullptr);
+                         llvmIntegerType(), nullptr);
 
   // go runtime refers to this intrinsic as "ctzll", however the LLVM
   // equivalent is named "cttz".
   defineIntrinsicBuiltin("__builtin_ctzll", "ctzll", llvm::Intrinsic::cttz,
-                         llvmInt64Type_, nullptr);
+                         llvmInt64Type(), nullptr);
 
   // go runtime refers to this intrinsic as "bswap32", however the LLVM
   // equivalent is named just "bswap"
   defineIntrinsicBuiltin("__builtin_bswap32", "bswap32", llvm::Intrinsic::bswap,
-                         llvmInt32Type_, nullptr);
+                         llvmInt32Type(), nullptr);
 
   // go runtime refers to this intrinsic as "bswap64", however the LLVM
   // equivalent is named just "bswap"
   defineIntrinsicBuiltin("__builtin_bswap64", "bswap64", llvm::Intrinsic::bswap,
-                         llvmInt64Type_, nullptr);
+                         llvmInt64Type(), nullptr);
 }
 
 namespace {
@@ -1485,18 +516,18 @@ typedef struct {
 }
 
 void Llvm_backend::defineTrigBuiltins() {
-  const std::vector<llvm::Type *> onearg_double = {llvmDoubleType_,
-                                                   llvmDoubleType_};
-  const std::vector<llvm::Type *> onearg_long_double = {llvmLongDoubleType_,
-                                                        llvmLongDoubleType_};
+  const std::vector<llvm::Type *> onearg_double = {llvmDoubleType(),
+                                                   llvmDoubleType()};
+  const std::vector<llvm::Type *> onearg_long_double = {llvmLongDoubleType(),
+                                                        llvmLongDoubleType()};
   const std::vector<llvm::Type *> twoargs_double = {
-      llvmDoubleType_, llvmDoubleType_, llvmDoubleType_};
+      llvmDoubleType(), llvmDoubleType(), llvmDoubleType()};
   const std::vector<llvm::Type *> twoargs_long_double = {
-      llvmLongDoubleType_, llvmLongDoubleType_, llvmLongDoubleType_};
+      llvmLongDoubleType(), llvmLongDoubleType(), llvmLongDoubleType()};
   const std::vector<llvm::Type *> mixed_double = {
-      llvmDoubleType_, llvmDoubleType_, llvmIntegerType_};
+      llvmDoubleType(), llvmDoubleType(), llvmIntegerType()};
   const std::vector<llvm::Type *> mixed_long_double = {
-      llvmLongDoubleType_, llvmLongDoubleType_, llvmIntegerType_};
+      llvmLongDoubleType(), llvmLongDoubleType(), llvmIntegerType()};
   const std::vector<const std::vector<llvm::Type *> *> signatures = {
       &onearg_double, &twoargs_double, &mixed_double};
   const std::vector<const std::vector<llvm::Type *> *> lsignatures = {
@@ -1550,7 +581,7 @@ void Llvm_backend::defineSyncFetchAndAddBuiltins() {
     llvm::PointerType *pit = llvm::PointerType::get(it, addressSpace_);
     defineLibcallBuiltin(nbuf, nullptr,  // name, libname
                          NotInTargetLib, // Libfunc ID
-                         llvmVoidType_,  // result type
+                         llvmVoidType(),  // result type
                          pit, it,        // param types
                          nullptr);
   }
@@ -1653,7 +684,7 @@ Llvm_backend::makeExpression(llvm::Value *value,
 // Return the zero value for a type.
 
 Bexpression *Llvm_backend::zero_expression(Btype *btype) {
-  if (btype == errorType_)
+  if (btype == errorType())
     return errorExpression_.get();
   llvm::Value *zeroval = llvm::Constant::getNullValue(btype->type());
   return makeValueExpression(zeroval, btype, GlobalScope, Location());
@@ -1665,7 +696,7 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
 
   // What type should we assign a NIL pointer expression? This
   // is something of a head-scratcher. For now use uintptr.
-  llvm::Type *pti = llvm::PointerType::get(llvmIntegerType_, addressSpace_);
+  llvm::Type *pti = llvm::PointerType::get(llvmIntegerType(), addressSpace_);
   Btype *uintptrt = makeAuxType(pti);
   return zero_expression(uintptrt);
 }
@@ -1684,9 +715,8 @@ Bexpression *Llvm_backend::loadFromExpr(Bexpression *expr,
   // since the LLVM type system can't accurately model Go circular
   // pointer types.
   Bexpression *space = expr;
-  auto it = circularConversionLoadMap_.find(expr->btype());
-  if (it != circularConversionLoadMap_.end()) {
-    Btype *tctyp = it->second;
+  Btype *tctyp = circularTypeLoadConversion(expr->btype());
+  if (tctyp != nullptr) {
     space = convert_expression(pointer_type(tctyp), expr, location);
     loadResultType = tctyp;
   }
@@ -1702,7 +732,7 @@ Bexpression *Llvm_backend::indirect_expression(Btype *btype,
                                                Bexpression *expr,
                                                bool known_valid,
                                                Location location) {
-  if (expr == errorExpression_.get() || btype == errorType_)
+  if (expr == errorExpression_.get() || btype == errorType())
     return errorExpression_.get();
 
   assert(expr->btype()->type()->isPointerTy());
@@ -1744,7 +774,7 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
   // better solution for this issue(?).
   if (llvm::isa<llvm::ConstantArray>(bexpr->value()))
     return bexpr;
-  if (bexpr->value()->getType() == stringType_->type() &&
+  if (bexpr->value()->getType() == stringType()->type() &&
       llvm::isa<llvm::Constant>(bexpr->value()))
     return bexpr;
 
@@ -1759,12 +789,9 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
   rval->setVarExprPending(vc.lvalue(), vc.addrLevel() + 1);
 
   // Handle circular types
-  auto it = circularConversionAddrMap_.find(bexpr->btype());
-  if (it != circularConversionAddrMap_.end()) {
-    assert(it != circularConversionAddrMap_.end());
-    Btype *ctyp = it->second;
-    return convert_expression(ctyp, rval, location);
-  }
+  Btype *ctypconv = circularTypeAddrConversion(bexpr->btype());
+  if (ctypconv != nullptr)
+    return convert_expression(ctypconv, rval, location);
 
   return rval;
 }
@@ -1827,7 +854,7 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
   for (unsigned eidx = 0; eidx < nElements; ++eidx) {
 
     // Construct an appropriate GEP
-    llvm::Value *idxval = llvm::ConstantInt::get(llvmInt32Type_, eidx);
+    llvm::Value *idxval = llvm::ConstantInt::get(llvmInt32Type(), eidx);
     llvm::Value *gep = makeArrayIndexGEP(llat, idxval, storage);
     if (llvm::isa<llvm::Instruction>(gep))
       expr->appendInstruction(llvm::cast<llvm::Instruction>(gep));
@@ -1941,7 +968,7 @@ Bexpression *Llvm_backend::named_constant_expression(Btype *btype,
                                                      const std::string &name,
                                                      Bexpression *val,
                                                      Location location) {
-  if (btype == errorType_ || val == errorExpression_.get())
+  if (btype == errorType() || val == errorExpression_.get())
     return errorExpression_.get();
 
   // FIXME: declare named read-only variable with initial value 'val'
@@ -1973,7 +1000,7 @@ wideint_t checked_convert_mpz_to_int(mpz_t value) {
 
 Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
                                                        mpz_t mpz_val) {
-  if (btype == errorType_)
+  if (btype == errorType())
     return errorExpression_.get();
   assert(btype->type()->isIntegerTy());
 
@@ -2001,7 +1028,7 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
 // Return a typed value as a constant floating-point number.
 
 Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
-  if (btype == errorType_)
+  if (btype == errorType())
     return errorExpression_.get();
 
   // Force the mpfr value into float, double, or APFloat as appropriate.
@@ -2011,17 +1038,17 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
   // converting a quad mfr value from text and then back into APFloat
   // from there.
 
-  if (btype->type() == llvmFloatType_) {
+  if (btype->type() == llvmFloatType()) {
     float fval = mpfr_get_flt(val, GMP_RNDN);
     llvm::APFloat apf(fval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
     return makeValueExpression(fcon, btype, GlobalScope, Location());
-  } else if (btype->type() == llvmDoubleType_) {
+  } else if (btype->type() == llvmDoubleType()) {
     double dval = mpfr_get_d(val, GMP_RNDN);
     llvm::APFloat apf(dval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
     return makeValueExpression(fcon, btype, GlobalScope, Location());
-  } else if (btype->type() == llvmLongDoubleType_) {
+  } else if (btype->type() == llvmLongDoubleType()) {
     assert("not yet implemented" && false);
     return nullptr;
   } else {
@@ -2042,8 +1069,8 @@ Bexpression *Llvm_backend::complex_constant_expression(Btype *btype,
 Bexpression *Llvm_backend::string_constant_expression(const std::string &val)
 {
   if (val.size() == 0) {
-    llvm::Value *zer = llvm::Constant::getNullValue(stringType_->type());
-    return makeValueExpression(zer, stringType_, GlobalScope, Location());
+    llvm::Value *zer = llvm::Constant::getNullValue(stringType()->type());
+    return makeValueExpression(zer, stringType(), GlobalScope, Location());
   }
 
   // At the moment strings are not commoned.
@@ -2059,8 +1086,8 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val)
                     llvm::GlobalValue::PrivateLinkage, scon, 1);
   llvm::Constant *varval = llvm::cast<llvm::Constant>(svar->value());
   llvm::Constant *bitcast =
-      llvm::ConstantExpr::getBitCast(varval, stringType_->type());
-  return makeValueExpression(bitcast, stringType_, LocalScope, Location());
+      llvm::ConstantExpr::getBitCast(varval, stringType()->type());
+  return makeValueExpression(bitcast, stringType(), LocalScope, Location());
 }
 
 // Make a constant boolean expression.
@@ -2102,7 +1129,7 @@ Bexpression *Llvm_backend::complex_expression(Bexpression *breal,
 
 Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
                                               Location location) {
-  if (type == errorType_ || expr == errorExpression_.get())
+  if (type == errorType() || expr == errorExpression_.get())
     return errorExpression_.get();
   if (expr->btype() == type)
     return expr;
@@ -2137,7 +1164,7 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   // creation of function descriptor vals) or constant array to
   // uintptr (as part of GC symbol initializer creation), and in other
   // places in FE-generated code (ex: array index checks).
-  if (val->getType()->isPointerTy() && toType == llvmIntegerType_) {
+  if (val->getType()->isPointerTy() && toType == llvmIntegerType()) {
     std::string tname(namegen("pticast"));
     llvm::Value *pticast = builder.CreatePtrToInt(val, type->type(), tname);
     Bexpression *rval = makeExpression(pticast, AppendInst, type, location,
@@ -2147,7 +1174,7 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
 
   // Pointer-sized-integer type pointer type. This comes up
   // in type hash/compare functions.
-  if (toType && val->getType() == llvmIntegerType_) {
+  if (toType && val->getType() == llvmIntegerType()) {
     std::string tname(namegen("itpcast"));
     llvm::Value *itpcast = builder.CreateIntToPtr(val, type->type(), tname);
     Bexpression *rval = makeExpression(itpcast, AppendInst, type, location,
@@ -2217,7 +1244,7 @@ llvm::Value *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
 {
   LIRBuilder builder(context_, llvm::ConstantFolder());
   llvm::SmallVector<llvm::Value *, 2> elems(2);
-  elems[0] = llvm::ConstantInt::get(llvmInt32Type_, 0);
+  elems[0] = llvm::ConstantInt::get(llvmInt32Type(), 0);
   elems[1] = idxval;
   llvm::Value *val = builder.CreateGEP(llat, sptr, elems, namegen("index"));
   return val;
@@ -2284,7 +1311,7 @@ Bexpression *Llvm_backend::conditional_expression(Bfunction *function,
                                                   Bexpression *else_expr,
                                                   Location location) {
   if (function == errorFunction_.get() ||
-      btype == errorType_ ||
+      btype == errorType() ||
       condition == errorExpression_.get() ||
       then_expr == errorExpression_.get() ||
       else_expr == errorExpression_.get())
@@ -2374,10 +1401,10 @@ Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
       llvm::Constant *zero = llvm::ConstantInt::get(bt->type(), 0);
       llvm::Value *cmp =
           builder.CreateICmpNE(expr->value(), zero, namegen("icmp"));
-      Btype *lbt = makeAuxType(llvmBoolType_);
+      Btype *lbt = makeAuxType(llvmBoolType());
       Bexpression *cmpex =
           makeExpression(cmp, AppendInst, lbt, location, expr, nullptr);
-      llvm::Constant *one = llvm::ConstantInt::get(llvmBoolType_, 1);
+      llvm::Constant *one = llvm::ConstantInt::get(llvmBoolType(), 1);
       llvm::Value *xorExpr = builder.CreateXor(cmp, one, namegen("xor"));
       Bexpression *notex =
           makeExpression(xorExpr, AppendInst, lbt, location, cmpex, nullptr);
@@ -2531,7 +1558,7 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
       val = builder.CreateFCmp(pred, leftVal, rightVal, namegen("fcmp"));
     else
       val = builder.CreateICmp(pred, leftVal, rightVal, namegen("icmp"));
-    Btype *bcmpt = makeAuxType(llvmBoolType_);
+    Btype *bcmpt = makeAuxType(llvmBoolType());
     // gen compare...
     Bexpression *cmpex =
         makeExpression(val, AppendInst, bcmpt, location, left, right, nullptr);
@@ -2622,7 +1649,7 @@ Llvm_backend::valuesAreConstant(const std::vector<Bexpression *> &vals)
 
 Bexpression *Llvm_backend::constructor_expression(
     Btype *btype, const std::vector<Bexpression *> &vals, Location location) {
-  if (btype == errorType_ || exprVectorHasError(vals))
+  if (btype == errorType() || exprVectorHasError(vals))
     return errorExpression_.get();
 
   llvm::Type *llt = btype->type();
@@ -2720,7 +1747,7 @@ Llvm_backend::makeConstCompositeExpr(Btype *btype,
 Bexpression *Llvm_backend::array_constructor_expression(
     Btype *array_btype, const std::vector<unsigned long> &indexes,
     const std::vector<Bexpression *> &vals, Location location) {
-  if (array_btype == errorType_ || exprVectorHasError(vals))
+  if (array_btype == errorType() || exprVectorHasError(vals))
     return errorExpression_.get();
 
   llvm::Type *llt = array_btype->type();
@@ -2881,35 +1908,6 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
   return st;
 }
 
-bool Llvm_backend::isFuncDescriptorType(llvm::Type *typ)
-{
-  if (! typ->isStructTy())
-    return false;
-  llvm::StructType *st = llvm::cast<llvm::StructType>(typ);
-  if (st->getNumElements() != 1)
-    return false;
-  if (st->getElementType(0) != llvmIntegerType_ &&
-      !st->getElementType(0)->isFunctionTy())
-    return false;
-  return true;
-}
-
-bool Llvm_backend::isPtrToFuncDescriptorType(llvm::Type *typ)
-{
-  if (! typ->isPointerTy())
-    return false;
-  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
-  return isFuncDescriptorType(pt->getElementType());
-}
-
-bool Llvm_backend::isPtrToFuncType(llvm::Type *typ)
-{
-  if (! typ->isPointerTy())
-    return false;
-  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
-  return pt->getElementType()->isFunctionTy();
-}
-
 llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
                                                 llvm::Type *dstToType)
 {
@@ -3048,7 +2046,7 @@ Bstatement *Llvm_backend::if_statement(Bfunction *bfunction,
     return errorStatement_.get();
   condition = resolve(condition, bfunction);
   assert(then_block);
-  Btype *bt = makeAuxType(llvmBoolType_);
+  Btype *bt = makeAuxType(llvmBoolType());
   Bexpression *conv = convert_expression(bt, condition, location);
   IfPHStatement *ifst =
       new IfPHStatement(bfunction, conv, then_block, else_block, location);
@@ -3170,7 +2168,7 @@ Llvm_backend::makeModuleVar(Btype *btype,
                             llvm::Constant *initializer,
                             unsigned alignment)
 {
-  if (btype == errorType_)
+  if (btype == errorType())
     return errorVariable_.get();
 
 #if 0
@@ -3258,7 +2256,7 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
                                         bool is_address_taken,
                                         Location location) {
   assert(function);
-  if (btype == errorType_ || function == error_function())
+  if (btype == errorType() || function == error_function())
     return errorVariable_.get();
   return function->local_variable(name, btype, is_address_taken, location);
 }
@@ -3270,7 +2268,7 @@ Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
                                             Btype *btype, bool is_address_taken,
                                             Location location) {
   assert(function);
-  if (btype == errorType_ || function == error_function())
+  if (btype == errorType() || function == error_function())
     return errorVariable_.get();
   return function->parameter_variable(name, btype,
                                       is_address_taken, location);
@@ -3317,7 +2315,7 @@ Bvariable *Llvm_backend::implicit_variable(const std::string &name,
                                            bool is_constant,
                                            bool is_common,
                                            int64_t ialignment) {
-  if (btype == errorType_)
+  if (btype == errorType())
     return errorVariable_.get();
 
   // Vett alignment
@@ -3381,7 +2379,7 @@ Bvariable *Llvm_backend::immutable_struct(const std::string &name,
                                           bool is_common,
                                           Btype *btype,
                                           Location location) {
-  if (btype == errorType_)
+  if (btype == errorType())
     return errorVariable_.get();
 
   // Common + hidden makes no sense
@@ -3429,7 +2427,7 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
                                                     const std::string &asmname,
                                                     Btype *btype,
                                                     Location location) {
-  if (btype == errorType_)
+  if (btype == errorType())
     return errorVariable_.get();
 
   // FIXME: add code to insure non-zero size
@@ -3487,7 +2485,7 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
                                   bool is_declaration, bool is_inlinable,
                                   bool disable_split_stack,
                                   bool in_unique_section, Location location) {
-  if (fntype == errorType_)
+  if (fntype == errorType())
     return errorFunction_.get();
   llvm::Twine fn(name);
   llvm::FunctionType *fty = llvm::cast<llvm::FunctionType>(fntype->type());

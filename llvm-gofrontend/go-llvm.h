@@ -24,6 +24,9 @@
 #include "go-llvm-bvariable.h"
 #include "go-llvm-tree-integrity.h"
 
+#include "namegen.h"
+#include "typemanager.h"
+
 #include "backend.h"
 
 #include <unordered_map>
@@ -49,7 +52,6 @@ class raw_ostream;
 
 #include "llvm/IR/GlobalValue.h"
 
-
 //
 // LLVM-specific implementation of the Backend class; the code in
 // gofrontend instantiates an object of this class and then invokes
@@ -57,9 +59,10 @@ class raw_ostream;
 // the interesting methods below are virtual.
 //
 
-class Llvm_backend : public Backend {
+class Llvm_backend : public Backend, public TypeManager, public NameGen {
 public:
-  Llvm_backend(llvm::LLVMContext &context, Linemap *linemap);
+  Llvm_backend(llvm::LLVMContext &context,
+               Linemap *linemap);
   ~Llvm_backend();
 
   // Types.
@@ -346,86 +349,10 @@ public:
   bool moduleScopeValue(llvm::Value *val, Btype *btype) const;
 
   // For debugging
-  void setTraceLevel(unsigned level) { traceLevel_ = level; }
+  void setTraceLevel(unsigned level);
   unsigned traceLevel() const { return traceLevel_; }
 
-  // Tells namegen to choose its own version number for the created name
-  static constexpr unsigned ChooseVer = 0xffffffff;
-
-  // For creating useful inst and block names.
-  std::string namegen(const std::string &tag, unsigned expl = ChooseVer);
-
  private:
-
-  enum PTDisp { Concrete, Placeholder };
-
-  // Create a new anonymous Btype based on LLVM type 'lt'. This is used
-  // for types where there is a direct corresponding between the LLVM type
-  // and the frontend type (ex: float32), and where we don't need to
-  // do any later post-processing or checking.
-  Btype *makeAuxType(llvm::Type *lt);
-
-  // Create a new anonymous BFunctionType based on a corresponding
-  // LLVM function type. This is slightly different from the routine
-  // above in that it replicates information about parameter types and
-  // results and creates a BFunctionType based on them (whereas
-  // everything created by makeAuxTpe is an AuxT container). Not for
-  // general use (should be used only for things like builtins), since
-  // there is no way to express things like signed/unsigned param types.
-  BFunctionType *makeAuxFcnType(llvm::FunctionType *eft);
-
-  // Is this a placeholder type?
-  bool isPlaceholderType(Btype *t);
-
-  // Is this a Go boolean type
-  bool isBooleanType(Btype *);
-
-  // Replace the underlying type for a given placeholder type once
-  // we've determined what the final type will be.
-  void updatePlaceholderUnderlyingType(Btype *plt, Btype *totype);
-
-  // Create an opaque type for use as part of a placeholder type.
-  // Type will be named according to the tag passed in (name is relevant
-  // only for debugging).
-  llvm::Type *makeOpaqueLlvmType(const char *tag);
-
-  // LLVM type creation helpers
-  llvm::Type *makeLLVMFloatType(int bits);
-  llvm::Type *makeLLVMStructType(const std::vector<Btyped_identifier> &fields);
-  llvm::Type *makeLLVMFunctionType(Btype *receiverType,
-                                   const std::vector<Btype *> &paramTypes,
-                                   const std::vector<Btype *> &resultTypes,
-                                   Btype *rbtype);
-
-  // Returns field type from composite (struct/array) type and index
-  Btype *elementTypeByIndex(Btype *type, unsigned element_index);
-
-  // Returns function result type from pointer-to-function type
-  Btype *functionReturnType(Btype *functionType);
-
-  // When making a change to a Btype (for example,modifying its underlying
-  // type or setting/resetting its placeholder flag) we need to
-  // remove it from anonTypes and then reinstall it after we're
-  // done making changes. These routines help with that process.
-  // 'removeAnonType' returns true if the type in question was in
-  // the anonTypes set.
-  bool removeAnonType(Btype *typ);
-  void reinstallAnonType(Btype *typ);
-
-  // The specified placeholder 'btype' has been resolved to a
-  // concrete type -- visit all of the types that refer to it
-  // and see if we can completely resolve them.
-  void postProcessResolvedPlaceholder(Btype *btype);
-
-  // Helpers for the routine above
-  void postProcessResolvedPointerPlaceholder(BPointerType *bpt, Btype *btype);
-  void postProcessResolvedStructPlaceholder(BStructType *bst, Btype *btype);
-  void postProcessResolvedArrayPlaceholder(BArrayType *bat, Btype *btype);
-
-  // For a newly create type, adds entries to the placeholderRefs
-  // table for any contained types. Returns true if any placeholders
-  // found.
-  bool addPlaceholderRefs(Btype *type);
 
   // add a builtin function definition
   void defineBuiltinFcn(const char *name, const char *libname,
@@ -595,11 +522,6 @@ public:
   // error statement, returning TRUE if so.
   bool stmtVectorHasError(const std::vector<Bstatement *> &stmts);
 
-  // Type helpers
-  bool isFuncDescriptorType(llvm::Type *typ);
-  bool isPtrToFuncDescriptorType(llvm::Type *typ);
-  bool isPtrToFuncType(llvm::Type *typ);
-
   // Converts value "src" for assignment to container of type
   // "dstType" in assignment-like contexts. This helper exists to help
   // with cases where the frontend is creating an assignment of form
@@ -682,9 +604,6 @@ private:
   typedef pairvalmap<llvm::Value *, Btype *, Bexpression *>
   btyped_value_expr_maptyp;
 
-  typedef std::pair<Btype *, unsigned> structplusindextype;
-  typedef pairvalmap<Btype *, unsigned, Btype *> fieldmaptype;
-
   // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
   std::unique_ptr<llvm::Module> module_;
@@ -694,81 +613,6 @@ private:
   unsigned addressSpace_;
   unsigned traceLevel_;
   bool checkIntegrity_;
-
-  class btype_hash {
-  public:
-    unsigned int operator()(const Btype *t) const {
-      return t->hash();
-    }
-  };
-
-  class btype_equal {
-  public:
-    bool operator()(const Btype *t1, const Btype *t2) const {
-      return t1->equal(*t2);
-    }
-  };
-
-  typedef std::unordered_set<Btype *, btype_hash, btype_equal> anonTypeSetType;
-
-  // Anonymous typed are hashed/commoned via this set.
-  anonTypeSetType anonTypes_;
-
-  // This map stores oddball types that get created internally by
-  // the back end (ex: void type, or predefined complex). Key is
-  // LLVM type, value is Btype.
-  std::unordered_map<llvm::Type *, Btype *> auxTypeMap_;
-
-  // Repository for named types (those specifically created by the
-  // ::named_type method).
-  std::unordered_set<Btype *> namedTypes_;
-
-  // Records all placeholder types explicitlt created viar
-  // Backend::placeholder_<XYZ>_type() method calls.
-  std::unordered_set<Btype *> placeholders_;
-
-  // These types became redundant/duplicate after one or more
-  // of their placeholder children were updated.
-  std::unordered_set<Btype *> duplicates_;
-
-  // For managing placeholder types. An entry [X, {A,B,C}] indicates
-  // that placeholder type X is referred to by the other placeholder
-  // types A, B, and C.
-  std::unordered_map<Btype *, std::set<Btype *> > placeholderRefs_;
-
-  // Set of circular types. These are pointers to opaque types that
-  // are returned by the ::circular_pointer_type() method.
-  std::unordered_set<llvm::Type *> circularPointerTypes_;
-
-  // Map from placeholder type to circular pointer type. Key is placeholder
-  // pointer type, value is circular pointer type marker.
-  std::unordered_map<Btype *, Btype *> circularPointerTypeMap_;
-
-  // Maps for inserting conversions involving circular pointers.
-  std::unordered_map<Btype *, Btype *> circularConversionLoadMap_;
-  std::unordered_map<Btype *, Btype *> circularConversionAddrMap_;
-
-  // For storing the pointers involved in a circular pointer type loop.
-  // Temporary; filled in only during processing of the loop.
-  typedef std::pair<Btype *, Btype *> btpair;
-  std::vector<btpair> circularPointerLoop_;
-
-  // Various predefined or pre-computed types that we cache away
-  Btype *complexFloatType_;
-  Btype *complexDoubleType_;
-  Btype *errorType_;
-  Btype *stringType_;
-  llvm::Type *llvmVoidType_;
-  llvm::Type *llvmBoolType_;
-  llvm::Type *llvmPtrType_;
-  llvm::Type *llvmSizeType_;
-  llvm::Type *llvmIntegerType_;
-  llvm::Type *llvmInt8Type_;
-  llvm::Type *llvmInt32Type_;
-  llvm::Type *llvmInt64Type_;
-  llvm::Type *llvmFloatType_;
-  llvm::Type *llvmDoubleType_;
-  llvm::Type *llvmLongDoubleType_;
 
   // Target library info oracle
   llvm::TargetLibraryInfo *TLI_;
@@ -795,10 +639,6 @@ private:
   // Map from LLVM values to Bvariable. This is used for
   // module-scope variables, not vars local to a function.
   std::unordered_map<llvm::Value *, Bvariable *> valueVarMap_;
-
-  // For creation of useful block and inst names. Key is tag (ex: "add")
-  // and val is counter to uniquify.
-  std::unordered_map<std::string, unsigned> nametags_;
 
   // Currently we don't do any commoning of Bfunction objects created
   // by the frontend, so here we keep track of all returned Bfunctions

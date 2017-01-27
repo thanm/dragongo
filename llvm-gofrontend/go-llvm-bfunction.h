@@ -20,6 +20,7 @@
 #include "go-llvm-btype.h"
 #include "go-llvm-bexpression.h"
 
+#include "namegen.h"
 #include "backend.h"
 
 namespace llvm {
@@ -33,7 +34,7 @@ class raw_ostream;
 
 // Class Bfunction wraps llvm::Function
 
-class Bfunction {
+class Bfunction : public NameGen {
 public:
   Bfunction(llvm::Function *f, BFunctionType *fcnType,
             const std::string &asmName);
