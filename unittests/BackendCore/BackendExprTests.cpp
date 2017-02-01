@@ -470,9 +470,7 @@ TEST(BackendExprTests, TestLogicalOps) {
   Location loc;
   for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
     Bvariable *bvl = valtotest[tidx].first;
-    Bexpression *bleft = be->var_expression(bvl, VE_rvalue, loc);
     Bvariable *bvr = valtotest[tidx].second;
-    Bexpression *bright = be->var_expression(bvr, VE_rvalue, loc);
     for (auto op : optotest) {
       Bexpression *bleft = be->var_expression(bvl, VE_rvalue, loc);
       Bexpression *bright = be->var_expression(bvr, VE_rvalue, loc);

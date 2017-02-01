@@ -133,6 +133,7 @@ class Bnode {
 
  protected:
   Bnode(NodeFlavor flavor, const std::vector<Bnode *> &kids, Location loc);
+  Bnode(const Bnode &src);
   SwitchDescriptor *getSwitchCases();
 
   // exposed only for unit testing, not for general use.
@@ -238,6 +239,7 @@ class BnodeBuilder {
   void freeNode(Bnode *node);
 
  private:
+  void appendInstIfNeeded(Bexpression *rval, llvm::Value *val);
   Bnode *archiveNode(Bnode *node);
   Bexpression *archive(Bexpression *expr);
   Bstatement *archive(Bstatement *stmt);

@@ -20,7 +20,7 @@
 
 void IntegrityVisitor::dumpTag(const char *tag, void *ptr) {
   ss_ << tag << ": ";
-  if (includePointers_)
+  if (includePointers_ == DumpPointers)
     ss_ << ptr;
   ss_ << "\n";
 }
@@ -40,6 +40,8 @@ bool IntegrityVisitor::setParent(Bnode *child, Bnode *parent)
 {
   Bexpression *expr = child->castToBexpression();
   if (expr && be_->moduleScopeValue(expr->value(), expr->btype()))
+    return true;
+  if (child->flavor() == N_Var && includeVarExprs_ == IgnoreVarExprs)
     return true;
   auto it = nparent_.find(child);
   if (it != nparent_.end()) {

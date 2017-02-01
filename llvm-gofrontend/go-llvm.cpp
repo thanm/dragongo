@@ -101,7 +101,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
   errorFunction_.reset(new Bfunction(ef, makeAuxFcnType(eft), ""));
 
   // Reuse the error function as the value for error_expression
-  errorExpression_ = nbuilder_.mkError(errorType());
+  errorExpression_ = nbuilderGlobal_.mkError(errorType());
 
   // We now have the necessary bits to finish initialization of the
   // type manager.
@@ -111,7 +111,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
 
   // Error statement
   Location loc;
-  errorStatement_ = nbuilder_.mkExprStmt(nullptr, errorExpression(), loc);
+  errorStatement_ = nbuilderGlobal_.mkExprStmt(nullptr, errorExpression(), loc);
 
   // Reuse the error function as the value for errorVariable_
   errorVariable_.reset(
@@ -122,11 +122,11 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
 
 Llvm_backend::~Llvm_backend() {
   //for (auto &expr : expressions_)
-  //delete expr;
+  //  delete expr;
   //for (auto &kv : valueExprmap_)
-  //delete kv.second;
+  //  delete kv.second;
   //for (auto &kv : valueVarMap_)
-  //delete kv.second;
+  //  delete kv.second;
   for (auto &kv : builtinMap_)
     delete kv.second;
   for (auto &bfcn : functions_)
@@ -156,7 +156,7 @@ void Llvm_backend::dumpExpr(Bexpression *e)
 {
   if (e) {
     e->srcDump(linemap_);
-    auto p = checkTreeIntegrity(e, true);
+    auto p = checkTreeIntegrity(e, DumpPointers);
     if (p.first)
       std::cerr << p.second;
   }
@@ -166,7 +166,7 @@ void Llvm_backend::dumpStmt(Bstatement *s)
 {
   if (s) {
     s->srcDump(linemap_);
-    auto p = checkTreeIntegrity(s, true);
+    auto p = checkTreeIntegrity(s, DumpPointers);
     if (p.first)
       std::cerr << p.second;
   }
@@ -179,24 +179,28 @@ void Llvm_backend::dumpVar(Bvariable *v)
 }
 
 std::pair<bool, std::string>
-Llvm_backend::checkTreeIntegrity(Bexpression *e, bool includePointers)
+Llvm_backend::checkTreeIntegrity(Bexpression *e,
+                                 CkTreePtrDisp ptrDisp,
+                                 CkTreeVarDisp varDisp)
 {
-  IntegrityVisitor iv(this, includePointers);
+  IntegrityVisitor iv(this, ptrDisp, varDisp);
   bool rval = iv.visit(e);
   return std::make_pair(rval, iv.msg());
 }
 
 std::pair<bool, std::string>
-Llvm_backend::checkTreeIntegrity(Bstatement *s, bool includePointers)
+Llvm_backend::checkTreeIntegrity(Bstatement *s,
+                                 CkTreePtrDisp ptrDisp,
+                                 CkTreeVarDisp varDisp)
 {
-  IntegrityVisitor iv(this, includePointers);
+  IntegrityVisitor iv(this, ptrDisp, varDisp);
   bool rval = iv.visit(s);
   return std::make_pair(rval, iv.msg());
 }
 
 void Llvm_backend::enforceTreeIntegrity(Bexpression *e)
 {
-  IntegrityVisitor iv(this, true);
+  IntegrityVisitor iv(this, DumpPointers, IgnoreVarExprs);
   if (! iv.visit(e)) {
     std::cerr << iv.msg() << "\n";
     assert(false);
@@ -205,7 +209,7 @@ void Llvm_backend::enforceTreeIntegrity(Bexpression *e)
 
 void Llvm_backend::enforceTreeIntegrity(Bstatement *s)
 {
-  IntegrityVisitor iv(this, true);
+  IntegrityVisitor iv(this, DumpPointers, IgnoreVarExprs);
   if (! iv.visit(s)) {
     std::cerr << iv.msg() << "\n";
     assert(false);
@@ -593,86 +597,12 @@ Bexpression *Llvm_backend::makeGlobalExpression(Bexpression *expr,
   valbtype vbt(std::make_pair(val, btype));
   auto it = valueExprmap_.find(vbt);
   if (it != valueExprmap_.end()) {
-    nbuilder_.freeNode(expr);
+    nbuilderGlobal_.freeNode(expr);
     return it->second;
   }
   valueExprmap_[vbt] = expr;
   return expr;
 }
-
-#if 0
-void Llvm_backend::incorporateExpression(Bexpression *dst,
-                                         Bexpression *src,
-                                         std::set<llvm::Instruction *> *visited)
-{
-  dst->incorporateStmt(src->stmt());
-  for (auto inst : src->instructions()) {
-    if (llvm::isa<llvm::AllocaInst>(inst))
-      continue;
-    dst->appendInstruction(inst);
-    if (visited) {
-      assert(visited->find(inst) == visited->end());
-      visited->insert(inst);
-    }
-  }
-}
-#endif
-
-#if 0
-Bexpression *Llvm_backend::makeExpression(llvm::Value *value,
-                                          MkExprAction action,
-                                          Btype *btype,
-                                          Location location,
-                                          Bexpression *srcExpr,
-                                          ...)
-{
-  std::vector<Bexpression *> srcs;
-  va_list ap;
-  va_start(ap, srcExpr);
-  Bexpression *src = srcExpr;
-  while (src) {
-    srcs.push_back(src);
-    src = va_arg(ap, Bexpression *);
-  }
-  return makeExpression(value, action, btype, location, srcs);
-}
-#endif
-
-#if 0
-Bexpression *
-Llvm_backend::makeExpression(llvm::Value *value,
-                             MkExprAction action,
-                             Btype *btype,
-                             Location location,
-                             const std::vector<Bexpression *> &srcs)
-{
-  ValExprScope scope = LocalScope;
-  if (moduleScopeValue(value, btype))
-    scope = GlobalScope;
-  if (! llvm::isa<llvm::Instruction>(value))
-    scope = GlobalScope;
-  Bexpression *result = makeValueExpression(value, btype, scope, location);
-  std::set<llvm::Instruction *> visited;
-  unsigned numSrcs = 0;
-  for (auto src : srcs) {
-    incorporateExpression(result, src, &visited);
-    numSrcs += 1;
-  }
-  // globally scoped values should not include instructions
-  assert(scope == LocalScope || result->instructions().size() == 0);
-  if (action == AppendInst && llvm::isa<llvm::Instruction>(value)) {
-    // We need this guard to deal with situations where we've done
-    // something like x | 0, in which the IRBuilder will simply return
-    // the left operand.
-    llvm::Instruction *inst = llvm::cast<llvm::Instruction>(value);
-      if (visited.find(inst) == visited.end())
-        result->appendInstruction(inst);
-  }
-  if (numSrcs == 1 && srcs[0]->varExprPending())
-    result->setVarExprPending(srcs[0]->varContext());
-  return result;
-}
-#endif
 
 // Return the zero value for a type.
 
@@ -680,7 +610,7 @@ Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   if (btype == errorType())
     return errorExpression();
   llvm::Value *zeroval = llvm::Constant::getNullValue(btype->type());
-  Bexpression *cexpr = nbuilder_.mkConst(btype, zeroval);
+  Bexpression *cexpr = nbuilderGlobal_.mkConst(btype, zeroval);
   return makeGlobalExpression(cexpr, zeroval, btype, Location());
 }
 
@@ -820,12 +750,11 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
     assert(vc.addrLevel() == 0 || vc.addrLevel() == 1);
     if (vc.addrLevel() == 1 || vc.lvalue()) {
       assert(vc.addrLevel() == 0 || expr->btype()->type()->isPointerTy());
-      expr->resetVarExprContext();
-      return expr;
+      return nbuilder_.mkAddress(expr->btype(), expr->value(),
+                                 expr, expr->location());
     }
     Btype *btype = expr->btype();
     Bexpression *rval = loadFromExpr(expr, btype, expr->location());
-    expr->resetVarExprContext();
     return rval;
   }
   return expr;
@@ -1004,13 +933,13 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
     uint64_t val = checked_convert_mpz_to_int<uint64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::get(btype->type(), val);
-    Bexpression *bconst = nbuilder_.mkConst(btype, lval);
+    Bexpression *bconst = nbuilderGlobal_.mkConst(btype, lval);
     return makeGlobalExpression(bconst, lval, btype, Location());
   } else {
     int64_t val = checked_convert_mpz_to_int<int64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::getSigned(btype->type(), val);
-    Bexpression *bconst = nbuilder_.mkConst(btype, lval);
+    Bexpression *bconst = nbuilderGlobal_.mkConst(btype, lval);
     return makeGlobalExpression(bconst, lval, btype, Location());
   }
   return rval;
@@ -1033,13 +962,13 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
     float fval = mpfr_get_flt(val, GMP_RNDN);
     llvm::APFloat apf(fval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    Bexpression *bconst = nbuilder_.mkConst(btype, fcon);
+    Bexpression *bconst = nbuilderGlobal_.mkConst(btype, fcon);
     return makeGlobalExpression(bconst, fcon, btype, Location());
   } else if (btype->type() == llvmDoubleType()) {
     double dval = mpfr_get_d(val, GMP_RNDN);
     llvm::APFloat apf(dval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    Bexpression *bconst = nbuilder_.mkConst(btype, fcon);
+    Bexpression *bconst = nbuilderGlobal_.mkConst(btype, fcon);
     return makeGlobalExpression(bconst, fcon, btype, Location());
   } else if (btype->type() == llvmLongDoubleType()) {
     assert("not yet implemented" && false);
@@ -1063,7 +992,7 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val)
 {
   if (val.size() == 0) {
     llvm::Value *zer = llvm::Constant::getNullValue(stringType()->type());
-    Bexpression *bconst = nbuilder_.mkConst(stringType(), zer);
+    Bexpression *bconst = nbuilderGlobal_.mkConst(stringType(), zer);
     return makeGlobalExpression(bconst, zer, stringType(), Location());
   }
 
@@ -1081,7 +1010,7 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val)
   llvm::Constant *varval = llvm::cast<llvm::Constant>(svar->value());
   llvm::Constant *bitcast =
       llvm::ConstantExpr::getBitCast(varval, stringType()->type());
-  Bexpression *bconst = nbuilder_.mkConst(stringType(), bitcast);
+  Bexpression *bconst = nbuilderGlobal_.mkConst(stringType(), bitcast);
   return makeGlobalExpression(bconst, bitcast, stringType(), Location());
 }
 
@@ -1093,7 +1022,7 @@ Bexpression *Llvm_backend::boolean_constant_expression(bool val) {
                           : llvm::ConstantInt::getFalse(context_));
   llvm::Value *tobool = builder.CreateZExt(con, bool_type()->type(), "");
 
-  Bexpression *bconst = nbuilder_.mkConst(bool_type(), tobool);
+  Bexpression *bconst = nbuilderGlobal_.mkConst(bool_type(), tobool);
   return makeGlobalExpression(bconst, tobool, bool_type(), Location());
 }
 
@@ -1224,8 +1153,8 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
   Btype *fpBtype = pointer_type(bfunc->fcnType());
 
   // Create an address-of-function expr
-  Bexpression *fexpr = nbuilder_.mkFcnAddress(fpBtype, bfunc->function(),
-                                              bfunc, location);
+  Bexpression *fexpr = nbuilderGlobal_.mkFcnAddress(fpBtype, bfunc->function(),
+                                                    bfunc, location);
   return makeGlobalExpression(fexpr, bfunc->function(), fpBtype, location);
 }
 
@@ -1725,7 +1654,7 @@ Llvm_backend::makeConstCompositeExpr(Btype *btype,
     scon = llvm::ConstantArray::get(llat, llvals);
   }
 
-  Bexpression *bcon = nbuilder_.mkComposite(btype, scon, vals, location);
+  Bexpression *bcon = nbuilderGlobal_.mkComposite(btype, scon, vals, location);
   return makeGlobalExpression(bcon, scon, btype, location);
 }
 
@@ -1920,7 +1849,7 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
   // Case 2: handle polymorphic nil pointer expressions-- these are
   // generated without a type initially, so we need to convert them
   // to the appropriate type if they appear in an assignment context.
-  if (src == nil_pointer_expression()) {
+  if (src->value() == nil_pointer_expression()->value()) {
     BexprLIRBuilder builder(context_, src);
     std::string tag("cast");
     llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);

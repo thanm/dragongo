@@ -333,9 +333,13 @@ public:
   // one Bexpression or stmt. Returns <TRUE,""> if tree is ok,
   // otherwise returns <FALSE,descriptive_message>.
   std::pair<bool, std::string>
-  checkTreeIntegrity(Bexpression *e, bool includePointers = true);
+  checkTreeIntegrity(Bexpression *e,
+                     CkTreePtrDisp pd = DumpPointers,
+                     CkTreeVarDisp vd = IgnoreVarExprs);
   std::pair<bool, std::string>
-  checkTreeIntegrity(Bstatement *s,  bool includePointers = true);
+  checkTreeIntegrity(Bstatement *s,
+                     CkTreePtrDisp pd = DumpPointers,
+                     CkTreeVarDisp vd = IgnoreVarExprs);
 
   // Similar to the above, but prints message to std::cerr and aborts if fail
   void enforceTreeIntegrity(Bexpression *e);
@@ -610,13 +614,35 @@ private:
 
   // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
+
+  // The result LLVM module we're generating.
   std::unique_ptr<llvm::Module> module_;
+
+  // Data layout info from the module.
   const llvm::DataLayout &datalayout_;
+
+  // This builder is for constructing function-scoped expressions
+  // and statements. Everything in here is delete when we're done
+  // processing the current function.
   BnodeBuilder nbuilder_;
+
+  // A builder for module-scoped expressions (constants). Things in
+  // here stick around until we're done with the module.
+  BnodeBuilder nbuilderGlobal_;
+
+  // Linemap to use. If client did not supply a linemap during
+  // construction, then ownLinemap_ is filled in.
   Linemap *linemap_;
   std::unique_ptr<Linemap> ownLinemap_;
+
+  // Address space designator for pointer types.
   unsigned addressSpace_;
+
+  // Debug trace level
   unsigned traceLevel_;
+
+  // Whether to check for unexpected node sharing (e.g. same Bexpression
+  // or statement pointed to by multiple parents).
   bool checkIntegrity_;
 
   // Target library info oracle

@@ -46,7 +46,7 @@ TEST(BackendTreeIntegrity, CheckTreeIntegrity1) {
     b4->appendInstruction(inst);
 
   std::pair<bool, std::string> result =
-      be->checkTreeIntegrity(h.block(), false);
+      be->checkTreeIntegrity(h.block(), NoDumpPointers, CheckVarExprs);
   EXPECT_EQ(false, result.first);
   EXPECT_TRUE(containstokens(result.second,
                              "instruction has multiple parents"));
@@ -76,7 +76,8 @@ TEST(BackendTreeIntegrity, CheckTreeIntegrity2) {
   Bstatement *es2 = be->expression_statement(func, ve);
   addStmtToBlock(be.get(), block, es2);
 
-  std::pair<bool, std::string> result = be->checkTreeIntegrity(block, false);
+  std::pair<bool, std::string> result =
+      be->checkTreeIntegrity(block, NoDumpPointers, CheckVarExprs);
   EXPECT_EQ(false, result.first);
   EXPECT_TRUE(containstokens(result.second, "expr has multiple parents"));
 
@@ -102,7 +103,8 @@ TEST(BackendTreeIntegrity, CheckTreeIntegrity3) {
   Bblock *block = mkBlockFromStmt(be.get(), func, es);
   addStmtToBlock(be.get(), block, es);
 
-  std::pair<bool, std::string> result = be->checkTreeIntegrity(block, false);
+  std::pair<bool, std::string> result =
+      be->checkTreeIntegrity(block, NoDumpPointers, CheckVarExprs);
   EXPECT_EQ(false, result.first);
   EXPECT_TRUE(containstokens(result.second, "stmt has multiple parents"));
 

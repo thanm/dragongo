@@ -34,6 +34,13 @@ Bexpression::Bexpression(NodeFlavor fl, const std::vector<Bnode *> &kids,
 {
 }
 
+Bexpression::Bexpression(const Bexpression &src)
+    : Bnode(src)
+    , value_(src.value_)
+    , btype_(src.btype_)
+{
+}
+
 Bexpression::~Bexpression()
 {
 }
@@ -64,6 +71,15 @@ void Bexpression::resetVarExprContext()
   varContext_.reset();
 }
 
+Bexpression *Bexpression::cloneConstant() const {
+  assert(flavor() == N_Const ||
+         flavor() == N_Composite ||
+         flavor() == N_FcnAddress);
+  assert(llvm::isa<llvm::Constant>(value()));
+  Bexpression *rval = new Bexpression(*this);
+  return rval;
+}
+
 bool Bexpression::compositeInitPending() const
 {
   return flavor() == N_Composite && value() == nullptr;
@@ -91,12 +107,6 @@ void Bexpression::srcDump(Linemap *linemap)
 void Bexpression::dumpInstructions(llvm::raw_ostream &os, unsigned ilevel,
                                    Linemap *linemap, bool terse) const {
   bool hitValue = false;
-  if (!terse && varExprPending()) {
-    const VarContext &vc = varContext();
-    indent(os, ilevel);
-    os << "var pending: lvalue=" <<  (vc.lvalue() ? "yes" : "no")
-       << " addrLevel=" << vc.addrLevel() << "\n";
-  }
   for (auto inst : instructions()) {
     indent(os, ilevel);
     char c = ' ';

@@ -21,6 +21,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Instruction.h"
+#include "llvm/IR/Function.h"
 #include "llvm/IR/Value.h"
 
 // Table of Bnode properties
@@ -72,6 +73,15 @@ Bnode::Bnode(NodeFlavor flavor, const std::vector<Bnode *> &kids, Location loc)
   memset(&u, '\0', sizeof(u));
   assert(BnodeProperties[flavor].numChildren == Variadic ||
          BnodeProperties[flavor].numChildren == kids.size());
+}
+
+Bnode::Bnode(const Bnode &src)
+    : location_(src.location_)
+    , flavor_(src.flavor_)
+    , id_(0xfeedface)
+    , flags_(0)
+{
+  memset(&u, '\0', sizeof(u));
 }
 
 Bexpression *Bnode::castToBexpression() const {
@@ -163,9 +173,34 @@ void Bnode::osdump(llvm::raw_ostream &os, unsigned ilevel,
   os << flavstr() << ": ";
 
   // Additional info
+  const Bexpression *expr = castToBexpression();
   switch(flavor()) {
+    case N_Const: {
+      assert(expr);
+      expr->value()->print(os);
+      os << "\n";
+      return;
+    }
+    case N_Composite: {
+      assert(expr);
+      if (llvm::isa<llvm::Constant>(expr->value())) {
+        expr->value()->print(os);
+        os << "\n";
+        return;
+      }
+      break;
+    }
+    case N_FcnAddress: {
+      assert(expr);
+      if (llvm::isa<llvm::Function>(expr->value())) {
+        llvm::Function *f = llvm::cast<llvm::Function>(expr->value());
+        os << f->getName() << "\n";
+        return;
+      }
+      break;
+    }
     case N_Var: {
-      os << "var '" << u.var->name() << "' type: ";
+      os << "'" << u.var->name() << "' type: ";
       u.var->btype()->osdump(os, 0);
       break;
     }
@@ -180,8 +215,12 @@ void Bnode::osdump(llvm::raw_ostream &os, unsigned ilevel,
     }
     default: break;
   }
+  if (!terse && expr && expr->varExprPending()) {
+    const VarContext &vc = expr->varContext();
+    os << " [VP lvalue=" <<  (vc.lvalue() ? "yes" : "no")
+       << " addrLevel=" << vc.addrLevel() << "]";
+  }
   os << "\n";
-  const Bexpression *expr = castToBexpression();
   if (expr)
     expr->dumpInstructions(os, ilevel, linemap, terse);
 
@@ -314,6 +353,29 @@ Bexpression *BnodeBuilder::mkVar(Bvariable *var, Location loc)
   return archive(rval);
 }
 
+// This is somewhat unpleasant but necessary due to the way
+// LLVM's IRBuilder works. If you do something like
+//
+//    newinst = builder.CreateOr(left, right)
+//
+// and it turns out that 'right' is the constant zero, then
+// the builder will just return left (meaning that we don't
+// want the instruction to be appended to the new Bexpression).
+
+void BnodeBuilder::appendInstIfNeeded(Bexpression *rval,
+                                      llvm::Value *val)
+{
+  if (!llvm::isa<llvm::Instruction>(val))
+    return;
+  llvm::Instruction *inst = llvm::cast<llvm::Instruction>(val);
+  for (auto &kid : rval->kids_) {
+    Bexpression *expr = kid->castToBexpression();
+    if (expr && expr->value() == inst)
+      return;
+  }
+  rval->appendInstruction(inst);
+}
+
 Bexpression *BnodeBuilder::mkBinaryOp(Operator op, Btype *typ, llvm::Value *val,
                                       Bexpression *left, Bexpression *right,
                                       Location loc)
@@ -323,8 +385,7 @@ Bexpression *BnodeBuilder::mkBinaryOp(Operator op, Btype *typ, llvm::Value *val,
   std::vector<Bnode *> kids = { left, right };
   Bexpression *rval =
       new Bexpression(N_BinaryOp, kids, val, typ, loc);
-  if (llvm::isa<llvm::Instruction>(val))
-    rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
+  appendInstIfNeeded(rval, val);
   rval->u.op = op;
   return archive(rval);
 }
@@ -337,8 +398,7 @@ Bexpression *BnodeBuilder::mkUnaryOp(Operator op, Btype *typ, llvm::Value *val,
   Bexpression *rval =
       new Bexpression(N_UnaryOp, kids, val, typ, loc);
   rval->u.op = op;
-  if (llvm::isa<llvm::Instruction>(val))
-    rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
+  appendInstIfNeeded(rval, val);
   if (src->varExprPending())
     rval->setVarExprPending(src->varContext());
   return archive(rval);
@@ -350,8 +410,7 @@ Bexpression *BnodeBuilder::mkConversion(Btype *typ, llvm::Value *val,
   std::vector<Bnode *> kids = { src };
   Bexpression *rval =
       new Bexpression(N_Conversion, kids, val, typ, loc);
-  if (llvm::isa<llvm::Instruction>(val))
-    rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
+  appendInstIfNeeded(rval, val);
   if (src->varExprPending())
     rval->setVarExprPending(src->varContext());
   return archive(rval);
@@ -427,8 +486,7 @@ Bexpression *BnodeBuilder::mkStructField(Btype *typ,
   std::vector<Bnode *> kids = { structval };
   Bexpression *rval =
       new Bexpression(N_StructField, kids, val, typ, loc);
-  if (llvm::isa<llvm::Instruction>(val))
-    rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
+  appendInstIfNeeded(rval, val);
   rval->u.fieldIndex = fieldIndex;
   return archive(rval);
 }
@@ -442,8 +500,7 @@ Bexpression *BnodeBuilder::mkArrayIndex(Btype *typ,
   std::vector<Bnode *> kids = { arval, index };
   Bexpression *rval =
       new Bexpression(N_ArrayIndex, kids, val, typ, loc);
-  if (llvm::isa<llvm::Instruction>(val))
-    rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
+  appendInstIfNeeded(rval, val);
   return archive(rval);
 }
 
@@ -520,6 +577,8 @@ Bstatement *BnodeBuilder::mkIfStmt(Bfunction *func,
                                    Bexpression *cond, Bblock *trueBlock,
                                    Bblock *falseBlock, Location loc)
 {
+  if (falseBlock == nullptr)
+    falseBlock = new Bblock(func, std::vector<Bvariable *>(), loc);
   std::vector<Bnode *> kids = { cond, trueBlock, falseBlock };
   Bstatement *rval = new Bstatement(N_IfStmt, func, kids, loc);
   return archive(rval);
@@ -565,7 +624,6 @@ Bblock *BnodeBuilder::mkBlock(Bfunction *func,
                               const std::vector<Bvariable *> &vars,
                               Location loc)
 {
-  assert(func);
   Bblock *rval = new Bblock(func, vars, loc);
   return archive(rval);
 }

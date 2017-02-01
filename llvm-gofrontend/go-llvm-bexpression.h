@@ -158,6 +158,9 @@ class Bexpression : public Bnode, public Binstructions {
   const std::string &tag() const { return tag_; }
   void setTag(const std::string &tag) { tag_ = tag; }
 
+  // Legal only for constants
+  Bexpression *cloneConstant() const;
+
   bool varExprPending() const;
   const VarContext &varContext() const;
   void setVarExprPending(bool lvalue, unsigned addrLevel);
@@ -178,6 +181,7 @@ class Bexpression : public Bnode, public Binstructions {
  private:
   Bexpression(NodeFlavor fl, const std::vector<Bnode *> &kids,
               llvm::Value *val, Btype *typ, Location loc);
+  Bexpression(const Bexpression &src);
 
   llvm::Value *value_;
   Btype *btype_;
