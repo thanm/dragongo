@@ -13,7 +13,7 @@
 
 #include "go-llvm-btype.h"
 #include "go-llvm-bexpression.h"
-#include "go-llvm-bstatement.h"
+//#include "go-llvm-bstatement.h"
 #include "go-system.h"
 
 #include "llvm/Support/raw_ostream.h"
@@ -26,10 +26,11 @@ static void indent(llvm::raw_ostream &os, unsigned ilevel) {
     os << " ";
 }
 
-Bexpression::Bexpression(llvm::Value *value,
-                         Btype *btype,
-                         Location location)
-    : value_(value), btype_(btype), stmt_(nullptr), location_(location)
+Bexpression::Bexpression(NodeFlavor fl, const std::vector<Bnode *> &kids,
+                         llvm::Value *val, Btype *typ, Location loc)
+    : Bnode(fl, kids, loc)
+    , value_(val)
+    , btype_(typ)
 {
 }
 
@@ -39,90 +40,44 @@ Bexpression::~Bexpression()
 
 bool Bexpression::varExprPending() const
 {
-  return varContext_.get() != nullptr;
+  return varContext_.pending();
 }
 
-VarContext &Bexpression::varContext() const
+const VarContext &Bexpression::varContext() const
 {
-  assert(varContext_.get());
-  return *varContext_.get();
+  return varContext_;
 }
 
 void Bexpression::setVarExprPending(bool lvalue, unsigned addrLevel)
 {
-  varContext_.reset(new VarContext(lvalue, addrLevel));
+  varContext_.setPending(lvalue, addrLevel);
 }
 
 void Bexpression::setVarExprPending(const VarContext &src)
 {
-  varContext_.reset(new VarContext(src));
+  assert(src.pending());
+  varContext_ = src;
 }
 
 void Bexpression::resetVarExprContext()
 {
-  varContext_.reset(nullptr);
+  varContext_.reset();
 }
 
 bool Bexpression::compositeInitPending() const
 {
-  return compositeInitContext_.get() != nullptr;
+  return flavor() == N_Composite && value() == nullptr;
 }
 
-CompositeInitContext &Bexpression::compositeInitContext() const
+const std::vector<Bexpression *> Bexpression::getChildExprs() const
 {
-  assert(compositeInitContext_.get());
-  return *compositeInitContext_.get();
-}
-
-void Bexpression::setCompositeInit(const std::vector<Bexpression *> &vals)
-{
-  compositeInitContext_.reset(new CompositeInitContext(vals));
-}
-
-void Bexpression::finishCompositeInit(llvm::Value *finalizedValue)
-{
-  assert(value_ == nullptr);
-  assert(finalizedValue);
-  value_ = finalizedValue;
-  compositeInitContext_.reset(nullptr);
-}
-
-void Bexpression::incorporateStmt(Bstatement *newst)
-{
-  if (newst == nullptr)
-    return;
-  if (stmt() == nullptr) {
-    setStmt(newst);
-    return;
+  std::vector<Bexpression *> rval;
+  for (auto &k : children()) {
+    Bexpression *e = k->castToBexpression();
+    assert(e);
+    rval.push_back(e);
   }
-  CompoundStatement *cs = stmt()->castToCompoundStatement();
-  if (!cs) {
-    cs = new CompoundStatement(stmt()->function());
-    cs->stlist().push_back(stmt());
-  }
-  cs->stlist().push_back(newst);
-  setStmt(cs);
-}
-
-// Note that we don't delete expr here; all Bexpression
-// deletion is handled in the Llvm_backend destructor
-
-void Bexpression::destroy(Bexpression *expr, WhichDel which) {
-  if (which != DelWrappers)
-    for (auto inst : expr->instructions())
-      delete inst;
-  if (which != DelInstructions) {
-    if (expr->stmt())
-      Bstatement::destroy(expr->stmt(), which);
-  }
-}
-
-void Bexpression::dump()
-{
-  std::string s;
-  llvm::raw_string_ostream os(s);
-  osdump(os, 0, nullptr, false);
-  std::cerr << os.str();
+  return rval;
 }
 
 void Bexpression::srcDump(Linemap *linemap)
@@ -133,26 +88,14 @@ void Bexpression::srcDump(Linemap *linemap)
   std::cerr << os.str();
 }
 
-void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel,
-                         Linemap *linemap, bool terse) {
+void Bexpression::dumpInstructions(llvm::raw_ostream &os, unsigned ilevel,
+                                   Linemap *linemap, bool terse) const {
   bool hitValue = false;
-  if (! terse) {
-    if (linemap) {
-      indent(os, ilevel);
-      os << linemap->to_string(location()) << "\n";
-    }
-    if (compositeInitPending()) {
-      const std::vector<Bexpression *> &eevec =
-          compositeInitContext().elementExpressions();
-      indent(os, ilevel);
-      os << "composite init pending [" << eevec.size() << "]:\n";
-      unsigned idx = 0;
-      for (auto exp : eevec) {
-        indent(os, ilevel+2);
-        os << "EE" << idx << ":\n";
-        exp->osdump(os, ilevel+2, linemap, terse);
-      }
-    }
+  if (!terse && varExprPending()) {
+    const VarContext &vc = varContext();
+    indent(os, ilevel);
+    os << "var pending: lvalue=" <<  (vc.lvalue() ? "yes" : "no")
+       << " addrLevel=" << vc.addrLevel() << "\n";
   }
   for (auto inst : instructions()) {
     indent(os, ilevel);
@@ -173,16 +116,5 @@ void Bexpression::osdump(llvm::raw_ostream &os, unsigned ilevel,
     else
       os << "<nil value>";
     os << "\n";
-  }
-  if (!terse && varExprPending()) {
-    const VarContext &vc = varContext();
-    indent(os, ilevel);
-    os << "var pending: lvalue=" <<  (vc.lvalue() ? "yes" : "no")
-       << " addrLevel=" << vc.addrLevel() << "\n";
-  }
-  if (!terse && stmt()) {
-    indent(os, ilevel);
-    os << "enclosed stmt:\n";
-    stmt()->osdump(os, ilevel+2, linemap, terse);
   }
 }

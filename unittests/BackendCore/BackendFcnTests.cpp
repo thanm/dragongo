@@ -160,7 +160,6 @@ TEST(BackendFcnTests, MakeBlocks) {
   const std::vector<Bvariable *> vars;
   Bblock *bb = be->block(bfcn, nullptr, vars, Location(), Location());
   ASSERT_TRUE(bb != nullptr);
-  delete bb;
 }
 
 }

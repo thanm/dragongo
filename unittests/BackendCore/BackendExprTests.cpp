@@ -281,8 +281,8 @@ TEST(BackendExprTests, TestCompareOps) {
   for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
     Bexpression *bleft = valtotest[tidx].first;
     Bvariable *bv = valtotest[tidx].second;
-    Bexpression *bright = be->var_expression(bv, VE_rvalue, loc);
     for (auto op : optotest) {
+      Bexpression *bright = be->var_expression(bv, VE_rvalue, loc);
       Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
       Bstatement *es = be->expression_statement(func, cmp);
       h.addStmt(es);
@@ -377,8 +377,8 @@ TEST(BackendExprTests, TestArithOps) {
   for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
     Bexpression *bleft = valtotest[tidx].first;
     Bvariable *bv = valtotest[tidx].second;
-    Bexpression *bright = be->var_expression(bv, VE_rvalue, loc);
     for (auto op : optotest) {
+      Bexpression *bright = be->var_expression(bv, VE_rvalue, loc);
       Bexpression *cmp = be->binary_expression(op, bleft, bright, loc);
       Bstatement *es = be->expression_statement(func, cmp);
       h.addStmt(es);
@@ -474,6 +474,8 @@ TEST(BackendExprTests, TestLogicalOps) {
     Bvariable *bvr = valtotest[tidx].second;
     Bexpression *bright = be->var_expression(bvr, VE_rvalue, loc);
     for (auto op : optotest) {
+      Bexpression *bleft = be->var_expression(bvl, VE_rvalue, loc);
+      Bexpression *bright = be->var_expression(bvr, VE_rvalue, loc);
       Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
       Bstatement *es = be->expression_statement(func, cmp);
       h.addStmt(es);
@@ -686,10 +688,10 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
     store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
     store [4 x i64] [i64 0, i64 0, i64 3, i64 0], [4 x i64]* %ab
     store i64 0, i64* %z
+    %z.ld.0 = load i64, i64* %z
     %index.0 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 0
     store i64 0, i64* %index.0
     %index.1 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 1
-    %z.ld.0 = load i64, i64* %z
     store i64 %z.ld.0, i64* %index.1
     %index.2 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 2
     store i64 0, i64* %index.2
@@ -742,15 +744,12 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   h.mkLocal("loc2", s2t, scon2);
 
   const char *exp = R"RAW_RESULT(
-      store { i32*, i32 } { i32* null, i32 101 }, { i32*, i32 }* %loc1
-      %field.1 = getelementptr inbounds { i32*, i32 },
-        { i32*, i32 }* %loc2, i32 0, i32 0
-      store i32* %param1.addr, i32** %field.1
-      %field.2 = getelementptr inbounds { i32*, i32 },
-        { i32*, i32 }* %loc2, i32 0, i32 1
-      %field.0 = getelementptr inbounds { i32*, i32 },
-        { i32*, i32 }* %loc1, i32 0, i32 1
+    store { i32*, i32 } { i32* null, i32 101 }, { i32*, i32 }* %loc1
+      %field.0 = getelementptr inbounds { i32*, i32 }, { i32*, i32 }* %loc1, i32 0, i32 1
       %loc1.field.ld.0 = load i32, i32* %field.0
+      %field.1 = getelementptr inbounds { i32*, i32 }, { i32*, i32 }* %loc2, i32 0, i32 0
+      store i32* %param1.addr, i32** %field.1
+      %field.2 = getelementptr inbounds { i32*, i32 }, { i32*, i32 }* %loc2, i32 0, i32 1
       store i32 %loc1.field.ld.0, i32* %field.2
   )RAW_RESULT";
 
@@ -797,19 +796,19 @@ TEST(BackendExprTests, CreateArrayIndexingExprs) {
   Bexpression *vea4 = be->var_expression(aa, VE_lvalue, loc);
   Bexpression *aa4 = be->array_index_expression(vea4, aa1, loc);
 
-  // aa[aa[1]] = aa[aa[5]]
+  // aa[aa[1]] = aa[aa[3]]
   h.mkAssign(aa4, aa3);
 
   const char *exp = R"RAW_RESULT(
-    store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
-    %index.1 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 3
-    %aa.index.ld.0 = load i64, i64* %index.1
-    %index.2 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 %aa.index.ld.0
-    %aa.index.ld.2 = load i64, i64* %index.2
-    %index.0 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i32 1
-    %aa.index.ld.1 = load i64, i64* %index.0
-    %index.3 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 %aa.index.ld.1
-    store i64 %aa.index.ld.2, i64* %index.3
+      store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
+      %index.0 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i32 1
+      %aa.index.ld.1 = load i64, i64* %index.0
+      %index.3 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 %aa.index.ld.1
+      %index.1 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 3
+      %aa.index.ld.0 = load i64, i64* %index.1
+      %index.2 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 %aa.index.ld.0
+      %aa.index.ld.2 = load i64, i64* %index.2
+      store i64 %aa.index.ld.2, i64* %index.3
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);

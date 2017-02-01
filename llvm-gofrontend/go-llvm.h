@@ -354,6 +354,9 @@ public:
 
  private:
 
+  Bexpression *errorExpression() const { return errorExpression_; }
+  Bstatement *errorStatement() const { return errorStatement_; }
+
   // add a builtin function definition
   void defineBuiltinFcn(const char *name, const char *libname,
                         llvm::Function *fcn);
@@ -388,15 +391,14 @@ public:
   void defineIntrinsicBuiltins();
   void defineTrigBuiltins();
 
-  // Create a Bexpression to hold an llvm::Value. Some Bexpressions
-  // we want to cache (constants for example, or lvalue references to
-  // global variables); for these cases scope should be set to "GlobalScope".
-  // For non-cacheable values (for example, an lvalue reference to a local
-  // var in a function), set scope to LocalScope (no caching in this case).
-  enum ValExprScope { GlobalScope, LocalScope };
-  Bexpression *makeValueExpression(llvm::Value *val,
+  // Certain Bexpressions we want to cache (constants for example,
+  // or lvalue references to global variables). This helper looks up
+  // the specified expr in a table keyed by <llvm::Value,Btype>. If
+  // the lookup succeeds, the cached value is returned, otherwise the
+  // specified Bexpression is installed in the table and returned.
+  Bexpression *makeGlobalExpression(Bexpression *expr,
+                                   llvm::Value *val,
                                    Btype *btype,
-                                   ValExprScope scope,
                                    Location location);
 
   enum ModVarConstant { MV_Constant, MV_NonConstant };
@@ -417,6 +419,7 @@ public:
                            llvm::Constant *initializer,
                            unsigned alignmentInBytes = 0);
 
+#if 0
   // Helper to fold contents of one instruction into another.
   static void
   incorporateExpression(Bexpression *dst,
@@ -443,6 +446,7 @@ public:
                               Btype *btype,
                               Location location,
                               const std::vector<Bexpression *> &srcs);
+#endif
 
   // Helper for creating a constant-valued array/struct expression.
   Bexpression *makeConstCompositeExpr(Btype *btype,
@@ -470,9 +474,6 @@ public:
                                  llvm::Value *idx,
                                  llvm::Value *sptr);
 
-  // Create new Bstatement from an expression.
-  ExprListStatement *stmtFromExpr(Bfunction *function, Bexpression *expr);
-
   // Assignment helper
   Bstatement *makeAssignment(Bfunction *function, llvm::Value *lvalue,
                              Bexpression *lhs, Bexpression *rhs, Location);
@@ -485,8 +486,11 @@ public:
 
   // Var expr management
   Bexpression *resolveVarContext(Bexpression *expr);
-  Bexpression *loadFromExpr(Bexpression *expr, Btype* &loadResultType,
-                            Location location);
+
+  // Load-generation helper
+  Bexpression *loadFromExpr(Bexpression *space,
+                            Btype *resultTyp,
+                            Location loc);
 
   // Examine vector of values to test whether they are constants.
   // Checks for and handles pending composite inits.
@@ -608,6 +612,7 @@ private:
   llvm::LLVMContext &context_;
   std::unique_ptr<llvm::Module> module_;
   const llvm::DataLayout &datalayout_;
+  BnodeBuilder nbuilder_;
   Linemap *linemap_;
   std::unique_ptr<Linemap> ownLinemap_;
   unsigned addressSpace_;
@@ -624,10 +629,10 @@ private:
   std::unique_ptr<Bfunction> errorFunction_;
 
   // Error expression
-  std::unique_ptr<Bexpression> errorExpression_;
+  Bexpression *errorExpression_;
 
   // Error statement
-  std::unique_ptr<Bstatement> errorStatement_;
+  Bstatement *errorStatement_;
 
   // Error variable
   std::unique_ptr<Bvariable> errorVariable_;
@@ -644,11 +649,6 @@ private:
   // by the frontend, so here we keep track of all returned Bfunctions
   // so that we can free them on exit.
   std::vector<Bfunction *> functions_;
-
-  // Keep track of Bexpression's we've given out to the front end
-  // (those not appearing in other maps) so that we can delete them
-  // when we're done with them.
-  std::vector<Bexpression *> expressions_;
 };
 
 #endif

@@ -52,7 +52,7 @@ TEST(BackendTreeIntegrity, CheckTreeIntegrity1) {
                              "instruction has multiple parents"));
 
   // Undo the mangling to avoid asserts later on
-  b4->instructions().clear();
+  b4->clear();
 
   h.finish();
 }
@@ -78,9 +78,7 @@ TEST(BackendTreeIntegrity, CheckTreeIntegrity2) {
 
   std::pair<bool, std::string> result = be->checkTreeIntegrity(block, false);
   EXPECT_EQ(false, result.first);
-  EXPECT_TRUE(containstokens(result.second, "expression has multiple parents"));
-
-  Bstatement::destroy(block);
+  EXPECT_TRUE(containstokens(result.second, "expr has multiple parents"));
 
   Bexpression *ve3= be->var_expression(loc1, VE_lvalue, loc);
   Bstatement *es3 = be->expression_statement(func, ve3);
@@ -106,11 +104,7 @@ TEST(BackendTreeIntegrity, CheckTreeIntegrity3) {
 
   std::pair<bool, std::string> result = be->checkTreeIntegrity(block, false);
   EXPECT_EQ(false, result.first);
-  EXPECT_TRUE(containstokens(result.second, "statement has multiple parents"));
-
-  block->stlist().clear();
-  Bstatement::destroy(block);
-  Bstatement::destroy(es);
+  EXPECT_TRUE(containstokens(result.second, "stmt has multiple parents"));
 
   Bexpression *b3 = mkInt64Const(be.get(), 3);
   Bstatement *es2 = be->expression_statement(func, b3);

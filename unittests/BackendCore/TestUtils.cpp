@@ -443,24 +443,41 @@ Bstatement *addExprToBlock(Backend *be, Bfunction *func,
   return es;
 }
 
-std::string repr(Bstatement *statement) {
-  if (!statement)
-    return "<null Bstatement>";
-  std::string res;
-  llvm::raw_string_ostream os(res);
-  bool terse = true;
-  statement->osdump(os, 0, nullptr, terse);
-  return trimsp(os.str());
-}
+class NodeReprVisitor {
+ public:
+  NodeReprVisitor() : os_(str_) { }
 
-std::string repr(Bexpression *expr) {
-  if (!expr)
-    return "<null Bexpression>";
-  std::string res;
-  llvm::raw_string_ostream os(res);
-  bool terse = true;
-  expr->osdump(os, 0, nullptr, terse);
-  return trimsp(os.str());
+  std::string result() { return os_.str(); }
+
+  void visitNodePre(Bnode *node) { }
+
+  void visitNodePost(Bnode *node) {
+    assert(node);
+    Bexpression *expr = node->castToBexpression();
+    if (expr) {
+      for (auto inst : expr->instructions()) {
+        inst->print(os_);
+        os_ << "\n";
+      }
+    }
+    assert(node->flavor() != N_IfStmt &&
+           node->flavor() != N_GotoStmt &&
+           node->flavor() != N_LabelStmt &&
+           node->flavor() != N_SwitchStmt);
+  }
+
+ private:
+  std::string str_;
+  llvm::raw_string_ostream os_;
+};
+
+std::string repr(Bnode *node) {
+  if (!node)
+    return "<null Bnode ptr>";
+
+  NodeReprVisitor vis;
+  simple_walk_nodes(node, vis);
+  return trimsp(vis.result());
 }
 
 FcnTestHarness::FcnTestHarness(const char *fcnName)

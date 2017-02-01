@@ -117,7 +117,10 @@ TEST(BackendCallTests, MultiReturnCall) {
     EXPECT_TRUE(isOK && "First return stmt does not have expected contents");
   }
 
-  // This returns value with non-constant elements.
+  // This is intended to be something like
+  //
+  //  return p8, nil, nil, 101
+  //
   Bvariable *p1 = func->getBvarForValue(func->getNthArgValue(0));
   Bexpression *vex = be->var_expression(p1, VE_rvalue, Location());
   std::vector<Bexpression *> rvals2 = {
@@ -129,17 +132,17 @@ TEST(BackendCallTests, MultiReturnCall) {
 
   {
     const char *exp = R"RAW_RESULT(
-      %field.0 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 0
-      %p0.ld.0 = load i8*, i8** %p0.addr
-      store i8* %p0.ld.0, i8** %field.0
-      %field.1 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 1
-      store i32* null, i32** %field.1
-      %field.2 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 2
-      store i64* null, i64** %field.2
-      %field.3 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 3
-      store i64 101, i64* %field.3
-      %.ld.0 = load { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0
-      ret { i8*, i32*, i64*, i64 } %.ld.0
+%p0.ld.0 = load i8*, i8** %p0.addr
+  %field.0 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 0
+  store i8* %p0.ld.0, i8** %field.0
+  %field.1 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 1
+  store i32* null, i32** %field.1
+  %field.2 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 2
+  store i64* null, i64** %field.2
+  %field.3 = getelementptr inbounds { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0, i32 0, i32 3
+  store i64 101, i64* %field.3
+  %.ld.0 = load { i8*, i32*, i64*, i64 }, { i8*, i32*, i64*, i64 }* %tmp.0
+  ret { i8*, i32*, i64*, i64 } %.ld.0
     )RAW_RESULT";
 
     bool isOK = h.expectStmt(s2, exp);

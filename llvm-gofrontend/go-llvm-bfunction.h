@@ -63,17 +63,11 @@ public:
   // Record a new Bblock for this function.
   void addBlock(Bblock *block) { blocks_.push_back(block); }
 
-  // Create and return a new block
-  Bblock *newBlock(Bfunction *function);
-
   // Create a new label
-  Blabel *newLabel();
+  Blabel *newLabel(Location loc);
 
-  // Create a new label definition statement
-  Bstatement *newLabelDefStatement(Blabel *label);
-
-  // Create a new goto statement
-  Bstatement *newGotoStatement(Blabel *label, Location location);
+  // Register label def statement for label
+  void registerLabelDefStatement(Bstatement *st, Blabel *label);
 
   // Create code to spill function arguments to entry block, insert
   // allocas for local variables.

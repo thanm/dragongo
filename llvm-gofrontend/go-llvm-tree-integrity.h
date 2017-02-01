@@ -50,31 +50,23 @@ class IntegrityVisitor {
   IntegrityVisitor(const Llvm_backend *be, bool incPtrs)
       : be_(be), ss_(str_), includePointers_(incPtrs) { }
 
-  bool visit(Bexpression *e);
-  bool visit(Bstatement *e);
+  bool visit(Bnode *n);
   std::string msg() { return ss_.str(); }
 
  private:
   const Llvm_backend *be_;
-  std::unordered_map<llvm::Instruction *, Bexpression *> iparent_;
-  typedef std::pair<Bexpression *, Bstatement *> eors;
-  std::unordered_map<Bstatement *, eors> sparent_;
-  std::unordered_map<Bexpression *, eors> eparent_;
+  std::unordered_map<llvm::Instruction *, Bnode *> iparent_;
+  std::unordered_map<Bnode *, Bnode *> nparent_;
   std::string str_;
   llvm::raw_string_ostream ss_;
   bool includePointers_;
 
  private:
-  bool setParent(Bexpression *child, const eors &parent);
-  bool setParent(Bstatement *child, const eors &parent);
+  bool setParent(Bnode *child, Bnode *parent);
   bool setParent(llvm::Instruction *inst, Bexpression *exprParent);
-  eors makeExprParent(Bexpression *expr);
-  eors makeStmtParent(Bstatement *stmt);
   void dumpTag(const char *tag, void *ptr);
-  void dump(Bexpression *expr);
-  void dump(Bstatement *stmt);
   void dump(llvm::Instruction *inst);
-  void dump(const eors &pair);
+  void dump(Bnode *node);
 };
 
 #endif // LLVMGOFRONTEND_GO_LLVM_TREE_INTEGRITY_H

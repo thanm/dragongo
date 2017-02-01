@@ -39,12 +39,9 @@ std::string repr(llvm::Value *val);
 // Return string representation of LLVM type (handling null ptr)
 std::string repr(llvm::Type *t);
 
-// Return string representation of Bstatement (handling null ptr)
-// Currently only a subset of statement types are supported.
-std::string repr(Bstatement *statement);
-
-// Return string representation of Bexpression (handling null ptr)
-std::string repr(Bexpression *expr);
+// Return string representation of Bstatement or Bexpression (handling
+// null ptr). Currently only a subset of statement types are supported.
+std::string repr(Bnode *node);
 
 // Varargs helper for struct creation. Pass in pairs of
 // type/name fields, ending with null ptr.

@@ -17,16 +17,16 @@
 
 #include "llvm/Support/raw_ostream.h"
 
-static void indent(llvm::raw_ostream &os, unsigned ilevel) {
-  for (unsigned i = 0; i < ilevel; ++i)
-    os << " ";
+Bstatement::Bstatement(NodeFlavor fl,
+                       Bfunction *func,
+                       const std::vector<Bnode *> &kids,
+                       Location loc)
+    : Bnode(fl, kids, loc), function_(func)
+{
 }
 
-void Bstatement::dump() {
-  std::string s;
-  llvm::raw_string_ostream os(s);
-  osdump(os, 0, nullptr, false);
-  std::cerr << os.str();
+Bstatement::~Bstatement()
+{
 }
 
 void Bstatement::srcDump(Linemap *linemap)
@@ -37,151 +37,116 @@ void Bstatement::srcDump(Linemap *linemap)
   std::cerr << os.str();
 }
 
-void Bstatement::osdump(llvm::raw_ostream &os, unsigned ilevel,
-                        Linemap *linemap, bool terse)
+std::vector<Bstatement *> Bstatement::getChildStmts()
 {
-  switch (flavor()) {
-  case ST_Compound: {
-    CompoundStatement *cst = castToCompoundStatement();
-    if (! terse) {
-      indent(os, ilevel);
-      os << ((void*)this) << " {\n";
-    }
-    for (auto st : cst->stlist())
-      st->osdump(os, ilevel + 2, linemap, terse);
-    if (! terse) {
-      indent(os, ilevel);
-      os << "}\n";
-    }
-    break;
+  std::vector<Bstatement *> rval;
+  for (auto &child : children()) {
+    Bstatement *st = child->castToBstatement();
+    if (st)
+      rval.push_back(st);
   }
-  case ST_ExprList: {
-    ExprListStatement *elst = castToExprListStatement();
-    if (! terse) {
-      indent(os, ilevel);
-      os << ((void*)this) << " [\n";
-    }
-    for (auto expr : elst->expressions())
-      expr->osdump(os, ilevel + 2, linemap, terse);
-    if (! terse) {
-      indent(os, ilevel);
-      os << "]\n";
-    }
-    break;
-  }
-  case ST_IfPlaceholder: {
-    IfPHStatement *ifst = castToIfPHStatement();
-    indent(os, ilevel);
-    os << "if";
-    if (! terse)
-      os << " " << ((void*) ifst);
-    os << ":\n";
-    indent(os, ilevel + 2);
-    os << "cond:\n";
-    ifst->cond()->osdump(os, ilevel + 2, linemap, terse);
-    if (ifst->trueStmt()) {
-      indent(os, ilevel + 2);
-      os << "then:\n";
-      ifst->trueStmt()->osdump(os, ilevel + 2, linemap, terse);
-    }
-    if (ifst->falseStmt()) {
-      indent(os, ilevel + 2);
-      os << "else:\n";
-      ifst->falseStmt()->osdump(os, ilevel + 2, linemap, terse);
-    }
-    break;
-  }
-  case ST_Goto: {
-    GotoStatement *gst = castToGotoStatement();
-    indent(os, ilevel);
-    os << "goto L" << gst->targetLabel() << "\n";
-    break;
-  }
-  case ST_Label: {
-    LabelStatement *lbst = castToLabelStatement();
-    indent(os, ilevel);
-    os << "label L" << lbst->definedLabel() << "\n";
-    break;
-  }
-
-  case ST_SwitchPlaceholder: {
-    SwitchPHStatement *swst = castToSwitchPHStatement();
-    indent(os, ilevel);
-    os << "switch";
-    if (! terse)
-      os << " " << ((void*) swst);
-    os << ":\n";
-    indent(os, ilevel + 2);
-    os << "swval:\n";
-    swst->switchValue()->osdump(os, ilevel + 2, linemap, terse);
-    const std::vector<std::vector<Bexpression *>> &cases = swst->cases();
-    const std::vector<Bstatement *> &statements = swst->statements();
-    for (unsigned idx = 0; idx < cases.size(); ++idx) {
-      auto &cs = cases[idx];
-      indent(os, ilevel + 2);
-      os << idx << ": ";
-      if (cs.empty())
-        os << "default: {\n";
-      else
-        os << cs.size() << " values: {\n";
-      for (auto &cv : cs) {
-        cv->osdump(os, ilevel+4, linemap, terse);
-      }
-      indent(os, ilevel + 2);
-      os << idx << "} =>\n";
-      auto &stmt = statements[idx];
-      indent(os, ilevel + 2);
-      stmt->osdump(os, ilevel+4, linemap, terse);
-    }
-    break;
-  }
-  }
+  return rval;
 }
 
-void Bstatement::destroy(Bstatement *stmt, WhichDel which) {
-  assert(stmt);
+Bexpression *Bstatement::getNthChildAsExpr(NodeFlavor fl, unsigned cidx)
+{
+  assert(flavor() == fl);
+  const std::vector<Bnode *> &kids = children();
+  assert(cidx < kids.size());
+  Bexpression *e = kids[cidx]->castToBexpression();
+  assert(e);
+  return e;
+}
 
-  switch (stmt->flavor()) {
-  case ST_Compound: {
-    CompoundStatement *cst = stmt->castToCompoundStatement();
-    for (auto st : cst->stlist())
-      destroy(st, which);
-    break;
-  }
-  case ST_ExprList: {
-    ExprListStatement *elst = stmt->castToExprListStatement();
-    for (auto expr : elst->expressions())
-      Bexpression::destroy(expr, which);
-    break;
-  }
-  case ST_IfPlaceholder: {
-    IfPHStatement *ifst = stmt->castToIfPHStatement();
-    Bexpression::destroy(ifst->cond(), which);
-    if (ifst->trueStmt())
-      Bstatement::destroy(ifst->trueStmt(), which);
-    if (ifst->falseStmt())
-      Bstatement::destroy(ifst->falseStmt(), which);
-    break;
-  }
-  case ST_Goto:
-  case ST_Label: {
-    // nothing to do here at the moment
-    break;
-  }
+Bstatement *Bstatement::getNthChildAsStmt(NodeFlavor fl, unsigned cidx)
+{
+  assert(flavor() == fl);
+  const std::vector<Bnode *> &kids = children();
+  assert(cidx < kids.size());
+  Bstatement *s = kids[cidx]->castToBstatement();
+  assert(s);
+  return s;
+}
 
-  case ST_SwitchPlaceholder: {
-    SwitchPHStatement *swst = stmt->castToSwitchPHStatement();
-    Bexpression::destroy(swst->switchValue(), which);
-    const std::vector<std::vector<Bexpression *>> &cases = swst->cases();
-    for (auto &bexpvec : cases)
-      for (auto &exp : bexpvec)
-        Bexpression::destroy(exp, which);
-    const std::vector<Bstatement *> &statements = swst->statements();
-    for (auto &st : statements)
-      Bstatement::destroy(st, which);
-  }
-  }
+Bexpression *Bstatement::getExprStmtExpr()
+{
+  return getNthChildAsExpr(N_ExprStmt, 0);
+}
 
-  if (which != DelInstructions)
-    delete stmt;
+Bexpression *Bstatement::getIfStmtCondition()
+{
+  return getNthChildAsExpr(N_IfStmt, 0);
+}
+
+Bstatement *Bstatement::getIfStmtTrueBlock()
+{
+  return getNthChildAsStmt(N_IfStmt, 1);
+}
+
+Bstatement *Bstatement::getIfStmtFalseBlock()
+{
+  return getNthChildAsStmt(N_IfStmt, 2);
+}
+
+Bexpression *Bstatement::getSwitchStmtValue()
+{
+  return getNthChildAsExpr(N_SwitchStmt, 0);
+}
+
+unsigned Bstatement::getSwitchStmtNumCases()
+{
+  assert(flavor() == N_SwitchStmt);
+  SwitchDescriptor *swcases = getSwitchCases();
+  return swcases->cases().size();
+}
+
+std::vector<Bexpression *> Bstatement::getSwitchStmtNthCase(unsigned idx)
+{
+  assert(flavor() == N_SwitchStmt);
+  SwitchDescriptor *swcases = getSwitchCases();
+  assert(idx < swcases->cases().size());
+  const SwitchCaseDesc &cdesc = swcases->cases().at(idx);
+  std::vector<Bexpression *> rval;
+  const std::vector<Bnode *> &kids = children();
+  for (unsigned ii = 0; ii < cdesc.len; ++ii) {
+    Bexpression *e = kids[ii+cdesc.st]->castToBexpression();
+    assert(e);
+    rval.push_back(e);
+  }
+  return rval;
+}
+
+Bstatement *Bstatement::getSwitchStmtNthStmt(unsigned idx)
+{
+  assert(flavor() == N_SwitchStmt);
+  SwitchDescriptor *swcases = getSwitchCases();
+  assert(idx < swcases->cases().size());
+  const SwitchCaseDesc &cdesc = swcases->cases().at(idx);
+  const std::vector<Bnode *> &kids = children();
+  Bstatement *st = kids[cdesc.stmt]->castToBstatement();
+  assert(st);
+  return st;
+}
+
+LabelId Bstatement::getGotoStmtTargetLabel()
+{
+  return label();
+}
+
+LabelId Bstatement::getLabelStmtDefinedLabel()
+{
+  return label();
+}
+
+Bblock::Bblock(Bfunction *func,
+               const std::vector<Bvariable *> &vars,
+               Location loc)
+    : Bstatement(N_BlockStmt, func, std::vector<Bnode *>(), loc)
+    , vars_(vars)
+{
+}
+
+void Bblock::clearStatements()
+{
+  removeAllChildren();
 }

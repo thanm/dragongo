@@ -138,29 +138,17 @@ void Bfunction::genProlog(llvm::BasicBlock *entry) {
     entry->getInstList().push_back(sp);
 }
 
-Bblock *Bfunction::newBlock(Bfunction *function) {
-  Bblock *block = new Bblock(function);
-  blocks_.push_back(block);
-  return block;
-}
-
-Blabel *Bfunction::newLabel() {
-  Blabel *lb = new Blabel(this, labelCount_++);
+Blabel *Bfunction::newLabel(Location loc) {
+  Blabel *lb = new Blabel(this, labelCount_++, loc);
   labelmap_.push_back(nullptr);
   labels_.push_back(lb);
   return lb;
 }
 
-Bstatement *Bfunction::newLabelDefStatement(Blabel *label) {
+void Bfunction::registerLabelDefStatement(Bstatement *st, Blabel *label)
+{
+  assert(st && st->flavor() == N_LabelStmt);
   assert(label);
-  LabelStatement *st = new LabelStatement(label->function(), label->label());
   assert(labelmap_[label->label()] == nullptr);
   labelmap_[label->label()] = st;
-  return st;
-}
-
-Bstatement *Bfunction::newGotoStatement(Blabel *label, Location location) {
-  Bfunction *fn = label->function();
-  GotoStatement *st = new GotoStatement(fn, label->label(), location);
-  return st;
 }

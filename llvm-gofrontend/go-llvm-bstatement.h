@@ -18,7 +18,8 @@
 #include "go-linemap.h"
 #include "go-location.h"
 #include "go-llvm-btype.h"
-#include "go-llvm-bexpression.h"
+//#include "go-llvm-bexpression.h"
+#include "go-llvm-bnode.h"
 
 #include "backend.h"
 
@@ -42,220 +43,88 @@ class raw_ostream;
 // other hand, it is not so straightforward to have chunks of IR
 // morphing back end forth between statements, expressions, and
 // blocks.
-//
-// What this means from a practical point of view is that we delay
-// creation of control flow (creating llvm::BasicBlock objects and
-// assigning instructions to blocks) until the front end is
-// essentially done with creating all statements and expressions.
-// Prior to this point when the front end creates a statement that
-// creates control flow (for example an "if" statement), we create
-// placeholders to record what has to be done, then come along later
-// and stitch things together at the end.
 
-class CompoundStatement;
-class ExprListStatement;
-class IfPHStatement;
-class SwitchPHStatement;
-class GotoStatement;
-class LabelStatement;
+class Bstatement : public Bnode {
+ public:
+  // no public constructor, use BnodeBuilder instead
+  virtual ~Bstatement();
 
-// Abstract base statement class, just used to distinguish between
-// the various derived statement types.
-
-class Bstatement {
-public:
-  enum StFlavor {
-    ST_Compound,
-    ST_ExprList,
-    ST_IfPlaceholder,
-    ST_SwitchPlaceholder,
-    ST_Goto,
-    ST_Label
-  };
-
-  Bstatement(Bfunction *function, StFlavor flavor, Location location)
-      : function_(function), flavor_(flavor), location_(location) {}
-  virtual ~Bstatement() {}
-  StFlavor flavor() const { return flavor_; }
-  Location location() const { return location_; }
+  // Function this statement is part of
   Bfunction *function() const { return function_; }
-
-  inline CompoundStatement *castToCompoundStatement();
-  inline ExprListStatement *castToExprListStatement();
-  inline IfPHStatement *castToIfPHStatement();
-  inline SwitchPHStatement *castToSwitchPHStatement();
-  inline GotoStatement *castToGotoStatement();
-  inline LabelStatement *castToLabelStatement();
-
-  // Perform deletions on the tree of Bstatements rooted at stmt.
-  // Delete Bstatements/Bexpressions, instructions, or both (depending
-  // on setting of 'which')
-  static void destroy(Bstatement *subtree, WhichDel which = DelWrappers);
-
-  // debugging
-  void dump();
 
   // dump with source line info
   void srcDump(Linemap *);
 
-  // dump to raw_ostream
-  void osdump(llvm::raw_ostream &os, unsigned ilevel = 0,
-              Linemap *linemap = nullptr, bool terse = false);
+  Bexpression *getExprStmtExpr();
+
+  Bexpression *getIfStmtCondition();
+  Bstatement *getIfStmtTrueBlock();
+  Bstatement *getIfStmtFalseBlock();
+
+  Bexpression *getSwitchStmtValue();
+  unsigned     getSwitchStmtNumCases();
+  std::vector<Bexpression *> getSwitchStmtNthCase(unsigned idx);
+  Bstatement *getSwitchStmtNthStmt(unsigned idx);
+
+  LabelId getGotoStmtTargetLabel();
+
+  LabelId getLabelStmtDefinedLabel();
+
+  // Returns any child statements for this statement.
+  std::vector<Bstatement *> getChildStmts();
+
+ protected:
+  friend class BnodeBuilder;
+  Bstatement(NodeFlavor fl, Bfunction *func,
+             const std::vector<Bnode *> &kids, Location loc);
+
+ private:
+  Bexpression *getNthChildAsExpr(NodeFlavor fl, unsigned cidx);
+  Bstatement *getNthChildAsStmt(NodeFlavor fl, unsigned cidx);
 
  private:
   Bfunction *function_;
-  StFlavor flavor_;
-  Location location_;
 };
 
-// Compound statement is simply a list of other statements.
-
-class CompoundStatement : public Bstatement {
-public:
-  explicit CompoundStatement(Bfunction *function)
-      : Bstatement(function, ST_Compound, Location()) {}
-  std::vector<Bstatement *> &stlist() { return stlist_; }
-
-private:
-  std::vector<Bstatement *> stlist_;
-};
-
-inline CompoundStatement *Bstatement::castToCompoundStatement() {
-  return (flavor_ == ST_Compound ? static_cast<CompoundStatement *>(this)
-                                 : nullptr);
-}
-
-// ExprList statement contains a list of LLVM instructions.
-
-class ExprListStatement : public Bstatement {
-public:
-  explicit ExprListStatement(Bfunction *function)
-      : Bstatement(function, ST_ExprList, Location()) {}
-  ExprListStatement(Bfunction *function, Bexpression *e)
-      : Bstatement(function, ST_ExprList, Location()) {
-    expressions_.push_back(e);
-  }
-  void appendExpression(Bexpression *e) { expressions_.push_back(e); }
-  std::vector<Bexpression *> expressions() { return expressions_; }
-
-private:
-  std::vector<Bexpression *> expressions_;
-};
-
-inline ExprListStatement *Bstatement::castToExprListStatement() {
-  return (flavor_ == ST_ExprList ? static_cast<ExprListStatement *>(this)
-                                 : nullptr);
-}
-
-// "If" placeholder statement.
-
-class IfPHStatement : public Bstatement {
-public:
-  IfPHStatement(Bfunction *function, Bexpression *cond,
-                Bstatement *ifTrue, Bstatement *ifFalse,
-                Location location)
-      : Bstatement(function, ST_IfPlaceholder, location)
-      , cond_(cond)
-      , iftrue_(ifTrue)
-      , iffalse_(ifFalse) {}
-  Bexpression *cond() { return cond_; }
-  Bstatement *trueStmt() { return iftrue_; }
-  Bstatement *falseStmt() { return iffalse_; }
-
-private:
-  Bexpression *cond_;
-  Bstatement *iftrue_;
-  Bstatement *iffalse_;
-};
-
-inline IfPHStatement *Bstatement::castToIfPHStatement() {
-  return (flavor_ == ST_IfPlaceholder ? static_cast<IfPHStatement *>(this)
-                                      : nullptr);
-}
-
-// "Switch" placeholder statement.
-
-class SwitchPHStatement : public Bstatement {
-public:
-  SwitchPHStatement(Bfunction *function, Bexpression *value,
-                    const std::vector<std::vector<Bexpression *>> &cases,
-                    const std::vector<Bstatement *> &statements,
-                    Location location)
-      : Bstatement(function, ST_SwitchPlaceholder, location), value_(value),
-        cases_(cases), statements_(statements) {}
-  Bexpression *switchValue() { return value_; }
-  std::vector<std::vector<Bexpression *>> &cases() { return cases_; }
-  std::vector<Bstatement *> &statements() { return statements_; }
-
-private:
-  Bexpression *value_;
-  std::vector<std::vector<Bexpression *>> cases_;
-  std::vector<Bstatement *> statements_;
-};
-
-inline SwitchPHStatement *Bstatement::castToSwitchPHStatement() {
-  return (flavor_ == ST_SwitchPlaceholder
-              ? static_cast<SwitchPHStatement *>(this)
-              : nullptr);
-}
-
-// Opaque labelID handle.
 typedef unsigned LabelId;
 
 class Blabel {
 public:
-  Blabel(const Bfunction *function, LabelId lab)
-      : function_(const_cast<Bfunction *>(function)), lab_(lab) {}
+  Blabel(const Bfunction *function, LabelId lab, Location loc)
+      : function_(const_cast<Bfunction *>(function)),
+        lab_(lab), location_(loc) {}
   LabelId label() const { return lab_; }
   Bfunction *function() { return function_; }
+  Location location() const { return location_; }
 
 private:
   Bfunction *function_;
   LabelId lab_;
+  Location location_;
 };
 
-// A goto statement, representing an unconditional jump to
-// some other labeled statement.
+// A Bblock is essentially just a compound statement
 
-class GotoStatement : public Bstatement {
-public:
-  GotoStatement(Bfunction *function, LabelId label, Location location)
-      : Bstatement(function, ST_Goto, location), label_(label) {}
-  LabelId targetLabel() const { return label_; }
-
-private:
-  LabelId label_;
-};
-
-inline GotoStatement *Bstatement::castToGotoStatement() {
-  return (flavor_ == ST_Goto ? static_cast<GotoStatement *>(this) : nullptr);
-}
-
-// A label statement, representing the target of some jump (conditional
-// or unconditional).
-
-class LabelStatement : public Bstatement {
-public:
-  LabelStatement(Bfunction *function, LabelId label)
-      : Bstatement(function, ST_Label, Location()), label_(label) {}
-  LabelId definedLabel() const { return label_; }
-
-private:
-  LabelId label_;
-};
-
-inline LabelStatement *Bstatement::castToLabelStatement() {
-  return (flavor_ == ST_Label ? static_cast<LabelStatement *>(this) : nullptr);
-}
-
-// A Bblock , which wraps statement list. See the comment
-// above on why we need to make it easy to convert between
-// blocks and statements.
-
-class Bblock : public CompoundStatement {
+class Bblock : public Bstatement {
  public:
-  explicit Bblock(Bfunction *function)
-      : CompoundStatement(function) { }
+  // no public constructor; use BnodeBuilder::mkBlock to create a
+  // block, BnodeBuilder::addStatementToBlock to add stmts to it.
+  virtual ~Bblock() { }
+
+  // Local variables for this block
+  const std::vector<Bvariable *> &vars() const { return vars_; }
+
+  // Exposed for unit testing the tree integrity checker. Not for general use.
+  void clearStatements();
+
+ private:
+  friend class BnodeBuilder;
+  Bblock(Bfunction *func,
+         const std::vector<Bvariable *> &vars,
+         Location loc);
+
+ private:
+  std::vector<Bvariable *> vars_;
 };
 
 #endif // LLVMGOFRONTEND_GO_LLVM_BSTATEMENT_H
