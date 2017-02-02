@@ -183,7 +183,7 @@ void Bnode::osdump(llvm::raw_ostream &os, unsigned ilevel,
     }
     case N_Composite: {
       assert(expr);
-      if (llvm::isa<llvm::Constant>(expr->value())) {
+      if (expr->value() && llvm::isa<llvm::Constant>(expr->value())) {
         expr->value()->print(os);
         os << "\n";
         return;
@@ -271,50 +271,52 @@ BnodeBuilder::BnodeBuilder()
 
 BnodeBuilder::~BnodeBuilder()
 {
-  freeAll();
+  freeStmts();
+  for (auto &expr : earchive_) {
+    if (expr)
+      delete expr;
+  }
 }
 
-void BnodeBuilder::freeAll()
+void BnodeBuilder::freeStmts()
 {
-  for (auto &node : archive_) {
-    if (node)
-      delete node;
+  for (auto &stmt : sarchive_) {
+    if (stmt)
+      delete stmt;
   }
-  archive_.clear();
+  sarchive_.clear();
   for (auto &c : swcases_)
     delete c;
   swcases_.clear();
 }
 
-void BnodeBuilder::freeNode(Bnode *node)
+void BnodeBuilder::freeExpr(Bexpression *expr)
 {
-  assert(node);
-  archive_[node->id()] = nullptr;
-  if (node->id() == archive_.size()-1)
-    archive_.pop_back();
-  delete node;
-}
-
-Bnode *BnodeBuilder::archiveNode(Bnode *node)
-{
-  node->id_ = archive_.size();
-  archive_.push_back(node);
-  return node;
+  assert(expr);
+  earchive_[expr->id()] = nullptr;
+  if (expr->id() == earchive_.size()-1)
+    earchive_.pop_back();
+  delete expr;
 }
 
 Bexpression *BnodeBuilder::archive(Bexpression *expr)
 {
-  return static_cast<Bexpression*>(archiveNode(expr));
+  expr->id_ = earchive_.size();
+  earchive_.push_back(expr);
+  return expr;
 }
 
 Bstatement *BnodeBuilder::archive(Bstatement *stmt)
 {
-  return static_cast<Bstatement*>(archiveNode(stmt));
+  stmt->id_ = sarchive_.size();
+  sarchive_.push_back(stmt);
+  return stmt;
 }
 
 Bblock *BnodeBuilder::archive(Bblock *bb)
 {
-  return static_cast<Bblock*>(archiveNode(bb));
+  Bstatement *stmt = bb;
+  return static_cast<Bblock*>(archive(stmt));
 }
 
 Bexpression *BnodeBuilder::mkError(Btype *errortype)
@@ -549,6 +551,14 @@ Bexpression *BnodeBuilder::mkReturn(Btype *typ,
   assert(llvm::isa<llvm::Instruction>(val));
   rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
   return archive(rval);
+}
+
+Bstatement *BnodeBuilder::mkErrorStmt()
+{
+  assert(! errorStatement_.get());
+  std::vector<Bnode *> kids;
+  errorStatement_.reset(new Bstatement(N_Error, nullptr, kids, Location()));
+  return errorStatement_.get();
 }
 
 Bstatement *BnodeBuilder::mkExprStmt(Bfunction *func,

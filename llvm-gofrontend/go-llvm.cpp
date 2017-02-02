@@ -101,7 +101,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
   errorFunction_.reset(new Bfunction(ef, makeAuxFcnType(eft), ""));
 
   // Reuse the error function as the value for error_expression
-  errorExpression_ = nbuilderGlobal_.mkError(errorType());
+  errorExpression_ = nbuilder_.mkError(errorType());
 
   // We now have the necessary bits to finish initialization of the
   // type manager.
@@ -109,11 +109,11 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
                         &module_->getDataLayout(),
                         nameTags());
 
-  // Error statement
-  Location loc;
-  errorStatement_ = nbuilderGlobal_.mkExprStmt(nullptr, errorExpression(), loc);
+  // Error statement.
+  errorStatement_ = nbuilder_.mkErrorStmt();
 
-  // Reuse the error function as the value for errorVariable_
+  // Error variable.
+  Location loc;
   errorVariable_.reset(
       new Bvariable(errorType(), loc, "", ErrorVar, false, nullptr));
 
@@ -125,8 +125,8 @@ Llvm_backend::~Llvm_backend() {
   //  delete expr;
   //for (auto &kv : valueExprmap_)
   //  delete kv.second;
-  //for (auto &kv : valueVarMap_)
-  //  delete kv.second;
+  for (auto &kv : valueVarMap_)
+    delete kv.second;
   for (auto &kv : builtinMap_)
     delete kv.second;
   for (auto &bfcn : functions_)
@@ -597,7 +597,7 @@ Bexpression *Llvm_backend::makeGlobalExpression(Bexpression *expr,
   valbtype vbt(std::make_pair(val, btype));
   auto it = valueExprmap_.find(vbt);
   if (it != valueExprmap_.end()) {
-    nbuilderGlobal_.freeNode(expr);
+    nbuilder_.freeExpr(expr);
     return it->second;
   }
   valueExprmap_[vbt] = expr;
@@ -610,7 +610,7 @@ Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   if (btype == errorType())
     return errorExpression();
   llvm::Value *zeroval = llvm::Constant::getNullValue(btype->type());
-  Bexpression *cexpr = nbuilderGlobal_.mkConst(btype, zeroval);
+  Bexpression *cexpr = nbuilder_.mkConst(btype, zeroval);
   return makeGlobalExpression(cexpr, zeroval, btype, Location());
 }
 
@@ -936,13 +936,13 @@ Bexpression *Llvm_backend::integer_constant_expression(Btype *btype,
     uint64_t val = checked_convert_mpz_to_int<uint64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::get(btype->type(), val);
-    Bexpression *bconst = nbuilderGlobal_.mkConst(btype, lval);
+    Bexpression *bconst = nbuilder_.mkConst(btype, lval);
     return makeGlobalExpression(bconst, lval, btype, Location());
   } else {
     int64_t val = checked_convert_mpz_to_int<int64_t>(mpz_val);
     assert(llvm::ConstantInt::isValueValidForType(btype->type(), val));
     llvm::Constant *lval = llvm::ConstantInt::getSigned(btype->type(), val);
-    Bexpression *bconst = nbuilderGlobal_.mkConst(btype, lval);
+    Bexpression *bconst = nbuilder_.mkConst(btype, lval);
     return makeGlobalExpression(bconst, lval, btype, Location());
   }
   return rval;
@@ -965,13 +965,13 @@ Bexpression *Llvm_backend::float_constant_expression(Btype *btype, mpfr_t val) {
     float fval = mpfr_get_flt(val, GMP_RNDN);
     llvm::APFloat apf(fval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    Bexpression *bconst = nbuilderGlobal_.mkConst(btype, fcon);
+    Bexpression *bconst = nbuilder_.mkConst(btype, fcon);
     return makeGlobalExpression(bconst, fcon, btype, Location());
   } else if (btype->type() == llvmDoubleType()) {
     double dval = mpfr_get_d(val, GMP_RNDN);
     llvm::APFloat apf(dval);
     llvm::Constant *fcon = llvm::ConstantFP::get(context_, apf);
-    Bexpression *bconst = nbuilderGlobal_.mkConst(btype, fcon);
+    Bexpression *bconst = nbuilder_.mkConst(btype, fcon);
     return makeGlobalExpression(bconst, fcon, btype, Location());
   } else if (btype->type() == llvmLongDoubleType()) {
     assert("not yet implemented" && false);
@@ -995,7 +995,7 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val)
 {
   if (val.size() == 0) {
     llvm::Value *zer = llvm::Constant::getNullValue(stringType()->type());
-    Bexpression *bconst = nbuilderGlobal_.mkConst(stringType(), zer);
+    Bexpression *bconst = nbuilder_.mkConst(stringType(), zer);
     return makeGlobalExpression(bconst, zer, stringType(), Location());
   }
 
@@ -1013,7 +1013,7 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val)
   llvm::Constant *varval = llvm::cast<llvm::Constant>(svar->value());
   llvm::Constant *bitcast =
       llvm::ConstantExpr::getBitCast(varval, stringType()->type());
-  Bexpression *bconst = nbuilderGlobal_.mkConst(stringType(), bitcast);
+  Bexpression *bconst = nbuilder_.mkConst(stringType(), bitcast);
   return makeGlobalExpression(bconst, bitcast, stringType(), Location());
 }
 
@@ -1025,7 +1025,7 @@ Bexpression *Llvm_backend::boolean_constant_expression(bool val) {
                           : llvm::ConstantInt::getFalse(context_));
   llvm::Value *tobool = builder.CreateZExt(con, bool_type()->type(), "");
 
-  Bexpression *bconst = nbuilderGlobal_.mkConst(bool_type(), tobool);
+  Bexpression *bconst = nbuilder_.mkConst(bool_type(), tobool);
   return makeGlobalExpression(bconst, tobool, bool_type(), Location());
 }
 
@@ -1156,7 +1156,7 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
   Btype *fpBtype = pointer_type(bfunc->fcnType());
 
   // Create an address-of-function expr
-  Bexpression *fexpr = nbuilderGlobal_.mkFcnAddress(fpBtype, bfunc->function(),
+  Bexpression *fexpr = nbuilder_.mkFcnAddress(fpBtype, bfunc->function(),
                                                     bfunc, location);
   return makeGlobalExpression(fexpr, bfunc->function(), fpBtype, location);
 }
@@ -1554,8 +1554,9 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
 bool
 Llvm_backend::valuesAreConstant(const std::vector<Bexpression *> &vals)
 {
-  for (auto val : vals)
-    if (! llvm::isa<llvm::Constant>(val->value()))
+  for (auto &val : vals)
+    if (val->value() == nullptr ||
+        ! llvm::isa<llvm::Constant>(val->value()))
       return false;
   return true;
 }
@@ -1658,7 +1659,7 @@ Llvm_backend::makeConstCompositeExpr(Btype *btype,
     scon = llvm::ConstantArray::get(llat, llvals);
   }
 
-  Bexpression *bcon = nbuilderGlobal_.mkComposite(btype, scon, vals, location);
+  Bexpression *bcon = nbuilder_.mkComposite(btype, scon, vals, location);
   return makeGlobalExpression(bcon, scon, btype, location);
 }
 
@@ -2560,7 +2561,7 @@ llvm::BasicBlock *GenBlocks::genIf(Bstatement *ifst,
   Bstatement *falseStmt = ifst->getIfStmtFalseBlock();
 
   // Walk condition first
-  walkExpr(curblock, cond);
+  curblock = walkExpr(curblock, cond);
 
   // Create true block
   llvm::BasicBlock *tblock = mkLLVMBlock("then");
@@ -2599,7 +2600,7 @@ llvm::BasicBlock *GenBlocks::genSwitch(Bstatement *swst,
 
   // Walk switch value first
   Bexpression *swval = swst->getSwitchStmtValue();
-  walkExpr(curblock, swval);
+  curblock = walkExpr(curblock, swval);
 
   // Unpack switch
   unsigned ncases = swst->getSwitchStmtNumCases();
@@ -2768,8 +2769,8 @@ bool Llvm_backend::function_set_body(Bfunction *function,
     function->function()->dump();
   }
 
-  // Free up Bnode storage (we no longer need it at this point)
-  nbuilder_.freeAll();
+  // Free up statement storage (stmts no longer needed at this point)
+  nbuilder_.freeStmts();
 
   return true;
 }

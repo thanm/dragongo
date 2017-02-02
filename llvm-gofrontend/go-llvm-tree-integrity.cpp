@@ -36,12 +36,25 @@ void IntegrityVisitor::dump(llvm::Instruction *inst) {
   ss_ << "\n";
 }
 
+static bool varExprOrConvVar(Bnode *node)
+{
+  Bexpression *expr = node->castToBexpression();
+  if (!expr)
+    return false;
+  if (expr->flavor() == N_Var)
+    return true;
+  if (expr->flavor() == N_Conversion &&
+      expr->getChildExprs()[0]->flavor() == N_Var)
+    return true;
+  return false;
+}
+
 bool IntegrityVisitor::setParent(Bnode *child, Bnode *parent)
 {
   Bexpression *expr = child->castToBexpression();
   if (expr && be_->moduleScopeValue(expr->value(), expr->btype()))
     return true;
-  if (child->flavor() == N_Var && includeVarExprs_ == IgnoreVarExprs)
+  if (includeVarExprs_ == IgnoreVarExprs && varExprOrConvVar(child))
     return true;
   auto it = nparent_.find(child);
   if (it != nparent_.end()) {

@@ -622,14 +622,8 @@ private:
   // Data layout info from the module.
   const llvm::DataLayout &datalayout_;
 
-  // This builder is for constructing function-scoped expressions
-  // and statements. Everything in here is delete when we're done
-  // processing the current function.
+  // Builder for constructing Bexpressions and Bstatements.
   BnodeBuilder nbuilder_;
-
-  // A builder for module-scoped expressions (constants). Things in
-  // here stick around until we're done with the module.
-  BnodeBuilder nbuilderGlobal_;
 
   // Linemap to use. If client did not supply a linemap during
   // construction, then ownLinemap_ is filled in.

@@ -162,6 +162,13 @@ class Bnode {
 };
 
 // This helper class handles construction for all Bnode objects.
+// Notes on storage allocation: ideally once an LLVM function has been
+// constructed and sent off to the back end for a given Go function,
+// we'd like to delete all of the Bexpression's used for the function.
+// Putting this into practice is tricky, since some Bexpressions (for
+// example, var and function addresses) wind up being held over and reused
+// else where (for example, in emitted GC descriptors). For the
+// moment we don't try to free Bexpressions, but we do free Bstatements.
 
 class BnodeBuilder {
  public:
@@ -169,7 +176,7 @@ class BnodeBuilder {
   ~BnodeBuilder();
 
   // Deletes all allocated data structures (Bnodes, switch descriptors)
-  void freeAll();
+  void freeStmts();
 
   // expressions
   Bexpression *mkError(Btype *errortype);
@@ -210,6 +217,7 @@ class BnodeBuilder {
                         Location loc);
 
   // statements
+  Bstatement *mkErrorStmt();
   Bstatement *mkLabelDefStmt(Bfunction *func, Blabel *label, Location loc);
   Bstatement *mkGotoStmt(Bfunction *func, Blabel *label, Location loc);
   Bstatement *mkExprStmt(Bfunction *func, Bexpression *expr, Location loc);
@@ -235,18 +243,19 @@ class BnodeBuilder {
   // Finish creation of delayed composite.
   void finishComposite(Bexpression *composite, llvm::Value *val);
 
-  // Free up this node (it is garbage). Does not free up children.
-  void freeNode(Bnode *node);
+  // Free up this expr (it is garbage). Does not free up children.
+  void freeExpr(Bexpression *expr);
 
  private:
   void appendInstIfNeeded(Bexpression *rval, llvm::Value *val);
-  Bnode *archiveNode(Bnode *node);
   Bexpression *archive(Bexpression *expr);
   Bstatement *archive(Bstatement *stmt);
   Bblock *archive(Bblock *bb);
 
  private:
-  std::vector<Bnode *> archive_;
+  std::unique_ptr<Bstatement> errorStatement_;
+  std::vector<Bexpression *> earchive_;
+  std::vector<Bstatement *> sarchive_;
   std::vector<SwitchDescriptor*> swcases_;
 };
 
