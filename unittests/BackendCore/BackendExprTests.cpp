@@ -211,8 +211,8 @@ TEST(BackendExprTests, TestMoreConversionExpressions) {
 
   const char *exp = R"RAW_RESULT(
       %cast = bitcast i64** %param3.addr to i32**
-      %.ld.0 = load i32*, i32** %cast
-      store i32 5, i32* %.ld.0
+      %deref.ld.0 = load i32*, i32** %cast
+      store i32 5, i32* %deref.ld.0
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -555,7 +555,6 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
     Bstatement *as = be->assignment_statement(func, indx, beic3, loc);
     h.addStmt(as);
   }
-
 
   const char *exp = R"RAW_RESULT(
     store i64 10, i64* %y
@@ -1144,38 +1143,38 @@ TEST(BackendExprTests, CircularPointerExpressions1) {
   }
 
   const char *exp = R"RAW_RESULT(
-      store %CPT.0* null, %CPT.0** %cpv1
-      store %CPT.0* null, %CPT.0** %cpv2
-      %cast = bitcast %CPT.0** %cpv2 to %CPT.0*
-      store %CPT.0* %cast, %CPT.0** %cpv1
-      %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
-      store %CPT.0* %cast, %CPT.0** %cpv2
-      store i8 0, i8* %b1
-      store i8 0, i8* %b2
-      store i8 0, i8* %b3
-      %cpv1.ld.0 = load %CPT.0*, %CPT.0** %cpv1
-      %cpv2.ld.0 = load %CPT.0*, %CPT.0** %cpv2
-      %cast = bitcast %CPT.0* %cpv2.ld.0 to %CPT.0**
-      %.ld.0 = load %CPT.0*, %CPT.0** %cast
-      %icmp.0 = icmp eq %CPT.0* %cpv1.ld.0, %.ld.0
-      %zext.0 = zext i1 %icmp.0 to i8
-      store i8 %zext.0, i8* %b1
-      %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
-      %cpv2.ld.1 = load %CPT.0*, %CPT.0** %cpv2
-      %icmp.1 = icmp eq %CPT.0* %cast, %cpv2.ld.1
-      %zext.1 = zext i1 %icmp.1 to i8
-      store i8 %zext.1, i8* %b2
-      %cpv1.ld.1 = load %CPT.0*, %CPT.0** %cpv1
-      %cpv2.ld.2 = load %CPT.0*, %CPT.0** %cpv2
-      %cast = bitcast %CPT.0* %cpv2.ld.2 to %CPT.0**
-      %.ld.1 = load %CPT.0*, %CPT.0** %cast
-      %cast = bitcast %CPT.0* %.ld.1 to %CPT.0**
-      %.ld.2 = load %CPT.0*, %CPT.0** %cast
-      %cast = bitcast %CPT.0* %.ld.2 to %CPT.0**
-      %.ld.3 = load %CPT.0*, %CPT.0** %cast
-      %icmp.2 = icmp eq %CPT.0* %cpv1.ld.1, %.ld.3
-      %zext.2 = zext i1 %icmp.2 to i8
-      store i8 %zext.2, i8* %b3
+store %CPT.0* null, %CPT.0** %cpv1
+  store %CPT.0* null, %CPT.0** %cpv2
+  %cast = bitcast %CPT.0** %cpv2 to %CPT.0*
+  store %CPT.0* %cast, %CPT.0** %cpv1
+  %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
+  store %CPT.0* %cast, %CPT.0** %cpv2
+  store i8 0, i8* %b1
+  store i8 0, i8* %b2
+  store i8 0, i8* %b3
+  %cpv1.ld.0 = load %CPT.0*, %CPT.0** %cpv1
+  %cpv2.ld.0 = load %CPT.0*, %CPT.0** %cpv2
+  %cast = bitcast %CPT.0* %cpv2.ld.0 to %CPT.0**
+  %.ld.0 = load %CPT.0*, %CPT.0** %cast
+  %icmp.0 = icmp eq %CPT.0* %cpv1.ld.0, %.ld.0
+  %zext.0 = zext i1 %icmp.0 to i8
+  store i8 %zext.0, i8* %b1
+  %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
+  %cpv2.ld.1 = load %CPT.0*, %CPT.0** %cpv2
+  %icmp.1 = icmp eq %CPT.0* %cast, %cpv2.ld.1
+  %zext.1 = zext i1 %icmp.1 to i8
+  store i8 %zext.1, i8* %b2
+  %cpv1.ld.1 = load %CPT.0*, %CPT.0** %cpv1
+  %cpv2.ld.2 = load %CPT.0*, %CPT.0** %cpv2
+  %cast = bitcast %CPT.0* %cpv2.ld.2 to %CPT.0**
+  %deref.ld.0 = load %CPT.0*, %CPT.0** %cast
+  %cast = bitcast %CPT.0* %deref.ld.0 to %CPT.0**
+  %deref.ld.1 = load %CPT.0*, %CPT.0** %cast
+  %cast = bitcast %CPT.0* %deref.ld.1 to %CPT.0**
+  %.ld.1 = load %CPT.0*, %CPT.0** %cast
+  %icmp.2 = icmp eq %CPT.0* %cpv1.ld.1, %.ld.1
+  %zext.2 = zext i1 %icmp.2 to i8
+  store i8 %zext.2, i8* %b3
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -1349,13 +1348,16 @@ TEST(BackendExprTests, TestConditionalExpression2) {
         %tmpv.0 = alloca i64
         store i64 0, i64* %a
         br i1 true, label %then.0, label %else.0
-      then.0:                                  ; preds = %entry
+
+      then.0:                                           ; preds = %entry
         call void @foo()
         br label %fallthrough.0
-      fallthrough.0:                           ; preds = %else.0, %then.0
+
+      fallthrough.0:                                    ; preds = %else.0, %then.0
         %tmpv.0.ld.0 = load i64, i64* %tmpv.0
         ret void
-      else.0:                                  ; preds = %entry
+
+      else.0:                                           ; preds = %entry
         %a.ld.0 = load i64, i64* %a
         store i64 %a.ld.0, i64* %tmpv.0
         br label %fallthrough.0
@@ -1403,6 +1405,72 @@ TEST(BackendExprTests, TestCompoundExpression) {
         store i64 5, i64* %x
         %x.ld.0 = load i64, i64* %x
         ret i64 0
+      }
+    )RAW_RESULT";
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+
+  // Note that this
+  bool isOK = h.expectValue(func->function(), exp);
+  EXPECT_TRUE(isOK && "Function does not have expected contents");
+}
+
+TEST(BackendExprTests, TestLhsConditionalExpression) {
+
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+  Btype *bi32t = be->integer_type(false, 32);
+  BFunctionType *befty1 = mkFuncTyp(be,
+                            L_PARM, be->pointer_type(bi32t),
+                            L_PARM, be->pointer_type(bi32t),
+                            L_END);
+  Bfunction *func = h.mkFunction("foo", befty1);
+  Location loc;
+
+  // *(p0 == nil ? p1 : p0) = 7
+  Bvariable *p0v = func->getBvarForValue(func->getNthArgValue(0));
+  Bvariable *p1v = func->getBvarForValue(func->getNthArgValue(1));
+  Bexpression *vex = be->var_expression(p0v, VE_rvalue, loc);
+  Bexpression *npe = be->nil_pointer_expression();
+  Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, vex, npe, loc);
+  Bexpression *ver0 = be->var_expression(p0v, VE_rvalue, loc);
+  Bexpression *ver1 = be->var_expression(p1v, VE_rvalue, loc);
+  Bexpression *guard =
+      be->conditional_expression(func, be->pointer_type(bi32t), cmp,
+                                 ver1, ver0, loc);
+  Bexpression *dex = be->indirect_expression(bi32t, guard, false, loc);
+  h.mkAssign(dex, mkInt32Const(be, 7));
+
+  const char *exp = R"RAW_RESULT(
+      define void @foo(i32* %p0, i32* %p1) {
+      entry:
+        %p0.addr = alloca i32*
+        %p1.addr = alloca i32*
+        %tmpv.0 = alloca i32*
+        store i32* %p0, i32** %p0.addr
+        store i32* %p1, i32** %p1.addr
+        %p0.ld.0 = load i32*, i32** %p0.addr
+        %icmp.0 = icmp eq i32* %p0.ld.0, null
+        %zext.0 = zext i1 %icmp.0 to i8
+        %trunc.0 = trunc i8 %zext.0 to i1
+        br i1 %trunc.0, label %then.0, label %else.0
+
+      then.0:                                           ; preds = %entry
+        %p1.ld.0 = load i32*, i32** %p1.addr
+        store i32* %p1.ld.0, i32** %tmpv.0
+        br label %fallthrough.0
+
+      fallthrough.0:                                    ; preds = %else.0, %then.0
+        %tmpv.0.ld.0 = load i32*, i32** %tmpv.0
+        %.ld.0 = load i32, i32* %tmpv.0.ld.0
+        store i32 7, i32* %tmpv.0.ld.0
+        ret void
+
+      else.0:                                           ; preds = %entry
+        %p0.ld.1 = load i32*, i32** %p0.addr
+        store i32* %p0.ld.1, i32** %tmpv.0
+        br label %fallthrough.0
       }
     )RAW_RESULT";
 

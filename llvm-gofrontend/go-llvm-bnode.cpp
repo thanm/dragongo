@@ -488,6 +488,8 @@ Bexpression *BnodeBuilder::mkStructField(Btype *typ,
       new Bexpression(N_StructField, kids, val, typ, loc);
   appendInstIfNeeded(rval, val);
   rval->u.fieldIndex = fieldIndex;
+  if (structval->varExprPending())
+    rval->setVarExprPending(structval->varContext());
   return archive(rval);
 }
 
@@ -501,6 +503,8 @@ Bexpression *BnodeBuilder::mkArrayIndex(Btype *typ,
   Bexpression *rval =
       new Bexpression(N_ArrayIndex, kids, val, typ, loc);
   appendInstIfNeeded(rval, val);
+  if (arval->varExprPending())
+    rval->setVarExprPending(arval->varContext());
   return archive(rval);
 }
 
@@ -511,6 +515,9 @@ Bexpression *BnodeBuilder::mkCompound(Bstatement *st,
   std::vector<Bnode *> kids = { st, expr };
   Bexpression *rval =
       new Bexpression(N_Compound, kids, expr->value(), expr->btype(), loc);
+  if (expr->varExprPending())
+    rval->setVarExprPending(expr->varContext());
+  rval->setTag(expr->tag());
   return archive(rval);
 }
 

@@ -494,7 +494,8 @@ public:
   // Load-generation helper
   Bexpression *loadFromExpr(Bexpression *space,
                             Btype *resultTyp,
-                            Location loc);
+                            Location loc,
+                            const std::string &tag);
 
   // Examine vector of values to test whether they are constants.
   // Checks for and handles pending composite inits.

@@ -627,9 +627,10 @@ Bexpression *Llvm_backend::nil_pointer_expression() {
 
 Bexpression *Llvm_backend::loadFromExpr(Bexpression *expr,
                                         Btype *btype,
-                                        Location loc)
+                                        Location loc,
+                                        const std::string &tag)
 {
-  std::string ldname(expr->tag());
+  std::string ldname(tag);
   ldname += ".ld";
   ldname = namegen(ldname);
 
@@ -674,7 +675,8 @@ Bexpression *Llvm_backend::indirect_expression(Btype *btype,
     }
   }
 
-  Bexpression *rval = loadFromExpr(expr, btype, location);
+  std::string tag(expr->tag().size() == 0 ? "deref" : expr->tag());
+  Bexpression *rval = loadFromExpr(expr, btype, location, tag);
   if (vc)
     rval->setVarExprPending(expr->varContext());
 
@@ -754,7 +756,8 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
                                  expr, expr->location());
     }
     Btype *btype = expr->btype();
-    Bexpression *rval = loadFromExpr(expr, btype, expr->location());
+    Bexpression *rval = loadFromExpr(expr, btype, expr->location(),
+                                     expr->tag());
     return rval;
   }
   return expr;
@@ -1221,8 +1224,9 @@ Bexpression *Llvm_backend::compound_expression(Bstatement *bstat,
   if (bstat == errorStatement() || bexpr == errorExpression())
     return errorExpression();
 
-  Bexpression *rexpr = resolve(bexpr, bstat->function());
-  Bexpression *rval = nbuilder_.mkCompound(bstat, rexpr, location);
+  // Compound expressions can be used to produce lvalues, so we don't
+  // want to call resolve() on bexpr here.
+  Bexpression *rval = nbuilder_.mkCompound(bstat, bexpr, location);
   return rval;
 }
 
