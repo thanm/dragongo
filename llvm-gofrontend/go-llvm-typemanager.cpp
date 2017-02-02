@@ -1101,12 +1101,78 @@ Btype *TypeManager::circularTypeAddrConversion(Btype *typ) {
   return nullptr;
 }
 
+llvm::Type *TypeManager::placeholderProxyType(Btype *typ,
+                                              pproxymap *pmap)
+{
+  llvm::SmallPtrSet<llvm::Type *, 32> vis;
+  if (typ->type()->isSized(&vis))
+    return typ->type();
+  auto it = pmap->find(typ);
+  if (it != pmap->end())
+    return it->second;
+  switch(typ->flavor()) {
+    case Btype::ArrayT: {
+      BArrayType *bat = typ->castToBArrayType();
+      Btype *elt = bat->elemType();
+      llvm::Type *elprox = placeholderProxyType(elt, pmap);
+      if (!elprox)
+        return nullptr;
+      llvm::Type *llat = llvm::ArrayType::get(elprox, bat->nelSize());
+      (*pmap)[bat] = llat;
+      return llat;
+    }
+    case Btype::StructT: {
+      BStructType *bst = typ->castToBStructType();
+      const std::vector<Backend::Btyped_identifier> &fields = bst->fields();
+      llvm::SmallVector<llvm::Type *, 64> elems(fields.size());
+      for (unsigned i = 0; i < fields.size(); ++i) {
+        llvm::Type *ft = placeholderProxyType(fields[i].btype, pmap);
+        if (!ft)
+          return nullptr;
+        elems[i] = ft;
+      }
+      llvm::Type *llst = llvm::StructType::get(context_, elems);
+      (*pmap)[bst] = llst;
+      return llst;
+    }
+    case Btype::PointerT: {
+      // All pointers should be sized the same
+      return llvmPtrType_;
+    }
+    case Btype::AuxT: {
+      assert(false && "not expecting aux type here");
+    }
+    case Btype::FunctionT: {
+      assert(false && "not expecting function type here");
+    }
+    default: {
+      assert(false && "not expecting scalar type here");
+    }
+  }
+  return nullptr;
+}
+
 // Return the size of a type.
+
+// Note: frontend sometimes asks for the size of a placeholder
+// type that has not been finalized -- this is a bit tricky since
+// at that point we don't have an LLVM type. If this happens, call
+// a helper to fake it (since in many cases we'll know the size
+// of the type even if placeholder pointer types have not been resolved).
 
 int64_t TypeManager::typeSize(Btype *btype) {
   if (btype == errorType_)
     return 1;
-  uint64_t uval = datalayout_->getTypeSizeInBits(btype->type());
+
+  llvm::Type *toget = btype->type();
+  llvm::SmallPtrSet<llvm::Type *, 32> vis;
+  if (!btype->type()->isSized(&vis)) {
+    pproxymap pmap;
+    toget = placeholderProxyType(btype, &pmap);
+    assert(toget);
+  }
+
+  uint64_t uval = datalayout_->getTypeSizeInBits(toget);
   assert((uval & 0x7) == 0);
   uval /= 8;
   return static_cast<int64_t>(uval);

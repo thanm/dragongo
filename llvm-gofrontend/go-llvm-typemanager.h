@@ -179,7 +179,12 @@ class TypeManager {
   unsigned traceLevel() const { return traceLevel_; }
   void setTypeManagerTraceLevel(unsigned level) { traceLevel_ = level; }
 
-private:
+ private:
+
+  // For computing size-equivalent types for unresolved placeholders
+  typedef std::unordered_map<Btype *, llvm::Type *> pproxymap;
+  llvm::Type *placeholderProxyType(Btype *typ, pproxymap *pmap);
+
   // for type name generation
   std::string tnamegen(const std::string &tag,
                        unsigned expl = NameGen::ChooseVer) {

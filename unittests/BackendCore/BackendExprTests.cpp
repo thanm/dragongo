@@ -1534,7 +1534,7 @@ TEST(BackendExprTests, TestUnaryExpression) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, TestCallArgCOnversions) {
+TEST(BackendExprTests, TestCallArgConversions) {
 
   FcnTestHarness h;
   Llvm_backend *be = h.be();
@@ -1558,6 +1558,50 @@ TEST(BackendExprTests, TestCallArgCOnversions) {
     )RAW_RESULT";
 
   // Note that this
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+TEST(BackendExprTests, CreatePointerOffsetExprs) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+  Location loc;
+
+  Bvariable *p0 = func->getBvarForValue(func->getNthArgValue(0));
+  Bvariable *p3 = func->getBvarForValue(func->getNthArgValue(2));
+
+  {
+    // ptr_offset(p3, 5) = 9
+    Bexpression *ve = be->var_expression(p3, VE_lvalue, loc);
+    Bexpression *cfive = mkInt32Const(be, 5);
+    Bexpression *poe1 = be->array_index_expression(ve, cfive, loc);
+    Bexpression *cnine = mkInt64Const(be, 9);
+    h.mkAssign(poe1, cnine);
+  }
+
+  {
+    // p0 = deref(ptr_offset((uint32*)p3, 7))
+    Btype *bi32t = be->integer_type(false, 32);
+    Bexpression *ve = be->var_expression(p0, VE_lvalue, loc);
+    Bexpression *ver = be->var_expression(p3, VE_rvalue, loc);
+    Btype *bpi32t = be->pointer_type(bi32t);
+    Bexpression *bcon = be->convert_expression(bpi32t, ver, loc);
+    Bexpression *cseven = mkInt64Const(be, 7);
+    Bexpression *poe2 = be->array_index_expression(bcon, cseven, loc);
+    Bexpression *der = be->indirect_expression(bi32t, poe2, false, loc);
+    h.mkAssign(ve, der);
+  }
+
+  const char *exp = R"RAW_RESULT(
+something
+
+  )RAW_RESULT";
+
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 

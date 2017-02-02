@@ -1161,7 +1161,7 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
   return makeGlobalExpression(fexpr, bfunc->function(), fpBtype, location);
 }
 
-llvm::Value *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
+llvm::Value *Llvm_backend::makeArrayIndexGEP(llvm::Type *llct,
                                              llvm::Value *idxval,
                                              llvm::Value *sptr)
 {
@@ -1169,7 +1169,7 @@ llvm::Value *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
   llvm::SmallVector<llvm::Value *, 2> elems(2);
   elems[0] = llvm::ConstantInt::get(llvmInt32Type(), 0);
   elems[1] = idxval;
-  llvm::Value *val = builder.CreateGEP(llat, sptr, elems, namegen("index"));
+  llvm::Value *val = builder.CreateGEP(llct, sptr, elems, namegen("index"));
   return val;
 }
 
@@ -1691,8 +1691,7 @@ Bexpression *Llvm_backend::array_constructor_expression(
 Bexpression *Llvm_backend::pointer_offset_expression(Bexpression *base,
                                                      Bexpression *index,
                                                      Location location) {
-  assert(false && "Llvm_backend::pointer_offset_expression not yet impl");
-  return nullptr;
+  return array_index_expression(base, index, location);
 }
 
 // Return an expression representing ARRAY[INDEX]
@@ -1708,10 +1707,10 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
 
   // Construct an appropriate GEP
   llvm::Type *llt = barray->btype()->type();
-  assert(llt->isArrayTy());
-  llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(llt);
+  //assert(llt->isArrayTy() || llt->isPointerTy());
+  //llvm::CompositeType *llct = llvm::cast<llvm::CompositeType>(llt);
   llvm::Value *gep =
-      makeArrayIndexGEP(llat, index->value(), barray->value());
+      makeArrayIndexGEP(llt, index->value(), barray->value());
   Btype *bet = elementTypeByIndex(barray->btype(), 0);
 
   // Wrap in a Bexpression

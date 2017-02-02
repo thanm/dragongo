@@ -474,7 +474,7 @@ public:
                             llvm::Value *sptr);
 
   // Array indexing GEP helper
-  llvm::Value *makeArrayIndexGEP(llvm::ArrayType *art,
+  llvm::Value *makeArrayIndexGEP(llvm::Type *t,
                                  llvm::Value *idx,
                                  llvm::Value *sptr);
 
