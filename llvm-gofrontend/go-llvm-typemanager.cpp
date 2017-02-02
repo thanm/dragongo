@@ -11,7 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "typemanager.h"
+#include "go-llvm-typemanager.h"
 #include "go-llvm-bexpression.h"
 
 #include "llvm/Support/raw_ostream.h"

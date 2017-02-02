@@ -23,9 +23,9 @@
 #include "go-llvm-bfunction.h"
 #include "go-llvm-bvariable.h"
 #include "go-llvm-tree-integrity.h"
+#include "go-llvm-typemanager.h"
 
 #include "namegen.h"
-#include "typemanager.h"
 
 #include "backend.h"
 

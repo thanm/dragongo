@@ -1,4 +1,4 @@
-//===-- typemanager.h - decls for 'TypeManager' class --======================//
+//===-- go-llvm-typemanager.h - decls for 'TypeManager' class -------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -11,8 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLVMGOFRONTEND_TYPEMANAGER_H
-#define LLVMGOFRONTEND_TYPEMANAGER_H
+#ifndef LLVMGOFRONTEND_GO_LLVM_TYPEMANAGER_H
+#define LLVMGOFRONTEND_GO_LLVM_TYPEMANAGER_H
 
 #include "go-linemap.h"
 #include "go-location.h"
@@ -296,4 +296,4 @@ private:
   llvm::Type *llvmLongDoubleType_;
 };
 
-#endif // LLVMGOFRONTEND_TYPEMANAGER_H
+#endif // LLVMGOFRONTEND_GO_LLVM_TYPEMANAGER_H

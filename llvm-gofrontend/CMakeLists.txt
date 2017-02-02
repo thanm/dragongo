@@ -25,19 +25,19 @@ gofrontend/go/statements.cc
 gofrontend/go/types.cc
 gofrontend/go/unsafe.cc
 go-backend.cpp
-go-llvm-linemap.cpp
-go-llvm-diagnostics.cpp
-go-llvm-btype.cpp
-go-llvm-bnode.cpp
 go-llvm-bexpression.cpp
-go-llvm-bstatement.cpp
 go-llvm-bfunction.cpp
+go-llvm-bnode.cpp
+go-llvm-bstatement.cpp
+go-llvm-btype.cpp
 go-llvm-bvariable.cpp
-go-llvm-tree-integrity.cpp
+go-llvm-diagnostics.cpp
 go-llvm-genblocks.cpp
+go-llvm-linemap.cpp
+go-llvm-tree-integrity.cpp
+go-llvm-typemanager.cpp
 go-llvm.cpp
 go-sha1.cpp
-typemanager.cpp
 )
 
 add_dependencies(LLVMCppGoFrontEnd intrinsics_gen)
