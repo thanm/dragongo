@@ -1044,7 +1044,7 @@ Btype *TypeManager::namedType(const std::string &name,
 // the second instance (e.g. "s") so that we can just return whatever
 // we created before.
 
-Btype *TypeManager::circularPointerType(Btype *placeholder, bool) {
+Btype *TypeManager::circularPointerType(Btype *placeholder, bool isfunc) {
   assert(placeholder);
   if (placeholder == errorType_)
     return errorType_;
@@ -1080,8 +1080,25 @@ Btype *TypeManager::circularPointerType(Btype *placeholder, bool) {
 
 bool TypeManager::isCircularPointerType(Btype *btype) {
   assert(btype);
-  auto it = circularPointerTypes_.find(btype->type());
+  return isCircularPointerType(btype->type());
+}
+
+bool TypeManager::isCircularPointerType(llvm::Type *typ) {
+  assert(typ);
+  auto it = circularPointerTypes_.find(typ);
   return it != circularPointerTypes_.end();
+}
+
+Btype *TypeManager::circularTypeLoadConversion(Btype *typ) {
+  auto it = circularConversionLoadMap_.find(typ);
+  return it != circularConversionLoadMap_.end()  ? it->second : nullptr;
+}
+
+Btype *TypeManager::circularTypeAddrConversion(Btype *typ) {
+  auto it = circularConversionAddrMap_.find(typ);
+  if (it != circularConversionAddrMap_.end())
+    return it->second;
+  return nullptr;
 }
 
 // Return the size of a type.

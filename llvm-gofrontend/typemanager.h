@@ -67,6 +67,7 @@ class TypeManager {
   Btype *namedType(const std::string &, Btype *, Location);
   Btype *circularPointerType(Btype *, bool);
   bool isCircularPointerType(Btype *);
+  bool isCircularPointerType(llvm::Type *);
   int64_t typeSize(Btype *);
   int64_t typeAlignment(Btype *);
   int64_t typeFieldAlignment(Btype *);
@@ -163,16 +164,10 @@ class TypeManager {
   // If specified type is a pointer flagged as being a circular
   // type, return conversion needed on load from that type, or NULL
   // if the type is not circular.
-  Btype *circularTypeLoadConversion(Btype *typ) {
-    auto it = circularConversionLoadMap_.find(typ);
-    return it != circularConversionLoadMap_.end()  ? it->second : nullptr;
-  }
+  Btype *circularTypeLoadConversion(Btype *typ);
 
   // Similar to the helper above, but for address operator.
-  Btype *circularTypeAddrConversion(Btype *typ) {
-    auto it = circularConversionAddrMap_.find(typ);
-    return it != circularConversionAddrMap_.end() ? it->second : nullptr;
-  }
+  Btype *circularTypeAddrConversion(Btype *typ);
 
   // Initialization helper. This passes in a few bits of
   // info from the parent backend that are not immediately

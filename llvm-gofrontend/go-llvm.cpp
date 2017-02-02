@@ -1851,7 +1851,16 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
     return bitcast;
   }
 
-  // Case 2: handle polymorphic nil pointer expressions-- these are
+  // Case 2: handle circular function pointer types.
+  bool dstCircPtr = isCircularPointerType(dstToType);
+  if (srcPtrToFD && dstCircPtr) {
+    BexprLIRBuilder builder(context_, src);
+    std::string tag("cast");
+    llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
+    return bitcast;
+  }
+
+  // Case 3: handle polymorphic nil pointer expressions-- these are
   // generated without a type initially, so we need to convert them
   // to the appropriate type if they appear in an assignment context.
   if (src->value() == nil_pointer_expression()->value()) {
