@@ -18,7 +18,9 @@ set(LLVM_LINK_COMPONENTS
 
 set(BackendCoreSources
   BackendCoreTests.cpp
+  BackendArrayStruct.cpp
   BackendExprTests.cpp
+  BackendPointerExprTests.cpp
   BackendFcnTests.cpp
   BackendCallTests.cpp
   BackendStmtTests.cpp

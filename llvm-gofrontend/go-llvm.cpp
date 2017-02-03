@@ -1958,8 +1958,15 @@ Bstatement *Llvm_backend::assignment_statement(Bfunction *bfunction,
     return errorStatement();
   Bexpression *lhs2 = resolveVarContext(lhs);
   Bexpression *rhs2 = rhs;
-  if (rhs->compositeInitPending())
+  if (rhs->compositeInitPending()) {
     rhs2 = resolveCompositeInit(rhs, bfunction, lhs2->value());
+    Bexpression *stexp =
+        nbuilder_.mkBinaryOp(OPERATOR_EQ, voidType(), lhs2->value(),
+                             lhs2, rhs2, location);
+    Bstatement *es = nbuilder_.mkExprStmt(bfunction, stexp, location);
+    CHKTREE(es);
+    return es;
+  }
   Bexpression *rhs3 = resolveVarContext(rhs2);
   Bstatement *st = makeAssignment(bfunction, lhs->value(),
                                   lhs2, rhs3, location);
