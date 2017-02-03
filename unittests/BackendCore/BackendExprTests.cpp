@@ -1577,9 +1577,9 @@ TEST(BackendExprTests, CreatePointerOffsetExprs) {
 
   {
     // ptr_offset(p3, 5) = 9
-    Bexpression *ve = be->var_expression(p3, VE_lvalue, loc);
+    Bexpression *ve = be->var_expression(p3, VE_rvalue, loc);
     Bexpression *cfive = mkInt32Const(be, 5);
-    Bexpression *poe1 = be->array_index_expression(ve, cfive, loc);
+    Bexpression *poe1 = be->pointer_offset_expression(ve, cfive, loc);
     Bexpression *cnine = mkInt64Const(be, 9);
     h.mkAssign(poe1, cnine);
   }
@@ -1591,15 +1591,21 @@ TEST(BackendExprTests, CreatePointerOffsetExprs) {
     Bexpression *ver = be->var_expression(p3, VE_rvalue, loc);
     Btype *bpi32t = be->pointer_type(bi32t);
     Bexpression *bcon = be->convert_expression(bpi32t, ver, loc);
-    Bexpression *cseven = mkInt64Const(be, 7);
-    Bexpression *poe2 = be->array_index_expression(bcon, cseven, loc);
+    Bexpression *cseven = mkInt32Const(be, 7);
+    Bexpression *poe2 = be->pointer_offset_expression(bcon, cseven, loc);
     Bexpression *der = be->indirect_expression(bi32t, poe2, false, loc);
     h.mkAssign(ve, der);
   }
 
   const char *exp = R"RAW_RESULT(
-something
-
+      %param3.ld.0 = load i64*, i64** %param3.addr
+      %ptroff.0 = getelementptr i64, i64* %param3.ld.0, i32 5
+      store i64 9, i64* %ptroff.0
+      %cast = bitcast i64** %param3.addr to i32**
+      %.ld.0 = load i32*, i32** %cast
+      %ptroff.1 = getelementptr i32, i32* %.ld.0, i32 7
+      %.ptroff.ld.0 = load i32, i32* %ptroff.1
+      store i32 %.ptroff.ld.0, i32* %param1.addr
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);

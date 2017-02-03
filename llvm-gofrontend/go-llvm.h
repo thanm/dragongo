@@ -474,9 +474,14 @@ public:
                             llvm::Value *sptr);
 
   // Array indexing GEP helper
-  llvm::Value *makeArrayIndexGEP(llvm::Type *t,
+  llvm::Value *makeArrayIndexGEP(llvm::ArrayType *at,
                                  llvm::Value *idx,
                                  llvm::Value *sptr);
+
+  // Pointer indexing GEP helper
+  llvm::Value *makePointerOffsetGEP(llvm::PointerType *pt,
+                                    llvm::Value *idx,
+                                    llvm::Value *sptr);
 
   // Assignment helper
   Bstatement *makeAssignment(Bfunction *function, llvm::Value *lvalue,

@@ -160,6 +160,7 @@ class TypeManager {
   bool isFuncDescriptorType(llvm::Type *typ);
   bool isPtrToFuncDescriptorType(llvm::Type *typ);
   bool isPtrToFuncType(llvm::Type *typ);
+  bool isPtrToVoidType(llvm::Type *typ);
 
   // If specified type is a pointer flagged as being a circular
   // type, return conversion needed on load from that type, or NULL

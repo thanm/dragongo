@@ -1161,7 +1161,19 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
   return makeGlobalExpression(fexpr, bfunc->function(), fpBtype, location);
 }
 
-llvm::Value *Llvm_backend::makeArrayIndexGEP(llvm::Type *llct,
+llvm::Value *Llvm_backend::makePointerOffsetGEP(llvm::PointerType *llpt,
+                                                llvm::Value *idxval,
+                                                llvm::Value *sptr)
+{
+  LIRBuilder builder(context_, llvm::ConstantFolder());
+  llvm::SmallVector<llvm::Value *, 1> elems(1);
+  elems[0] = idxval;
+  llvm::Type *pointee = llpt->getElementType();
+  llvm::Value *val = builder.CreateGEP(pointee, sptr, elems, namegen("ptroff"));
+  return val;
+}
+
+llvm::Value *Llvm_backend::makeArrayIndexGEP(llvm::ArrayType *llat,
                                              llvm::Value *idxval,
                                              llvm::Value *sptr)
 {
@@ -1169,11 +1181,10 @@ llvm::Value *Llvm_backend::makeArrayIndexGEP(llvm::Type *llct,
   llvm::SmallVector<llvm::Value *, 2> elems(2);
   elems[0] = llvm::ConstantInt::get(llvmInt32Type(), 0);
   elems[1] = idxval;
-  llvm::Value *val = builder.CreateGEP(llct, sptr, elems, namegen("index"));
+  llvm::Value *val = builder.CreateGEP(llat, sptr, elems, namegen("index"));
   return val;
 }
 
-// Field GEP helper
 llvm::Value *Llvm_backend::makeFieldGEP(llvm::StructType *llst,
                                         unsigned fieldIndex,
                                         llvm::Value *sptr)
@@ -1691,7 +1702,30 @@ Bexpression *Llvm_backend::array_constructor_expression(
 Bexpression *Llvm_backend::pointer_offset_expression(Bexpression *base,
                                                      Bexpression *index,
                                                      Location location) {
-  return array_index_expression(base, index, location);
+  if (base == errorExpression() || index == errorExpression())
+    return errorExpression();
+
+  base = resolveVarContext(base);
+  index = resolveVarContext(index);
+
+  // Construct an appropriate GEP
+  llvm::PointerType *llpt =
+      llvm::cast<llvm::PointerType>(base->btype()->type());
+  llvm::Value *gep =
+      makePointerOffsetGEP(llpt, index->value(), base->value());
+  //  BPointerType *bpft = base->btype()->castToBPointerType();
+  //Btype *bet = bpft->toType();
+
+  // Wrap in a Bexpression
+  Bexpression *rval = nbuilder_.mkArrayIndex(base->btype(), gep, base,
+                                             index, location);
+
+  std::string tag(base->tag());
+  tag += ".ptroff";
+  rval->setTag(tag);
+
+  // We're done
+  return rval;
 }
 
 // Return an expression representing ARRAY[INDEX]
@@ -1707,10 +1741,10 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
 
   // Construct an appropriate GEP
   llvm::Type *llt = barray->btype()->type();
-  //assert(llt->isArrayTy() || llt->isPointerTy());
-  //llvm::CompositeType *llct = llvm::cast<llvm::CompositeType>(llt);
+  llvm::ArrayType *llat =
+      llvm::cast<llvm::ArrayType>(barray->btype()->type());
   llvm::Value *gep =
-      makeArrayIndexGEP(llt, index->value(), barray->value());
+      makeArrayIndexGEP(llat, index->value(), barray->value());
   Btype *bet = elementTypeByIndex(barray->btype(), 0);
 
   // Wrap in a Bexpression
@@ -1859,7 +1893,19 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
     return bitcast;
   }
 
-  // Case 3: handle polymorphic nil pointer expressions-- these are
+  // Case 2: handle raw function pointer assignment (frontend will
+  // sometimes take a function pointer and assign it to "void *" without
+  // an explicit conversion).
+  bool dstPtrToVoid = isPtrToVoidType(dstToType);
+  bool srcFuncPtr = isPtrToFuncType(srcType);
+  if (dstPtrToVoid && srcFuncPtr) {
+    BexprLIRBuilder builder(context_, src);
+    std::string tag("cast");
+    llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
+    return bitcast;
+  }
+
+  // Case 4: handle polymorphic nil pointer expressions-- these are
   // generated without a type initially, so we need to convert them
   // to the appropriate type if they appear in an assignment context.
   if (src->value() == nil_pointer_expression()->value()) {

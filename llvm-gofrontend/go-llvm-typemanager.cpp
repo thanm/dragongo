@@ -1255,3 +1255,11 @@ bool TypeManager::isPtrToFuncType(llvm::Type *typ)
   llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
   return pt->getElementType()->isFunctionTy();
 }
+
+bool TypeManager::isPtrToVoidType(llvm::Type *typ)
+{
+  if (! typ->isPointerTy())
+    return false;
+  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
+  return pt->getElementType() == llvmInt8Type_;
+}
