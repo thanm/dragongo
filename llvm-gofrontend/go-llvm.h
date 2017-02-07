@@ -62,6 +62,7 @@ class raw_ostream;
 class Llvm_backend : public Backend, public TypeManager, public NameGen {
 public:
   Llvm_backend(llvm::LLVMContext &context,
+               llvm::Module *module,
                Linemap *linemap);
   ~Llvm_backend();
 
@@ -314,8 +315,9 @@ public:
 
   Linemap *linemap() const { return linemap_; }
 
-  // Exposed for unit testing
-  llvm::Module &module() { return *module_.get(); }
+  // Module and datalayout
+  llvm::Module &module() { return *module_; }
+  const llvm::DataLayout &datalayout() { return *datalayout_; }
 
   // Run the module verifier.
   void verifyModule();
@@ -626,11 +628,13 @@ private:
   // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
 
-  // The result LLVM module we're generating.
-  std::unique_ptr<llvm::Module> module_;
+  // The LLVM module we're emitting IR into. If client did not supply
+  // a module during construction, then ownModule_ is filled in.
+  llvm::Module *module_;
+  std::unique_ptr<llvm::Module> ownModule_;
 
   // Data layout info from the module.
-  const llvm::DataLayout &datalayout_;
+  const llvm::DataLayout *datalayout_;
 
   // Builder for constructing Bexpressions and Bstatements.
   BnodeBuilder nbuilder_;

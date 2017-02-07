@@ -163,6 +163,7 @@ GetOutputStream() {
 
 static Llvm_backend *init_gogo(TargetMachine *Target,
                                llvm::LLVMContext &Context,
+                               llvm::Module *module,
                                Linemap *linemap)
 {
   // does the comment below still apply?
@@ -187,7 +188,7 @@ static Llvm_backend *init_gogo(TargetMachine *Target,
   args.compiling_runtime = false; // FIXME: not yet supported
   args.debug_escape_level = EscapeDebugLevel;
   args.linemap = linemap;
-  Llvm_backend *backend = new Llvm_backend(Context, linemap);
+  Llvm_backend *backend = new Llvm_backend(Context, module, linemap);
   args.backend = backend;
   go_create_gogo (&args);
 
@@ -265,8 +266,9 @@ int main(int argc, char **argv)
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
 
   std::unique_ptr<Llvm_linemap> linemap(new Llvm_linemap());
-
-  Llvm_backend *backend = init_gogo(Target.get(), Context, linemap.get());
+  std::unique_ptr<llvm::Module> module(new llvm::Module("gomodule", Context));
+  std::unique_ptr<Llvm_backend> backend(init_gogo(Target.get(), Context,
+                                                  module.get(), linemap.get()));
   backend->setTraceLevel(TraceLevel);
 
   // Support -fgo-dump-ast

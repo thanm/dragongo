@@ -87,11 +87,11 @@ void TypeManager::initializeTypeManager(Bexpression *errorExpression,
                                         NameGen *nt)
 {
   assert(errorExpression);
-  assert(datalayout);
   assert(nt);
+  assert(datalayout);
+  datalayout_ = datalayout;
   errorExpression_ = errorExpression;
   nametags_ = nt;
-  datalayout_ = datalayout;
 
   llvmIntegerType_ =
       llvm::IntegerType::get(context_, datalayout_->getPointerSizeInBits());

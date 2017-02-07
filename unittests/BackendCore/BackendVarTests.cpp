@@ -256,13 +256,13 @@ TEST(BackendVarTests, MakeImplicitVariable) {
 }
 
 TEST(BackendVarTests, MakeImmutableStructReference) {
-  LLVMContext C;
 
-  std::unique_ptr<Llvm_backend> be(new Llvm_backend(C, nullptr));
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
 
   Location loc;
   Btype *bi32t = be->integer_type(false, 32);
-  Btype *bst = mkTwoFieldStruct(be.get(), bi32t, bi32t);
+  Btype *bst = mkTwoFieldStruct(be, bi32t, bi32t);
   Bvariable *ims =
       be->immutable_struct_reference("name", "asmname", bst, loc);
   ASSERT_TRUE(ims != nullptr);
@@ -275,6 +275,9 @@ TEST(BackendVarTests, MakeImmutableStructReference) {
   Bvariable *ierr =
       be->immutable_struct_reference("name", "asmname", be->error_type(), loc);
   EXPECT_TRUE(ierr == be->error_variable());
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendVarTests, ImmutableStructSetInit) {

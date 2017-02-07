@@ -171,8 +171,8 @@ class TypeManager {
   Btype *circularTypeAddrConversion(Btype *typ);
 
   // Initialization helper. This passes in a few bits of
-  // info from the parent backend that are not immediately
-  // available at the start of is constructor.
+  // info from the parent backend that are might not immediately
+  // available at the start of the containing constructor.
   void initializeTypeManager(Bexpression *errorExpression,
                              const llvm::DataLayout *datalayout,
                              NameGen *nt);

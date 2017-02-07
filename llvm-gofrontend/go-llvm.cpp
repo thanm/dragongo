@@ -69,11 +69,12 @@ class BexprLIRBuilder :
 static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
+                           llvm::Module *module,
                            Linemap *linemap)
     : TypeManager(context)
     , context_(context)
-    , module_(new llvm::Module("gomodule", context))
-    , datalayout_(module_->getDataLayout())
+    , module_(module)
+    , datalayout_(module ? &module->getDataLayout() : nullptr)
     , linemap_(linemap)
     , addressSpace_(0)
     , traceLevel_(0)
@@ -88,6 +89,14 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     linemap_ = ownLinemap_.get();
   }
 
+  // Similarly for the LLVM module
+  if (!module_) {
+    ownModule_.reset(new llvm::Module("gomodule", context));
+    module_ = ownModule_.get();
+  }
+
+  datalayout_ = &module_->getDataLayout();
+
   // Create and record an error function. By marking it as varargs this will
   // avoid any collisions with things that the front end might create, since
   // Go varargs is handled/lowered entirely by the front end.
@@ -97,8 +106,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
   llvm::FunctionType *eft = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context_), elems, isVarargs);
   llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
-  llvm::Function *ef = llvm::Function::Create(eft, plinkage, "",
-                                              module_.get());
+  llvm::Function *ef = llvm::Function::Create(eft, plinkage, "", module_);
   errorFunction_.reset(new Bfunction(ef, makeAuxFcnType(eft), ""));
 
   // Reuse the error function as the value for error_expression
@@ -107,7 +115,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
   // We now have the necessary bits to finish initialization of the
   // type manager.
   initializeTypeManager(errorExpression(),
-                        &module_->getDataLayout(),
+                        datalayout_,
                         nameTags());
 
   // Error statement.
@@ -143,14 +151,14 @@ void Llvm_backend::setTraceLevel(unsigned level)
 void
 Llvm_backend::verifyModule()
 {
-  bool broken = llvm::verifyModule(*module_.get(), &llvm::dbgs());
+  bool broken = llvm::verifyModule(module(), &llvm::dbgs());
   assert(!broken && "Module not well-formed.");
 }
 
 void
 Llvm_backend::dumpModule()
 {
-  module_->dump();
+  module().dump();
 }
 
 void Llvm_backend::dumpExpr(Bexpression *e)
@@ -371,7 +379,7 @@ void Llvm_backend::defineLibcallBuiltin(const char *name, const char *libname,
   llvm::LibFunc lf = static_cast<llvm::LibFunc>(libfunc);
   llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
   llvm::Function *fcn =
-      llvm::Function::Create(ft, plinkage, name, module_.get());
+      llvm::Function::Create(ft, plinkage, name, module_);
 
   // FIXME: once we have a pass manager set up for the back end, we'll
   // want to turn on this code, since it will be helpful to catch
@@ -404,7 +412,7 @@ void Llvm_backend::defineIntrinsicBuiltin(const char *name, const char *libname,
   }
   llvm::Intrinsic::ID iid = static_cast<llvm::Intrinsic::ID>(intrinsicID);
   llvm::Function *fcn =
-      llvm::Intrinsic::getDeclaration(module_.get(), iid, overloadTypes);
+      llvm::Intrinsic::getDeclaration(module_, iid, overloadTypes);
   assert(fcn != nullptr);
   defineBuiltinFcn(name, libname, fcn);
 }
@@ -2174,7 +2182,7 @@ Llvm_backend::makeModuleVar(Btype *btype,
 
 #if 0
   // FIXME: add code to insure non-zero size
-  assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
+  assert(datalayout().getTypeSizeInBits(btype->type()) != 0);
 #endif
 
   // FIXME: add support for this
@@ -2187,7 +2195,7 @@ Llvm_backend::makeModuleVar(Btype *btype,
 
   llvm::Constant *init = nullptr;
   llvm::GlobalVariable *glob = new llvm::GlobalVariable(
-      *module_.get(), btype->type(), isConstant == MV_Constant,
+      module(), btype->type(), isConstant == MV_Constant,
       linkage, init, asm_name);
   if (isHiddenVisibility == MV_HiddenVisibility)
     glob->setVisibility(llvm::GlobalValue::HiddenVisibility);
@@ -2432,7 +2440,7 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
     return errorVariable_.get();
 
   // FIXME: add code to insure non-zero size
-  assert(datalayout_.getTypeSizeInBits(btype->type()) != 0);
+  assert(datalayout().getTypeSizeInBits(btype->type()) != 0);
 
   // FIXME: add DIGlobalVariable to debug info for this variable
 
@@ -2440,7 +2448,7 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
   bool isConstant = true;
   llvm::Constant *init = nullptr;
   llvm::GlobalVariable *glob = new llvm::GlobalVariable(
-      *module_.get(), btype->type(), isConstant, linkage, init, asmname);
+      module(), btype->type(), isConstant, linkage, init, asmname);
   Bvariable *bv =
       new Bvariable(btype, location, name, GlobalVar, false, glob);
   assert(valueVarMap_.find(bv->value()) == valueVarMap_.end());
@@ -2493,7 +2501,7 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   llvm::Twine fn(name);
   llvm::FunctionType *fty = llvm::cast<llvm::FunctionType>(fntype->type());
   llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
-  llvm::Function *fcn = llvm::Function::Create(fty, linkage, fn, module_.get());
+  llvm::Function *fcn = llvm::Function::Create(fty, linkage, fn, module_);
 
   // visibility
   if (!is_visible)
@@ -2914,5 +2922,5 @@ const char *go_localize_identifier(const char *ident) { return ident; }
 // Return a new backend generator.
 
 Backend *go_get_backend(llvm::LLVMContext &context) {
-  return new Llvm_backend(context, nullptr);
+  return new Llvm_backend(context, nullptr, nullptr);
 }
