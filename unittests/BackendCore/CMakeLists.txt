@@ -28,6 +28,7 @@ set(BackendCoreSources
   BackendTreeIntegrity.cpp
   BackendNodeTests.cpp
   LinemapTests.cpp
+  Sha1Tests.cpp
   TestUtilsTest.cpp
   TestUtils.cpp
   )

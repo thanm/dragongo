@@ -16,6 +16,7 @@
 #include <iostream>
 
 #include "go-llvm-diagnostics.h"
+#include "go-c.h"
 
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Object/Archive.h"
@@ -53,19 +54,6 @@ go_imported_unsafe (void)
 {
   // FIXME
   std::cerr << "FIXME: go_imported_unsafe not yet implemented\n";
-}
-
-/* This is called by the Go frontend proper to add data to the
-   section containing Go export data.  */
-
-void
-go_write_export_data (const char *bytes, unsigned int size)
-{
-  static bool warned;
-  if (!warned) {
-    warned = true;
-    std::cerr << "FIXME: go_write_export_data not yet implemented\n";
-  }
 }
 
 static const char *

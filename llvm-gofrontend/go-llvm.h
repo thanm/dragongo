@@ -310,6 +310,8 @@ public:
                                 const std::vector<Bfunction *> &,
                                 const std::vector<Bvariable *> &);
 
+  void write_export_data(const char *bytes, unsigned int size);
+
   Linemap *linemap() const { return linemap_; }
 
   // Exposed for unit testing
@@ -582,6 +584,9 @@ public:
   std::pair<llvm::Value *, llvm::Value *>
   convertForBinary(Bexpression *left, Bexpression *right);
 
+  // Finalize export data for the module.
+  void finalizeExportData();
+
 private:
   template <typename T1, typename T2> class pairvalmap_hash {
     typedef std::pair<T1, T2> pairtype;
@@ -635,6 +640,9 @@ private:
   Linemap *linemap_;
   std::unique_ptr<Linemap> ownLinemap_;
 
+  // Used to buffer up export data.
+  std::unique_ptr<std::stringstream> exportData_;
+
   // Address space designator for pointer types.
   unsigned addressSpace_;
 
@@ -644,6 +652,9 @@ private:
   // Whether to check for unexpected node sharing (e.g. same Bexpression
   // or statement pointed to by multiple parents).
   bool checkIntegrity_;
+
+  // Whether we've finalized export data for the module.
+  bool exportDataFinalized_;
 
   // Target library info oracle
   llvm::TargetLibraryInfo *TLI_;

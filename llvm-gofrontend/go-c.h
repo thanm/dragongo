@@ -69,8 +69,6 @@ extern const char *go_localize_identifier (const char*);
 
 extern void go_imported_unsafe (void);
 
-extern void go_write_export_data (const char *, unsigned int);
-
 extern const char *go_read_export_data (int, off_t, char **, size_t *, int *);
 
 // extern GTY(()) tree go_non_zero_struct;

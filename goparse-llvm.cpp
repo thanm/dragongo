@@ -14,11 +14,14 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/Triple.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/CodeGen/CommandFlags.h"
 #include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/Format.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/Path.h"
@@ -26,6 +29,7 @@
 #include "llvm/Support/Signals.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/ToolOutputFile.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 
@@ -52,6 +56,20 @@ InputFilenames(cl::Positional,
 
 static cl::opt<std::string>
 IncludeDirs("I", cl::desc("<include dirs>"));
+
+// Determine optimization level.
+static cl::opt<char>
+OptLevel("O",
+         cl::desc("Optimization level. [-O0, -O1, -O2, or -O3] "
+                  "(default = '-O2')"),
+         cl::Prefix,
+         cl::ZeroOrMore,
+         cl::init(' '));
+
+static cl::opt<std::string>
+OutputFileName("o",
+               cl::desc("Set name of output file."),
+               cl::init(""));
 
 static cl::opt<bool>
 NoBackend("nobackend",
@@ -115,6 +133,34 @@ TraceLevel("tracelevel",
            cl::desc("Set debug trace level (def: 0, no trace output)."),
            cl::init(0));
 
+static std::unique_ptr<tool_output_file>
+GetOutputStream() {
+  // Decide if we need "binary" output.
+  bool Binary = false;
+  switch (FileType) {
+  case TargetMachine::CGFT_AssemblyFile:
+    break;
+  case TargetMachine::CGFT_ObjectFile:
+  case TargetMachine::CGFT_Null:
+    Binary = true;
+    break;
+  }
+
+  // Open the file.
+  std::error_code EC;
+  sys::fs::OpenFlags OpenFlags = sys::fs::F_None;
+  if (!Binary)
+    OpenFlags |= sys::fs::F_Text;
+  auto FDOut = llvm::make_unique<tool_output_file>(OutputFileName, EC,
+                                                   OpenFlags);
+  if (EC) {
+    errs() << EC.message() << '\n';
+    return nullptr;
+  }
+
+  return FDOut;
+}
+
 static Llvm_backend *init_gogo(TargetMachine *Target,
                                llvm::LLVMContext &Context,
                                Linemap *linemap)
@@ -159,8 +205,22 @@ int main(int argc, char **argv)
 
   InitializeAllTargets();
   InitializeAllTargetMCs();
+  InitializeAllAsmPrinters();
+  InitializeAllAsmParsers();
 
   cl::ParseCommandLineOptions(argc, argv, "llvm go parser driver\n");
+
+  // Initialize codegen and IR passes
+  PassRegistry *Registry = PassRegistry::getPassRegistry();
+  initializeCore(*Registry);
+  initializeCodeGen(*Registry);
+  initializeLoopStrengthReducePass(*Registry);
+  initializeLowerIntrinsicsPass(*Registry);
+  initializeCountingFunctionInserterPass(*Registry);
+  initializeUnreachableBlockElimLegacyPassPass(*Registry);
+  initializeConstantHoistingLegacyPassPass(*Registry);
+  initializeScalarOpts(*Registry);
+  initializeVectorization(*Registry);
 
   TheTriple = Triple(Triple::normalize(TargetTriple));
   if (TheTriple.getTriple().empty())
@@ -178,8 +238,21 @@ int main(int argc, char **argv)
   // FIXME: cpu, features not yet supported
   std::string CPUStr = getCPUStr(), FeaturesStr = getFeaturesStr();
 
-  TargetOptions Options = InitTargetOptionsFromCodeGenFlags();
+  // optimization level
   CodeGenOpt::Level OLvl = CodeGenOpt::Default;
+  switch (OptLevel) {
+  default:
+    errs() << argv[0] << ": invalid optimization level.\n";
+    return 1;
+  case ' ': break;
+  case '0': OLvl = CodeGenOpt::None; break;
+  case '1': OLvl = CodeGenOpt::Less; break;
+  case '2': OLvl = CodeGenOpt::Default; break;
+  case '3': OLvl = CodeGenOpt::Aggressive; break;
+  }
+
+  TargetOptions Options = InitTargetOptionsFromCodeGenFlags();
+  Options.DisableIntegratedAS = true;
   std::unique_ptr<TargetMachine> Target(
       TheTarget->createTargetMachine(TheTriple.getTriple(), CPUStr, FeaturesStr,
                                      Options, getRelocModel(), CMModel, OLvl));
@@ -226,6 +299,60 @@ int main(int argc, char **argv)
     backend->dumpModule();
   if (TraceLevel)
     std::cerr << "linemap stats:\n" << linemap->statistics();
+
+#if 0
+  // Collect module from backend
+  llvm::Module *M = &backend->module();
+
+  if (OutputFileName.empty()) {
+    errs() << "no output file specified (please use -o option)\n";
+    return 1;
+  }
+
+  // Figure out where we are going to send the output.
+  std::unique_ptr<tool_output_file> Out = GetOutputStream();
+  if (!Out) return 1;
+
+  // Pass manager
+  legacy::PassManager PM;
+
+  // Add an appropriate TargetLibraryInfo pass for the module triple.
+  TargetLibraryInfoImpl TLII(TheTriple);
+  PM.add(new TargetLibraryInfoWrapperPass(TLII));
+
+  // Fixme: pass in module to Llvm_backend
+
+  // Add the target data from the target machine, if it exists, or the module.
+  M->setDataLayout(Target->createDataLayout());
+
+
+  // Override function attributes based on CPUStr, FeaturesStr, and command line
+  // flags.
+  setFunctionAttributes(CPUStr, FeaturesStr, *M);
+
+  raw_pwrite_stream *OS = &Out->os();
+
+  // Ask the target to add backend passes as necessary.
+  if (Target->addPassesToEmitFile(PM, *OS, FileType)) {
+    errs() << argv[0] << ": target does not support generation of this"
+           << " file type!\n";
+    return 1;
+  }
+
+  // Before executing passes, print the final values of the LLVM options.
+  cl::PrintOptionValues();
+
+  // Run pass manager
+  PM.run(*M);
+
+  // Check for errors
+  auto HasError = *static_cast<bool *>(Context.getDiagnosticContext());
+  if (HasError)
+    return 1;
+
+  // Declare success.
+  Out->keep();
+#endif
 
   return 0;
 }

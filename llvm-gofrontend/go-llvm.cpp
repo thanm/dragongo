@@ -78,6 +78,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , addressSpace_(0)
     , traceLevel_(0)
     , checkIntegrity_(true)
+    , exportDataFinalized_(false)
     , TLI_(nullptr)
     , errorFunction_(nullptr)
 {
@@ -1740,7 +1741,6 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
   index = resolveVarContext(index);
 
   // Construct an appropriate GEP
-  llvm::Type *llt = barray->btype()->type();
   llvm::ArrayType *llat =
       llvm::cast<llvm::ArrayType>(barray->btype()->type());
   llvm::Value *gep =
@@ -2845,8 +2845,64 @@ void Llvm_backend::write_global_definitions(
     const std::vector<Bexpression *> &constant_decls,
     const std::vector<Bfunction *> &function_decls,
     const std::vector<Bvariable *> &variable_decls) {
-  std::cerr << "Llvm_backend::write_global_definitions not yet implemented.\n";
+
+  finalizeExportData();
+
+  // At the moment there isn't anything to do here with the
+  // inputs we're being passed.
+
 }
+
+// Finalize export data.
+
+void Llvm_backend::finalizeExportData()
+{
+  assert(! exportDataFinalized_);
+  exportDataFinalized_ = true;
+  if (exportData_.get() == nullptr)
+    return;
+
+  std::map<char, std::string> rewrites = { { '\\', "\\\\" },
+                                           { '\0', "\\000" },
+                                           { '\n', "\\n" },
+                                           { '"', "\\\"" } };
+
+  const std::string raw = exportData_->str();
+  std::stringstream cooked;
+  for (auto &byte : raw) {
+    auto it = rewrites.find(byte);
+    if (it != rewrites.end())
+      cooked << it->second;
+    else
+      cooked << byte;
+  }
+  module().appendModuleInlineAsm(cooked.str());
+
+  if (traceLevel() > 1) {
+    std::cerr << "Append export data:\n";
+    std::cerr << cooked.str() << "\n";
+  }
+}
+
+// This is called by the Go frontend proper to add data to the
+// section containing Go export data.
+
+void Llvm_backend::write_export_data(const char *bytes, unsigned int size)
+{
+  // FIXME: this is currently ELF-specific. Better to add real support
+  // in MC object file layer.
+
+  assert(! exportDataFinalized_);
+
+  if (exportData_.get() == nullptr) {
+    exportData_.reset(new std::stringstream);
+    (*exportData_.get()) << ".section \".go_export\",\"e\"\n";
+  }
+  std::stringstream &ss = *exportData_.get();
+  for (unsigned idx = 0; idx < size; ++idx)
+    ss << bytes[idx];
+}
+
 
 // Convert an identifier for use in an error message.
 // TODO(tham): scan the identifier to determine if contains
