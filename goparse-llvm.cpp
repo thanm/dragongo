@@ -16,6 +16,8 @@
 #include "llvm/ADT/Triple.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/CodeGen/CommandFlags.h"
+#include "llvm/IR/DiagnosticInfo.h"
+#include "llvm/IR/DiagnosticPrinter.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/Support/CommandLine.h"
@@ -161,20 +163,26 @@ GetOutputStream() {
   return FDOut;
 }
 
+static void DiagnosticHandler(const DiagnosticInfo &DI, void *Context) {
+  bool *HasError = static_cast<bool *>(Context);
+  if (DI.getSeverity() == DS_Error)
+    *HasError = true;
+
+  if (auto *Remark = dyn_cast<DiagnosticInfoOptimizationBase>(&DI))
+    if (!Remark->isEnabled())
+      return;
+
+  DiagnosticPrinterRawOStream DP(errs());
+  errs() << LLVMContext::getDiagnosticMessagePrefix(DI.getSeverity()) << ": ";
+  DI.print(DP);
+  errs() << "\n";
+}
+
 static Llvm_backend *init_gogo(TargetMachine *Target,
                                llvm::LLVMContext &Context,
                                llvm::Module *module,
                                Linemap *linemap)
 {
-  // does the comment below still apply?
-#if 0
-  /* We must create the gogo IR after calling build_common_tree_nodes
-     (because Gogo::define_builtin_function_trees refers indirectly
-     to, e.g., unsigned_char_type_node) but before calling
-     build_common_builtin_nodes (because it calls, indirectly,
-     go_type_for_size).  */
-#endif
-
   struct go_create_gogo_args args;
   unsigned bpi = Target->getPointerSize() * 8;
   args.int_type_size = bpi;
@@ -261,12 +269,20 @@ int main(int argc, char **argv)
 
   // Print a stack trace if we signal out.
   llvm::LLVMContext Context;
+  bool hasError = false;
+  Context.setDiagnosticHandler(DiagnosticHandler, &hasError);
   sys::PrintStackTraceOnErrorSignal(argv[0]);
   PrettyStackTraceProgram X(argc, argv);
   llvm_shutdown_obj Y;  // Call llvm_shutdown() on exit.
 
+  // Construct linemap and module
   std::unique_ptr<Llvm_linemap> linemap(new Llvm_linemap());
   std::unique_ptr<llvm::Module> module(new llvm::Module("gomodule", Context));
+
+  // Add the target data from the target machine, if it exists
+  module->setDataLayout(Target->createDataLayout());
+
+  // Now construct Llvm_backend helper.
   std::unique_ptr<Llvm_backend> backend(init_gogo(Target.get(), Context,
                                                   module.get(), linemap.get()));
   backend->setTraceLevel(TraceLevel);
@@ -302,9 +318,7 @@ int main(int argc, char **argv)
   if (TraceLevel)
     std::cerr << "linemap stats:\n" << linemap->statistics();
 
-#if 0
-  // Collect module from backend
-  llvm::Module *M = &backend->module();
+  llvm::Module *M = module.get();
 
   if (OutputFileName.empty()) {
     errs() << "no output file specified (please use -o option)\n";
@@ -323,9 +337,6 @@ int main(int argc, char **argv)
   PM.add(new TargetLibraryInfoWrapperPass(TLII));
 
   // Fixme: pass in module to Llvm_backend
-
-  // Add the target data from the target machine, if it exists, or the module.
-  M->setDataLayout(Target->createDataLayout());
 
 
   // Override function attributes based on CPUStr, FeaturesStr, and command line
@@ -354,7 +365,6 @@ int main(int argc, char **argv)
 
   // Declare success.
   Out->keep();
-#endif
 
   return 0;
 }
