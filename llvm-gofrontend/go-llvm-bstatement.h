@@ -31,6 +31,12 @@ class Value;
 class raw_ostream;
 }
 
+// Class Bstatement encapsulates the IR for a statement, storing zero
+// or more component Bexpressions, along with state related to
+// statement control flow (if / switch / goto, etc). The specific
+// contents/children of a given Bstatement are determined by its
+// NodeFlavor (value of Bnode::flavor()).
+//
 // In the current gofrontend implementation, there is an extremely
 // fluzzy/fluid line between Bexpression's, Bblocks, and Bstatements.
 // For example, you can take a Bblock and turn it into a statement via
@@ -55,22 +61,36 @@ class Bstatement : public Bnode {
   // dump with source line info
   void srcDump(Linemap *);
 
+  // If this is an expression statement (flavor N_ExprStmt), return
+  // a pointer to the Bexpression it contains.
   Bexpression *getExprStmtExpr();
 
+  // If this is an if statement (flavor N_IfStmt), return
+  // components of the "if" (condition, true block, false block).
   Bexpression *getIfStmtCondition();
   Bstatement *getIfStmtTrueBlock();
   Bstatement *getIfStmtFalseBlock();
 
+  // If this is a switch statement (flavor N_SwitchStmt), return
+  // the Bexpresson for the value we're switching on, along
+  // with info on the number of cases, Bexpressions for each case,
+  // and Bstatement for each case.
   Bexpression *getSwitchStmtValue();
   unsigned     getSwitchStmtNumCases();
   std::vector<Bexpression *> getSwitchStmtNthCase(unsigned idx);
   Bstatement *getSwitchStmtNthStmt(unsigned idx);
 
+  // If this is a goto statement (flavor N_GotoStmt), return
+  // the target label for the goto.
   LabelId getGotoStmtTargetLabel();
 
+  // If this is a label statement (flavor N_LabelStmt), return
+  // the ID of the label defined by this stmt.
   LabelId getLabelStmtDefinedLabel();
 
-  // Returns any child statements for this statement.
+  // Generic hook for collecting all statements that are children of
+  // this statement. Used when walking statements to assign
+  // instructions to LLVM blocks.
   std::vector<Bstatement *> getChildStmts();
 
  protected:
@@ -87,6 +107,9 @@ class Bstatement : public Bnode {
 };
 
 typedef unsigned LabelId;
+
+// Back end label class. Encapsulates a label referred to by a label
+// definition statement and/or some set of goto statements.
 
 class Blabel {
 public:

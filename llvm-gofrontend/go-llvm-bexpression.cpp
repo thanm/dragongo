@@ -13,7 +13,6 @@
 
 #include "go-llvm-btype.h"
 #include "go-llvm-bexpression.h"
-//#include "go-llvm-bstatement.h"
 #include "go-system.h"
 
 #include "llvm/Support/raw_ostream.h"

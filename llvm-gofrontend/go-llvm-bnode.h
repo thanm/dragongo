@@ -87,8 +87,12 @@ enum VisitWhich {
   VisitExprs, VisitStmts, VisitAll
 };
 
-// This class acts as the parent class for Bexpression and Bstatement
-//
+// Class Bnode -- this class is not directly used or referred to in
+// gofrontend, but it acts as an abstract base for the Bexpression and
+// Bstatement classes. A given Bnode has zero or more Bnode children;
+// the number and type (expr or stmt) children are determined by
+// the Bnode flavor.
+
 class Bnode {
  public:
   virtual ~Bnode() { }
@@ -136,7 +140,7 @@ class Bnode {
   Bnode(const Bnode &src);
   SwitchDescriptor *getSwitchCases();
 
-  // exposed only for unit testing, not for general use.
+  // mainly for unit testing, not for general use.
   void removeAllChildren();
 
  private:
@@ -164,18 +168,20 @@ class Bnode {
 // This helper class handles construction for all Bnode objects.
 // Notes on storage allocation: ideally once an LLVM function has been
 // constructed and sent off to the back end for a given Go function,
-// we'd like to delete all of the Bexpression's used for the function.
-// Putting this into practice is tricky, since some Bexpressions (for
-// example, var and function addresses) wind up being held over and reused
-// else where (for example, in emitted GC descriptors). For the
-// moment we don't try to free Bexpressions, but we do free Bstatements.
+// we would want to delete all of the Bexpression's used by that
+// function before moving on to the next function. Putting this into
+// practice is tricky, however, since some Bexpressions (for example,
+// var exprs and function addresses) wind up being held over and
+// reused else where (for example, in emitted GC descriptors). For the
+// moment we don't try to free Bexpressions at intermediate points
+// in the compilation, but we do free Bstatements.
 
 class BnodeBuilder {
  public:
   BnodeBuilder();
   ~BnodeBuilder();
 
-  // Deletes all allocated data structures (Bnodes, switch descriptors)
+  // Deletes all allocated Bstatements (also switch descriptors)
   void freeStmts();
 
   // expressions
@@ -259,7 +265,9 @@ class BnodeBuilder {
   std::vector<SwitchDescriptor*> swcases_;
 };
 
-// A basic node walker.
+// This class helps automate walking of a Bnode subtree; it invokes
+// callbacks in the supplied visitor object at useful points during
+// the walk that is instigated by 'simple_walk_nodes' below.
 
 template<class Visitor>
 class SimpleNodeWalker {
@@ -268,7 +276,6 @@ public:
 
   void walk(Bnode *node) {
     assert(node);
-
 
     // pre-node hook
     visitor_.visitNodePre(node);
@@ -293,8 +300,8 @@ inline void simple_walk_nodes(Bnode *root, Visitor &vis) {
   walker.walk(root);
 }
 
-// A more complicated node walker that allows for replacement of
-// child nodes, plus stopping the walk if we decide to.
+// A more complicated node walker that allows for replacement of child
+// nodes, plus stopping the walk if the visitor so decides.
 
 template<class Visitor>
 class UpdatingNodeWalker {
