@@ -79,6 +79,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , addressSpace_(0)
     , traceLevel_(0)
     , checkIntegrity_(true)
+    , exportDataStarted_(false)
     , exportDataFinalized_(false)
     , TLI_(nullptr)
     , errorFunction_(nullptr)
@@ -2861,34 +2862,41 @@ void Llvm_backend::write_global_definitions(
 
 }
 
+
+// Post-process export data to escape quotes, etc, writing bytes
+// to the specified stringstream.
+static void postProcessExportDataChunk(const char *bytes,
+                                       unsigned int size,
+                                       std::stringstream &ss)
+{
+  std::map<char, std::string> rewrites = { { '\\', "\\\\" },
+                                           { '\0', "\\000" },
+                                           { '\n', "\\n" },
+                                           { '"', "\\\"" } };
+
+  for (unsigned idx = 0; idx < size; ++idx) {
+    const char byte = bytes[idx];
+    auto it = rewrites.find(byte);
+    if (it != rewrites.end())
+      ss << it->second;
+    else
+      ss << byte;
+  }
+}
+
+
+
 // Finalize export data.
 
 void Llvm_backend::finalizeExportData()
 {
   assert(! exportDataFinalized_);
   exportDataFinalized_ = true;
-  if (exportData_.get() == nullptr)
-    return;
-
-  std::map<char, std::string> rewrites = { { '\\', "\\\\" },
-                                           { '\0', "\\000" },
-                                           { '\n', "\\n" },
-                                           { '"', "\\\"" } };
-
-  const std::string raw = exportData_->str();
-  std::stringstream cooked;
-  for (auto &byte : raw) {
-    auto it = rewrites.find(byte);
-    if (it != rewrites.end())
-      cooked << it->second;
-    else
-      cooked << byte;
-  }
-  module().appendModuleInlineAsm(cooked.str());
+  module().appendModuleInlineAsm("\t.text\n");
 
   if (traceLevel() > 1) {
-    std::cerr << "Append export data:\n";
-    std::cerr << cooked.str() << "\n";
+    std::cerr << "Export data emitted:\n";
+    std::cerr << module().getModuleInlineAsm();
   }
 }
 
@@ -2897,18 +2905,22 @@ void Llvm_backend::finalizeExportData()
 
 void Llvm_backend::write_export_data(const char *bytes, unsigned int size)
 {
-  // FIXME: this is currently ELF-specific. Better to add real support
-  // in MC object file layer.
+  // FIXME: this is hacky and currently very ELF-specific. Better to
+  // add real support in MC object file layer.
 
   assert(! exportDataFinalized_);
 
-  if (exportData_.get() == nullptr) {
-    exportData_.reset(new std::stringstream);
-    (*exportData_.get()) << ".section \".go_export\",\"e\"\n";
+  if (! exportDataStarted_) {
+    exportDataStarted_ = true;
+    const char *preamble = "\t.section \".go_export\",\"e\",@progbits";
+    module().appendModuleInlineAsm(preamble);
   }
-  std::stringstream &ss = *exportData_.get();
-  for (unsigned idx = 0; idx < size; ++idx)
-    ss << bytes[idx];
+
+  std::stringstream ss;
+  ss << "\t.ascii \"";
+  postProcessExportDataChunk(bytes, size, ss);
+  ss << "\"\n";
+  module().appendModuleInlineAsm(ss.str());
 }
 
 

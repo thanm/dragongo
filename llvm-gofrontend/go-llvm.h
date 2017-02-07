@@ -644,9 +644,6 @@ private:
   Linemap *linemap_;
   std::unique_ptr<Linemap> ownLinemap_;
 
-  // Used to buffer up export data.
-  std::unique_ptr<std::stringstream> exportData_;
-
   // Address space designator for pointer types.
   unsigned addressSpace_;
 
@@ -657,7 +654,8 @@ private:
   // or statement pointed to by multiple parents).
   bool checkIntegrity_;
 
-  // Whether we've finalized export data for the module.
+  // Whether we've started / finalized export data for the module.
+  bool exportDataStarted_;
   bool exportDataFinalized_;
 
   // Target library info oracle
