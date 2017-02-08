@@ -21,6 +21,19 @@
 typedef llvm::SmallVector<llvm::Type *, 16> BuiltinEntryTypeVec;
 
 class Bfunction;
+class TypeManager;
+
+// An entry in a table of interesting builtin functions. A given entry
+// is either an intrinsic or a libcall builtin.
+//
+// Intrinsic functions can be generic or target-dependent; they are
+// predefined by LLVM, described in various tables (ex:
+// .../include/llvm/IR/Intrinsics.td).  Intrinsics can be polymorphic
+// (for example, accepting an arg of any float type).
+//
+// Libcall builtins can also be generic or target-dependent; they
+// are identified via enums defined in .../Analysis/TargetLibraryInfo.def).
+// These functions are not polymorphic.
 
 class BuiltinEntry {
  public:
@@ -61,10 +74,34 @@ class BuiltinEntry {
   BuiltinEntryTypeVec types_;
 };
 
+// This table contains entries for the builtin functions that may
+// be useful/needed for a go backend. The intent here is to generate
+// info about the functions at the point where this object is created,
+// then create the actual LLVM function lazily at the point where
+// there is a need to call the function.
+
 class BuiltinTable {
  public:
-  BuiltinTable() { }
+  BuiltinTable(TypeManager *tman) : tman_(tman) { }
   ~BuiltinTable() { }
+
+  void defineAllBuiltins();
+  BuiltinEntry *lookup(const std::string &name);
+
+ private:
+  void defineSyncFetchAndAddBuiltins();
+  void defineIntrinsicBuiltins();
+  void defineTrigBuiltins();
+
+  void defineLibcallBuiltin(const char *name, const char *libname,
+                            unsigned libfuncID, ...);
+
+  void defineLibcallBuiltin(const char *name, const char *libname,
+                            BuiltinEntryTypeVec &types,
+                            unsigned libfuncID);
+
+  void defineIntrinsicBuiltin(const char *name, const char *libname,
+                              unsigned intrinsicID, ...);
 
   void registerIntrinsicBuiltin(const char *name,
                                 const char *libname,
@@ -75,9 +112,8 @@ class BuiltinTable {
                               llvm::LibFunc libfunc,
                               const BuiltinEntryTypeVec &paramTypes);
 
-  BuiltinEntry *lookup(const std::string &name);
-
  private:
+  TypeManager *tman_;
   std::unordered_map<std::string, unsigned> tab_;
   std::vector<BuiltinEntry> entries_;
 };

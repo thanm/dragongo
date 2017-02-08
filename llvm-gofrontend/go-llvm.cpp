@@ -81,7 +81,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , exportDataStarted_(false)
     , exportDataFinalized_(false)
     , TLI_(nullptr)
-    , builtinTable_(new BuiltinTable)
+    , builtinTable_(new BuiltinTable(typeManager()))
     , errorFunction_(nullptr)
 {
   // If nobody passed in a linemap, create one for internal use.
@@ -127,7 +127,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
   errorVariable_.reset(
       new Bvariable(errorType(), loc, "", ErrorVar, false, nullptr));
 
-  defineAllBuiltins();
+  builtinTable_->defineAllBuiltins();
 }
 
 Llvm_backend::~Llvm_backend() {
@@ -135,6 +135,11 @@ Llvm_backend::~Llvm_backend() {
     delete kv.second;
   for (auto &bfcn : functions_)
     delete bfcn;
+}
+
+TypeManager *Llvm_backend::typeManager() const {
+  const TypeManager *tm = this;
+  return const_cast<TypeManager*>(tm);
 }
 
 void Llvm_backend::setTraceLevel(unsigned level)
@@ -348,48 +353,6 @@ int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index)
   return typeFieldOffset(btype, index);
 }
 
-void Llvm_backend::defineLibcallBuiltin(const char *name,
-                                        const char *libname,
-                                        unsigned libfunc, ...)
-{
-  va_list ap;
-  BuiltinEntryTypeVec types(0);
-  va_start(ap, libfunc);
-  llvm::Type *resultType = va_arg(ap, llvm::Type *);
-  types.push_back(resultType);
-  llvm::Type *parmType = va_arg(ap, llvm::Type *);
-  while (parmType) {
-    types.push_back(parmType);
-    parmType = va_arg(ap, llvm::Type *);
-  }
-  llvm::LibFunc lf = static_cast<llvm::LibFunc>(libfunc);
-  builtinTable_->registerLibCallBuiltin(name, libname, lf, types);
-}
-
-void Llvm_backend::defineLibcallBuiltin(const char *name, const char *libname,
-                                        const std::vector<llvm::Type *> &types,
-                                        unsigned libfunc) {
-  BuiltinEntryTypeVec ptypes;
-  for (auto &t : types)
-    ptypes.push_back(t);
-  llvm::LibFunc lf = static_cast<llvm::LibFunc>(libfunc);
-  builtinTable_->registerLibCallBuiltin(name, libname, lf, ptypes);
-}
-
-void Llvm_backend::defineIntrinsicBuiltin(const char *name, const char *libname,
-                                          unsigned intrinsicID, ...) {
-  va_list ap;
-  BuiltinEntryTypeVec overloadTypes;
-  va_start(ap, intrinsicID);
-  llvm::Type *oType = va_arg(ap, llvm::Type *);
-  while (oType) {
-    overloadTypes.push_back(oType);
-    oType = va_arg(ap, llvm::Type *);
-  }
-  llvm::Intrinsic::ID iid = static_cast<llvm::Intrinsic::ID>(intrinsicID);
-  builtinTable_->registerIntrinsicBuiltin(name, libname, iid, overloadTypes);
-}
-
 Bfunction *Llvm_backend::defineBuiltinFcn(const std::string &name,
                                           llvm::Function *fcn)
 {
@@ -404,14 +367,6 @@ Bfunction *Llvm_backend::defineBuiltinFcn(const std::string &name,
 
 // Look up a named built-in function in the current backend implementation.
 // Returns NULL if no built-in function by that name exists.
-
-// Notes:
-// - LLVM makes a distinction between libcalls (such as
-//   "__sync_fetch_and_add_1") and intrinsics (such as
-//   "__builtin_expect" or "__builtin_trap"); the former
-//   are target-independent and the latter are target-dependent
-// - intrinsics with the no-return property (such as
-//   "__builtin_trap" will already be set up this way
 
 Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
 
@@ -474,140 +429,6 @@ Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
   be->setBfunction(bf);
 
   return bf;
-}
-
-void Llvm_backend::defineAllBuiltins() {
-  defineSyncFetchAndAddBuiltins();
-  defineIntrinsicBuiltins();
-  defineTrigBuiltins();
-}
-
-void Llvm_backend::defineIntrinsicBuiltins() {
-  defineIntrinsicBuiltin("__builtin_trap", nullptr, llvm::Intrinsic::trap,
-                         nullptr);
-
-  defineIntrinsicBuiltin("__builtin_return_address", nullptr,
-                         llvm::Intrinsic::returnaddress, llvmPtrType(),
-                         llvmInt32Type(), nullptr);
-
-  defineIntrinsicBuiltin("__builtin_frame_address", nullptr,
-                         llvm::Intrinsic::frameaddress, llvmPtrType(),
-                         llvmInt32Type(), nullptr);
-
-  defineIntrinsicBuiltin("__builtin_expect", nullptr, llvm::Intrinsic::expect,
-                         llvmIntegerType(), nullptr);
-
-  defineLibcallBuiltin("__builtin_memcmp", "memcmp",
-                       llvm::LibFunc::LibFunc_memcmp,
-                       llvmInt32Type(), llvmPtrType(), llvmPtrType(),
-                       llvmSizeType(), nullptr);
-
-  // go runtime refers to this intrinsic as "ctz", however the LLVM
-  // equivalent is named "cttz".
-  defineIntrinsicBuiltin("__builtin_ctz", "ctz", llvm::Intrinsic::cttz,
-                         llvmIntegerType(), nullptr);
-
-  // go runtime refers to this intrinsic as "ctzll", however the LLVM
-  // equivalent is named "cttz".
-  defineIntrinsicBuiltin("__builtin_ctzll", "ctzll", llvm::Intrinsic::cttz,
-                         llvmInt64Type(), nullptr);
-
-  // go runtime refers to this intrinsic as "bswap32", however the LLVM
-  // equivalent is named just "bswap"
-  defineIntrinsicBuiltin("__builtin_bswap32", "bswap32", llvm::Intrinsic::bswap,
-                         llvmInt32Type(), nullptr);
-
-  // go runtime refers to this intrinsic as "bswap64", however the LLVM
-  // equivalent is named just "bswap"
-  defineIntrinsicBuiltin("__builtin_bswap64", "bswap64", llvm::Intrinsic::bswap,
-                         llvmInt64Type(), nullptr);
-}
-
-namespace {
-
-typedef enum {
-  OneArg = 0,  // takes form "double foo(double)"
-  TwoArgs = 1, // takes form "double bar(double, double)"
-  TwoMixed = 2 // takes form "double bar(double, int)"
-} mflav;
-
-typedef struct {
-  const char *name;
-  mflav nargs;
-  llvm::LibFunc lf;
-} mathfuncdesc;
-}
-
-void Llvm_backend::defineTrigBuiltins() {
-  const std::vector<llvm::Type *> onearg_double = {llvmDoubleType(),
-                                                   llvmDoubleType()};
-  const std::vector<llvm::Type *> onearg_long_double = {llvmLongDoubleType(),
-                                                        llvmLongDoubleType()};
-  const std::vector<llvm::Type *> twoargs_double = {
-      llvmDoubleType(), llvmDoubleType(), llvmDoubleType()};
-  const std::vector<llvm::Type *> twoargs_long_double = {
-      llvmLongDoubleType(), llvmLongDoubleType(), llvmLongDoubleType()};
-  const std::vector<llvm::Type *> mixed_double = {
-      llvmDoubleType(), llvmDoubleType(), llvmIntegerType()};
-  const std::vector<llvm::Type *> mixed_long_double = {
-      llvmLongDoubleType(), llvmLongDoubleType(), llvmIntegerType()};
-  const std::vector<const std::vector<llvm::Type *> *> signatures = {
-      &onearg_double, &twoargs_double, &mixed_double};
-  const std::vector<const std::vector<llvm::Type *> *> lsignatures = {
-      &onearg_long_double, &twoargs_long_double, &mixed_long_double};
-
-  static const mathfuncdesc funcs[] = {
-      {"acos", OneArg, llvm::LibFunc::LibFunc_acos},
-      {"asin", OneArg, llvm::LibFunc::LibFunc_asin},
-      {"atan", OneArg, llvm::LibFunc::LibFunc_atan},
-      {"atan2", TwoArgs, llvm::LibFunc::LibFunc_atan2},
-      {"ceil", OneArg, llvm::LibFunc::LibFunc_ceil},
-      {"cos", OneArg, llvm::LibFunc::LibFunc_cos},
-      {"exp", OneArg, llvm::LibFunc::LibFunc_exp},
-      {"expm1", OneArg, llvm::LibFunc::LibFunc_expm1},
-      {"fabs", OneArg, llvm::LibFunc::LibFunc_fabs},
-      {"floor", OneArg, llvm::LibFunc::LibFunc_floor},
-      {"fmod", TwoArgs, llvm::LibFunc::LibFunc_fmod},
-      {"log", OneArg, llvm::LibFunc::LibFunc_log},
-      {"log1p", OneArg, llvm::LibFunc::LibFunc_log1p},
-      {"log10", OneArg, llvm::LibFunc::LibFunc_log10},
-      {"log2", OneArg, llvm::LibFunc::LibFunc_log2},
-      {"sin", OneArg, llvm::LibFunc::LibFunc_sin},
-      {"sqrt", OneArg, llvm::LibFunc::LibFunc_sqrt},
-      {"tan", OneArg, llvm::LibFunc::LibFunc_tan},
-      {"trunc", OneArg, llvm::LibFunc::LibFunc_trunc},
-      {"ldexp", TwoMixed, llvm::LibFunc::LibFunc_trunc},
-  };
-
-  const unsigned nfuncs = sizeof(funcs) / sizeof(mathfuncdesc);
-  for (unsigned idx = 0; idx < nfuncs; ++idx) {
-    const mathfuncdesc &d = funcs[idx];
-    char bbuf[128];
-    char lbuf[128];
-
-    sprintf(bbuf, "__builtin_%s", d.name);
-    const std::vector<llvm::Type *> *sig = signatures[d.nargs];
-    defineLibcallBuiltin(bbuf, d.name, *sig, d.lf);
-    sprintf(lbuf, "%sl", d.name);
-    sprintf(bbuf, "__builtin_%s", lbuf);
-    const std::vector<llvm::Type *> *lsig = lsignatures[d.nargs];
-    defineLibcallBuiltin(bbuf, lbuf, *lsig, d.lf);
-  }
-}
-
-void Llvm_backend::defineSyncFetchAndAddBuiltins() {
-  std::vector<unsigned> sizes = {1, 2, 4, 8};
-  for (auto sz : sizes) {
-    char nbuf[64];
-    sprintf(nbuf, "__sync_fetch_and_add_%u", sz);
-    llvm::Type *it = llvm::IntegerType::get(context_, sz << 3);
-    llvm::PointerType *pit = llvm::PointerType::get(it, addressSpace_);
-    defineLibcallBuiltin(nbuf, nullptr,  // name, libname
-                         BuiltinEntry::NotInTargetLib, // Libfunc ID
-                         llvmVoidType(),  // result type
-                         pit, it,        // param types
-                         nullptr);
-  }
 }
 
 bool Llvm_backend::moduleScopeValue(llvm::Value *val, Btype *btype) const

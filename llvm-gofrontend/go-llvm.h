@@ -321,6 +321,9 @@ public:
   llvm::Module &module() { return *module_; }
   const llvm::DataLayout &datalayout() { return *datalayout_; }
 
+  // Type manager functionality
+  TypeManager *typeManager() const;
+
   // Run the module verifier.
   void verifyModule();
 

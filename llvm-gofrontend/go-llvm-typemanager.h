@@ -115,6 +115,10 @@ class TypeManager {
   llvm::Type *llvmDoubleType() const { return llvmDoubleType_; }
   llvm::Type *llvmLongDoubleType() const { return llvmLongDoubleType_; }
 
+  // Context + address space.
+  llvm::LLVMContext &context() const { return context_; }
+  unsigned addressSpace() const { return addressSpace_; }
+
   // Go string type
   Btype *stringType() const { return stringType_; }
 

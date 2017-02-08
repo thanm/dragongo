@@ -25,8 +25,7 @@ TEST(Sha1Tests, BasicSha1Test1) {
   std::string raw = sh1->finish();
   std::string hexed = llvm::toHex(raw);
   EXPECT_EQ(hexed, "9F74809A2EE7607B16FCC70D9399A4DE9725A727");
-  EXPECT_EQ(hexed.size(), 40);
-
+  EXPECT_EQ(hexed.size(), 40ul);
 }
 
 TEST(Sha1Tests, BasicSha1Test2) {
@@ -36,7 +35,7 @@ TEST(Sha1Tests, BasicSha1Test2) {
   std::string raw = sh1->finish();
   std::string hexed = llvm::toHex(raw);
   EXPECT_EQ(hexed, "41A42F61DB4BA8089B20E45CFB685FADEE00F4D4");
-  EXPECT_EQ(hexed.size(), 40);
+  EXPECT_EQ(hexed.size(), 40ul);
 }
 
 }
