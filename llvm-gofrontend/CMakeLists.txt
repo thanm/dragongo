@@ -36,6 +36,7 @@ go-llvm-genblocks.cpp
 go-llvm-linemap.cpp
 go-llvm-tree-integrity.cpp
 go-llvm-typemanager.cpp
+go-llvm-builtins.cpp
 go-llvm.cpp
 go-sha1.cpp
 )

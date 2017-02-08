@@ -50,6 +50,8 @@ class Value;
 class raw_ostream;
 }
 
+class BuiltinTable;
+
 #include "llvm/IR/GlobalValue.h"
 
 //
@@ -365,9 +367,9 @@ public:
   Bexpression *errorExpression() const { return errorExpression_; }
   Bstatement *errorStatement() const { return errorStatement_; }
 
-  // add a builtin function definition
-  void defineBuiltinFcn(const char *name, const char *libname,
-                        llvm::Function *fcn);
+  // create a Bfunction for a predefined builtin function with specified name
+  Bfunction *defineBuiltinFcn(const std::string &name,
+                              llvm::Function *fcn);
 
   // varargs convenience wrapper for define_builtin_fcn.
   // creates a libcall builtin. If the builtin being created is defined
@@ -661,8 +663,8 @@ private:
   // Target library info oracle
   llvm::TargetLibraryInfo *TLI_;
 
-  // maps name to builtin function
-  std::unordered_map<std::string, Bfunction *> builtinMap_;
+  // maps name to entry storing info on builtin function
+  std::unique_ptr<BuiltinTable> builtinTable_;
 
   // Error function
   std::unique_ptr<Bfunction> errorFunction_;

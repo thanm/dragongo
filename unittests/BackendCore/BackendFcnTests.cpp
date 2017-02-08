@@ -141,7 +141,7 @@ TEST(BackendFcnTests, BuiltinFunctionsTrig) {
     sprintf(nbuf, "__builtin_%s", fname.c_str());
     Bfunction *bifcn = be->lookup_builtin(nbuf);
     EXPECT_TRUE(bifcn != NULL);
-    EXPECT_TRUE(bifcn != bfcn);
+    EXPECT_TRUE(bifcn == bfcn);
 
     // long builtin variant
     sprintf(nbuf, "__builtin_%sl", fname.c_str());

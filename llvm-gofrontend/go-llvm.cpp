@@ -13,6 +13,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "go-llvm.h"
+#include "go-llvm-builtins.h"
 #include "backend.h"
 #include "go-c.h"
 #include "go-system.h"
@@ -66,8 +67,6 @@ class BexprLIRBuilder :
 #define CHKTREE(x) if (checkIntegrity_ && traceLevel()) \
       enforceTreeIntegrity(x)
 
-static const auto NotInTargetLib = llvm::LibFunc::NumLibFuncs;
-
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
                            llvm::Module *module,
                            Linemap *linemap)
@@ -82,6 +81,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , exportDataStarted_(false)
     , exportDataFinalized_(false)
     , TLI_(nullptr)
+    , builtinTable_(new BuiltinTable)
     , errorFunction_(nullptr)
 {
   // If nobody passed in a linemap, create one for internal use.
@@ -131,13 +131,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
 }
 
 Llvm_backend::~Llvm_backend() {
-  //for (auto &expr : expressions_)
-  //  delete expr;
-  //for (auto &kv : valueExprmap_)
-  //  delete kv.second;
   for (auto &kv : valueVarMap_)
-    delete kv.second;
-  for (auto &kv : builtinMap_)
     delete kv.second;
   for (auto &bfcn : functions_)
     delete bfcn;
@@ -344,18 +338,22 @@ int64_t Llvm_backend::type_alignment(Btype *btype) {
   return typeAlignment(btype);
 }
 
-int64_t Llvm_backend::type_field_alignment(Btype *btype) {
+int64_t Llvm_backend::type_field_alignment(Btype *btype)
+{
   return typeFieldAlignment(btype);
 }
 
-int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index) {
+int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index)
+{
   return typeFieldOffset(btype, index);
 }
 
-void Llvm_backend::defineLibcallBuiltin(const char *name, const char *libname,
-                                        unsigned libfunc, ...) {
+void Llvm_backend::defineLibcallBuiltin(const char *name,
+                                        const char *libname,
+                                        unsigned libfunc, ...)
+{
   va_list ap;
-  std::vector<llvm::Type *> types;
+  BuiltinEntryTypeVec types(0);
   va_start(ap, libfunc);
   llvm::Type *resultType = va_arg(ap, llvm::Type *);
   types.push_back(resultType);
@@ -364,47 +362,24 @@ void Llvm_backend::defineLibcallBuiltin(const char *name, const char *libname,
     types.push_back(parmType);
     parmType = va_arg(ap, llvm::Type *);
   }
-  defineLibcallBuiltin(name, libname, types, libfunc);
+  llvm::LibFunc lf = static_cast<llvm::LibFunc>(libfunc);
+  builtinTable_->registerLibCallBuiltin(name, libname, lf, types);
 }
 
 void Llvm_backend::defineLibcallBuiltin(const char *name, const char *libname,
                                         const std::vector<llvm::Type *> &types,
                                         unsigned libfunc) {
-  llvm::Type *resultType = types[0];
-  llvm::SmallVector<llvm::Type *, 16> ptypes(0);
-  for (unsigned idx = 1; idx < types.size(); ++idx)
-    ptypes.push_back(types[idx]);
-  const bool isVarargs = false;
-  llvm::FunctionType *ft =
-      llvm::FunctionType::get(resultType, ptypes, isVarargs);
+  BuiltinEntryTypeVec ptypes;
+  for (auto &t : types)
+    ptypes.push_back(t);
   llvm::LibFunc lf = static_cast<llvm::LibFunc>(libfunc);
-  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
-  llvm::Function *fcn =
-      llvm::Function::Create(ft, plinkage, name, module_);
-
-  // FIXME: once we have a pass manager set up for the back end, we'll
-  // want to turn on this code, since it will be helpful to catch
-  // errors/mistakes. For the time being it can't be turned on (not
-  // pass manager is set up).
-  if (TLI_ && lf != llvm::LibFunc::NumLibFuncs) {
-
-    // Verify that the function is available on this target.
-    assert(TLI_->has(lf));
-
-    // Verify that the name and type we've computer so far matches up
-    // with how LLVM views the routine. For example, if we are trying
-    // to create a version of memcmp() that takes a single boolean as
-    // an argument, that's going to be a show-stopper type problem.
-    assert(TLI_->getLibFunc(*fcn, lf));
-  }
-
-  defineBuiltinFcn(name, libname, fcn);
+  builtinTable_->registerLibCallBuiltin(name, libname, lf, ptypes);
 }
 
 void Llvm_backend::defineIntrinsicBuiltin(const char *name, const char *libname,
                                           unsigned intrinsicID, ...) {
   va_list ap;
-  llvm::SmallVector<llvm::Type *, 16> overloadTypes;
+  BuiltinEntryTypeVec overloadTypes;
   va_start(ap, intrinsicID);
   llvm::Type *oType = va_arg(ap, llvm::Type *);
   while (oType) {
@@ -412,17 +387,24 @@ void Llvm_backend::defineIntrinsicBuiltin(const char *name, const char *libname,
     oType = va_arg(ap, llvm::Type *);
   }
   llvm::Intrinsic::ID iid = static_cast<llvm::Intrinsic::ID>(intrinsicID);
-  llvm::Function *fcn =
-      llvm::Intrinsic::getDeclaration(module_, iid, overloadTypes);
-  assert(fcn != nullptr);
-  defineBuiltinFcn(name, libname, fcn);
+  builtinTable_->registerIntrinsicBuiltin(name, libname, iid, overloadTypes);
 }
 
-// Create a BType function type based on an equivalent LLVM function type.
+Bfunction *Llvm_backend::defineBuiltinFcn(const std::string &name,
+                                          llvm::Function *fcn)
+{
+  llvm::PointerType *llpft =
+      llvm::cast<llvm::PointerType>(fcn->getType());
+  llvm::FunctionType *llft =
+      llvm::cast<llvm::FunctionType>(llpft->getElementType());
+  BFunctionType *fcnType = makeAuxFcnType(llft);
+  Bfunction *bfunc = new Bfunction(fcn, fcnType, name);
+  return bfunc;
+}
 
-//
+// Look up a named built-in function in the current backend implementation.
+// Returns NULL if no built-in function by that name exists.
 
-// Define name -> fcn mapping for a builtin.
 // Notes:
 // - LLVM makes a distinction between libcalls (such as
 //   "__sync_fetch_and_add_1") and intrinsics (such as
@@ -431,32 +413,63 @@ void Llvm_backend::defineIntrinsicBuiltin(const char *name, const char *libname,
 // - intrinsics with the no-return property (such as
 //   "__builtin_trap" will already be set up this way
 
-void Llvm_backend::defineBuiltinFcn(const char *name, const char *libname,
-                                    llvm::Function *fcn)
-{
-  llvm::PointerType *llpft =
-      llvm::cast<llvm::PointerType>(fcn->getType());
-  llvm::FunctionType *llft =
-      llvm::cast<llvm::FunctionType>(llpft->getElementType());
-  BFunctionType *fcnType = makeAuxFcnType(llft);
-  Bfunction *bfunc = new Bfunction(fcn, fcnType, name);
-  assert(builtinMap_.find(name) == builtinMap_.end());
-  builtinMap_[name] = bfunc;
-  if (libname) {
-    Bfunction *bfunc = new Bfunction(fcn, fcnType, libname);
-    assert(builtinMap_.find(libname) == builtinMap_.end());
-    builtinMap_[libname] = bfunc;
-  }
-}
-
-// Look up a named built-in function in the current backend implementation.
-// Returns NULL if no built-in function by that name exists.
-
 Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
-  auto it = builtinMap_.find(name);
-  if (it == builtinMap_.end())
+
+  // Do we have an entry at all for this builtin?
+  BuiltinEntry *be = builtinTable_->lookup(name);
+  if (!be)
     return nullptr;
-  return it->second;
+
+  // We have an entry -- have we materialized a Bfunction for it yet?
+  Bfunction *bf = be->bfunction();
+  if (bf != nullptr)
+    return bf;
+
+  // Materialize a Bfunction for the builtin
+  if (be->flavor() == BuiltinEntry::IntrinsicBuiltin) {
+    llvm::Function *fcn =
+        llvm::Intrinsic::getDeclaration(module_, be->intrinsicId(),
+                                        be->types());
+    assert(fcn != nullptr);
+    bf = defineBuiltinFcn(be->name(), fcn);
+  } else {
+    assert(be->flavor() == BuiltinEntry::LibcallBuiltin);
+
+    const BuiltinEntryTypeVec &types = be->types();
+    llvm::Type *resultType = types[0];
+    BuiltinEntryTypeVec ptypes(0);
+    for (unsigned idx = 1; idx < types.size(); ++idx)
+      ptypes.push_back(types[idx]);
+    const bool isVarargs = false;
+    llvm::FunctionType *ft =
+        llvm::FunctionType::get(resultType, ptypes, isVarargs);
+    llvm::LibFunc lf = be->libfunc();
+    llvm::GlobalValue::LinkageTypes plinkage =
+        llvm::GlobalValue::ExternalLinkage;
+    llvm::Function *fcn =
+        llvm::Function::Create(ft, plinkage, be->name(), module_);
+
+    // FIXME: once we have a pass manager set up for the back end, we'll
+    // want to turn on this code, since it will be helpful to catch
+    // errors/mistakes. For the time being it can't be turned on (not
+    // pass manager is set up).
+    if (TLI_ && lf != llvm::LibFunc::NumLibFuncs) {
+
+      // Verify that the function is available on this target.
+      assert(TLI_->has(lf));
+
+      // Verify that the name and type we've computer so far matches up
+      // with how LLVM views the routine. For example, if we are trying
+      // to create a version of memcmp() that takes a single boolean as
+      // an argument, that's going to be a show-stopper type problem.
+      assert(TLI_->getLibFunc(*fcn, lf));
+    }
+
+    bf = defineBuiltinFcn(be->name(), fcn);
+  }
+  be->setBfunction(bf);
+
+  return bf;
 }
 
 void Llvm_backend::defineAllBuiltins() {
@@ -586,7 +599,7 @@ void Llvm_backend::defineSyncFetchAndAddBuiltins() {
     llvm::Type *it = llvm::IntegerType::get(context_, sz << 3);
     llvm::PointerType *pit = llvm::PointerType::get(it, addressSpace_);
     defineLibcallBuiltin(nbuf, nullptr,  // name, libname
-                         NotInTargetLib, // Libfunc ID
+                         BuiltinEntry::NotInTargetLib, // Libfunc ID
                          llvmVoidType(),  // result type
                          pit, it,        // param types
                          nullptr);
