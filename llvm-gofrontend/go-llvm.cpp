@@ -430,6 +430,7 @@ Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
     llvm::Function *fcn =
         llvm::Intrinsic::getDeclaration(module_, be->intrinsicId(),
                                         be->types());
+
     assert(fcn != nullptr);
     bf = defineBuiltinFcn(be->name(), fcn);
   } else {
@@ -448,6 +449,9 @@ Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
         llvm::GlobalValue::ExternalLinkage;
     llvm::Function *fcn =
         llvm::Function::Create(ft, plinkage, be->name(), module_);
+
+    // FIXME: add attributes this function? Such as maybe
+    // llvm::Attribute::ArgMemOnly, llvm::Attribute::ReadOnly?
 
     // FIXME: once we have a pass manager set up for the back end, we'll
     // want to turn on this code, since it will be helpful to catch
@@ -2208,9 +2212,10 @@ Llvm_backend::makeModuleVar(Btype *btype,
   // FIXME: add DIGlobalVariable to debug info for this variable
 
   llvm::Constant *init = nullptr;
+  std::string gname(asm_name.empty() ? name : asm_name);
   llvm::GlobalVariable *glob = new llvm::GlobalVariable(
       module(), btype->type(), isConstant == MV_Constant,
-      linkage, init, asm_name);
+      linkage, init, gname);
   if (isHiddenVisibility == MV_HiddenVisibility)
     glob->setVisibility(llvm::GlobalValue::HiddenVisibility);
   if (alignment)
@@ -2525,6 +2530,12 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   if (!is_inlinable)
     fcn->addFnAttr(llvm::Attribute::NoInline);
 
+  // split-stack or nosplit
+  if (! disable_split_stack)
+    fcn->addFnAttr("split-stack");
+  else
+    bfunc->setSplitStack(Bfunction::NoSplit);
+
   BFunctionType *fcnType = fntype->castToBFunctionType();
   assert(fcnType);
   Bfunction *bfunc = new Bfunction(fcn, fcnType, asm_name);
@@ -2535,9 +2546,6 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   // to look a little more closely at how -ffunction-sections is implemented
   // for clang/LLVM.
   assert(!in_unique_section || is_declaration);
-
-  if (disable_split_stack)
-    bfunc->setSplitStack(Bfunction::NoSplit);
 
   functions_.push_back(bfunc);
 
