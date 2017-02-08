@@ -2522,6 +2522,8 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
   llvm::Function *fcn = llvm::Function::Create(fty, linkage, fn, module_);
 
+  fcn->addFnAttr("disable-tail-calls", "true");
+
   // visibility
   if (!is_visible)
     fcn->setVisibility(llvm::GlobalValue::HiddenVisibility);
@@ -2530,15 +2532,15 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   if (!is_inlinable)
     fcn->addFnAttr(llvm::Attribute::NoInline);
 
+  BFunctionType *fcnType = fntype->castToBFunctionType();
+  assert(fcnType);
+  Bfunction *bfunc = new Bfunction(fcn, fcnType, asm_name);
+
   // split-stack or nosplit
   if (! disable_split_stack)
     fcn->addFnAttr("split-stack");
   else
     bfunc->setSplitStack(Bfunction::NoSplit);
-
-  BFunctionType *fcnType = fntype->castToBFunctionType();
-  assert(fcnType);
-  Bfunction *bfunc = new Bfunction(fcn, fcnType, asm_name);
 
   // TODO: unique section support. llvm::GlobalObject has support for
   // setting COMDAT groups and section names, but nothing to manage how

@@ -565,7 +565,7 @@ TEST(BackendExprTests, TestConditionalExpression1) {
   h.mkExprStmt(condex);
 
   const char *exp = R"RAW_RESULT(
-      define void @foo() {
+      define void @foo() #0 {
       entry:
         %a = alloca i64
         %b = alloca i64
@@ -619,7 +619,7 @@ TEST(BackendExprTests, TestConditionalExpression2) {
   h.mkExprStmt(condex);
 
   const char *exp = R"RAW_RESULT(
-      define void @foo() {
+      define void @foo() #0 {
       entry:
         %a = alloca i64
         %tmpv.0 = alloca i64
@@ -669,7 +669,7 @@ TEST(BackendExprTests, TestCompoundExpression) {
   h.addStmt(es);
 
   const char *exp = R"RAW_RESULT(
-      define i64 @foo(i32 %param1, i32 %param2, i64* %param3) {
+      define i64 @foo(i32 %param1, i32 %param2, i64* %param3) #0 {
       entry:
         %param1.addr = alloca i32
         %param2.addr = alloca i32
@@ -720,7 +720,7 @@ TEST(BackendExprTests, TestLhsConditionalExpression) {
   h.mkAssign(dex, mkInt32Const(be, 7));
 
   const char *exp = R"RAW_RESULT(
-      define void @foo(i32* %p0, i32* %p1) {
+      define void @foo(i32* %p0, i32* %p1) #0 {
       entry:
         %p0.addr = alloca i32*
         %p1.addr = alloca i32*
