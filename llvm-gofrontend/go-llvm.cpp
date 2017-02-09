@@ -24,6 +24,9 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DebugInfo.h"
+#include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Intrinsics.h"
@@ -32,6 +35,7 @@
 #include "llvm/IR/Type.h"
 #include "llvm/IR/Value.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/FileSystem.h"
 
 // Generic "no insert" builder
 typedef llvm::IRBuilder<> LIRBuilder;
@@ -69,11 +73,12 @@ class BexprLIRBuilder :
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
                            llvm::Module *module,
-                           Linemap *linemap)
+                           Llvm_linemap *linemap)
     : TypeManager(context)
     , context_(context)
     , module_(module)
     , datalayout_(module ? &module->getDataLayout() : nullptr)
+    , diCompileUnit_(nullptr)
     , linemap_(linemap)
     , addressSpace_(0)
     , traceLevel_(0)
@@ -86,7 +91,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
 {
   // If nobody passed in a linemap, create one for internal use.
   if (!linemap_) {
-    ownLinemap_.reset(go_get_linemap());
+    ownLinemap_.reset(new Llvm_linemap());
     linemap_ = ownLinemap_.get();
   }
 
@@ -127,6 +132,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
   errorVariable_.reset(
       new Bvariable(errorType(), loc, "", ErrorVar, false, nullptr));
 
+  // Initialize machinery for builtins
   builtinTable_->defineAllBuiltins();
 }
 
@@ -135,6 +141,48 @@ Llvm_backend::~Llvm_backend() {
     delete kv.second;
   for (auto &bfcn : functions_)
     delete bfcn;
+}
+
+llvm::DIScope *Llvm_backend::currentDIScope()
+{
+  if (! diCompileUnit_)
+    setupDICompUnit();
+  return diScopeStack_.back();
+}
+
+llvm::DIScope *Llvm_backend::popDIScope()
+{
+  assert(diScopeStack_.size());
+  llvm::DIScope *popped = diScopeStack_.back();
+  diScopeStack_.pop_back();
+  return popped;
+}
+
+void Llvm_backend::pushDIScope(llvm::DIScope *scope)
+{
+  assert(scope);
+  diScopeStack_.push_back(scope);
+}
+
+void Llvm_backend::setupDICompUnit()
+{
+  // Create debug info builder
+  dibuilder_.reset(new llvm::DIBuilder(*module_));
+
+  // Create compile unit
+  llvm::SmallString<256> currentDir;
+  llvm::sys::fs::current_path(currentDir);
+  auto primaryFile =
+      dibuilder_->createFile(linemap_->get_initial_file(), currentDir);
+  bool isOptimized = true;
+  std::string compileFlags; // FIXME
+  unsigned runtimeVersion = 0; // not sure what would be for Go
+  diCompileUnit_ =
+      dibuilder_->createCompileUnit(llvm::dwarf::DW_LANG_Go, primaryFile,
+                                    "llvm-goparse", isOptimized,
+                                    compileFlags, runtimeVersion);
+
+  pushDIScope(diCompileUnit_);
 }
 
 TypeManager *Llvm_backend::typeManager() const {
@@ -2370,6 +2418,21 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   // for clang/LLVM.
   assert(!in_unique_section || is_declaration);
 
+#if 0
+  // Debug info setup
+  llvm::DISubroutineType *dst = fcnType->diType();
+  unsigned fcnLine = linemap()->location_line(location);
+  bool isLocalToUnit = false; // FIXME -- look at exported/non-exported
+  bool isDefinition = true;
+  unsigned scopeLine = fcnLine; // FIXME -- determine correct value here
+  auto difunc =
+      dibuilder_->createFunction(currentDIScope(), name, asm_name,
+                                diFileFromLocation(location),
+                                fcnLine, dst, isLocalToUnit,
+                                isDefinition, scopeLine);
+  pushDIScope(scope);
+#endif
+
   functions_.push_back(bfunc);
 
   return bfunc;
@@ -2663,6 +2726,9 @@ bool Llvm_backend::function_set_body(Bfunction *function,
     code_stmt->dump();
   }
 
+  // Trigger DI building (temp hack)
+  currentDIScope();
+
   // Sanity checks
   if (checkIntegrity_)
     enforceTreeIntegrity(code_stmt);
@@ -2706,7 +2772,6 @@ void Llvm_backend::write_global_definitions(
 
 }
 
-
 // Post-process export data to escape quotes, etc, writing bytes
 // to the specified stringstream.
 static void postProcessExportDataChunk(const char *bytes,
@@ -2727,8 +2792,6 @@ static void postProcessExportDataChunk(const char *bytes,
       ss << byte;
   }
 }
-
-
 
 // Finalize export data.
 

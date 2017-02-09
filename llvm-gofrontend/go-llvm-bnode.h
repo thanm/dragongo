@@ -15,7 +15,7 @@
 #define LLVMGOFRONTEND_BNODE_H
 
 // Currently these need to be included before backend.h
-#include "go-linemap.h"
+#include "go-llvm-linemap.h"
 #include "go-location.h"
 #include "go-llvm-btype.h"
 
@@ -106,11 +106,11 @@ class Bnode {
   void dump();
 
   // dump with source line info
-  void srcDump(Linemap *);
+  void srcDump(Llvm_linemap *);
 
   // dump to raw_ostream
   void osdump(llvm::raw_ostream &os, unsigned ilevel = 0,
-              Linemap *linemap = nullptr, bool terse = false);
+              Llvm_linemap *linemap = nullptr, bool terse = false);
 
   // Delete some or all or this Bnode and its component
   // pieces. Deallocates just the Bnode, its contained instructions,

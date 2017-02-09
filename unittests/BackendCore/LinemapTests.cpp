@@ -26,10 +26,12 @@ TEST(LinemapTests, BasicLinemap) {
   EXPECT_TRUE(ul.handle() != pdl.handle());
   EXPECT_EQ(lm->to_string(ul), "");
   EXPECT_EQ(lm->to_string(pdl), "");
+  EXPECT_EQ(lm->get_initial_file(), "");
 
   lm->start_file("foo.go", 10);
   EXPECT_EQ(lm->to_string(ul), "");
   EXPECT_EQ(lm->to_string(pdl), "");
+  EXPECT_EQ(lm->get_initial_file(), "foo.go");
   Location f10 = lm->get_location(1);
   lm->start_line(12, 256);
   Location f12 = lm->get_location(1);
@@ -42,11 +44,15 @@ TEST(LinemapTests, BasicLinemap) {
   EXPECT_NE(f12x.handle(), f12.handle()); // no line/col hashing currently
   EXPECT_EQ(lm->to_string(f12x), lm->to_string(f12));
   EXPECT_EQ(lm->location_line(f10), 10);
+  EXPECT_EQ(lm->location_file(f10), std::string("foo.go"));
   EXPECT_EQ(lm->location_line(f12), 12);
+  EXPECT_EQ(lm->location_column(f12), 1u);
+  EXPECT_EQ(lm->location_column(f12c5), 5u);
   EXPECT_EQ(lm->location_line(f12x), 12);
   EXPECT_EQ(lm->location_line(f12c5), 12);
 
   lm->start_file("blix.go", 89);
+  EXPECT_EQ(lm->get_initial_file(), "foo.go");
   lm->start_file("/tmp/bar.go", 1);
   Location b1 = lm->get_location(1);
   lm->start_line(22, 0);

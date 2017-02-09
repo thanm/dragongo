@@ -29,7 +29,7 @@ Bstatement::~Bstatement()
 {
 }
 
-void Bstatement::srcDump(Linemap *linemap)
+void Bstatement::srcDump(Llvm_linemap *linemap)
 {
   std::string s;
   llvm::raw_string_ostream os(s);

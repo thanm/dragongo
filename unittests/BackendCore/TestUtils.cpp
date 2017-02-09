@@ -496,6 +496,10 @@ FcnTestHarness::FcnTestHarness(const char *fcnName)
     entryBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
     curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
   }
+
+  // establish initial file so as to make verifier happy
+  be_->linemap()->start_file("unit_testing.go", 1);
+  be_->linemap()->get_location(1);
 }
 
 FcnTestHarness::~FcnTestHarness()

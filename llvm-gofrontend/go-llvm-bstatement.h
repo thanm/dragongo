@@ -15,7 +15,7 @@
 #define LLVMGOFRONTEND_GO_LLVM_BSTATEMENT_H
 
 // Currently these need to be included before backend.h
-#include "go-linemap.h"
+#include "go-llvm-linemap.h"
 #include "go-location.h"
 #include "go-llvm-btype.h"
 //#include "go-llvm-bexpression.h"
@@ -59,7 +59,7 @@ class Bstatement : public Bnode {
   Bfunction *function() const { return function_; }
 
   // dump with source line info
-  void srcDump(Linemap *);
+  void srcDump(Llvm_linemap *);
 
   // If this is an expression statement (flavor N_ExprStmt), return
   // a pointer to the Bexpression it contains.

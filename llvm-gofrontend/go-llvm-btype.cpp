@@ -13,26 +13,11 @@
 
 #include "go-llvm-btype.h"
 #include "go-llvm-bexpression.h"
-//#include "backend.h"
-//#include "go-c.h"
 #include "go-system.h"
-//#include "gogo.h"
 
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Constants.h"
-
-#if 0
-//#include "llvm/IR/DataLayout.h"
-#include "llvm/IR/GlobalValue.h"
-#include "llvm/IR/Instructions.h"
-#include "llvm/IR/Intrinsics.h"
-#include "llvm/IR/IRBuilder.h"
-#include "llvm/IR/Module.h"
-#include "llvm/IR/Type.h"
-#include "llvm/IR/Value.h"
-#include "llvm/IR/Verifier.h"
-#endif
 
 static void indent(llvm::raw_ostream &os, unsigned ilevel) {
   for (unsigned i = 0; i < ilevel; ++i)
@@ -207,4 +192,11 @@ uint64_t BArrayType::nelSize() const
   assert(lc);
   uint64_t asize = lc->getValue().getZExtValue();
   return asize;
+}
+
+// For now
+
+llvm::DISubroutineType *BFunctionType::diType()
+{
+  return nullptr;
 }

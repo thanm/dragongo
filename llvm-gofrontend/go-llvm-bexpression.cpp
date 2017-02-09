@@ -95,7 +95,7 @@ const std::vector<Bexpression *> Bexpression::getChildExprs() const
   return rval;
 }
 
-void Bexpression::srcDump(Linemap *linemap)
+void Bexpression::srcDump(Llvm_linemap *linemap)
 {
   std::string s;
   llvm::raw_string_ostream os(s);
@@ -104,7 +104,7 @@ void Bexpression::srcDump(Linemap *linemap)
 }
 
 void Bexpression::dumpInstructions(llvm::raw_ostream &os, unsigned ilevel,
-                                   Linemap *linemap, bool terse) const {
+                                   Llvm_linemap *linemap, bool terse) const {
   bool hitValue = false;
   for (auto inst : instructions()) {
     indent(os, ilevel);

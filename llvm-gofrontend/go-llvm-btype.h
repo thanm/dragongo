@@ -25,6 +25,7 @@ namespace llvm {
 class Type;
 class Value;
 class raw_ostream;
+class DISubroutineType;
 }
 
 class BStructType;
@@ -327,6 +328,9 @@ class BFunctionType : public Btype {
     return new BFunctionType(receiverType_, paramTypes_, resultTypes_, rtype_,
                              type());
   }
+
+  // Debug meta data
+  llvm::DISubroutineType *diType();
 
  private:
   Btype *receiverType_;

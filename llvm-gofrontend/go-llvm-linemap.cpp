@@ -114,13 +114,25 @@ Llvm_linemap::to_string(Location location)
   return ss.str();
 }
 
-// Return the line number for a given location (for debugging dumps)
-
 int
 Llvm_linemap::location_line(Location loc)
 {
   FLC flc = decode_location(loc.handle());
   return flc.line;
+}
+
+std::string
+Llvm_linemap::location_file(Location loc)
+{
+  FLC flc = decode_location(loc.handle());
+  return files_[flc.fidx];
+}
+
+unsigned
+Llvm_linemap::location_column(Location loc)
+{
+  FLC flc = decode_location(loc.handle());
+  return flc.column;
 }
 
 // Stop getting locations.
@@ -153,6 +165,14 @@ Llvm_linemap::get_location(unsigned column)
     firsthandle_ = handle;
   lasthandle_ = handle;
   return Location(handle);
+}
+
+std::string
+Llvm_linemap::get_initial_file()
+{
+  if (files_.size() < 2)
+    return "";
+  return files_[1];
 }
 
 // Get the unknown location.

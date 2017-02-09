@@ -159,7 +159,7 @@ void Bnode::dump()
 }
 
 void Bnode::osdump(llvm::raw_ostream &os, unsigned ilevel,
-                   Linemap *linemap, bool terse)
+                   Llvm_linemap *linemap, bool terse)
 {
   if (! terse) {
     if (linemap) {

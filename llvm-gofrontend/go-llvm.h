@@ -15,7 +15,7 @@
 #define LLVMGOFRONTEND_GO_LLVM_H
 
 // Currently these need to be included before backend.h
-#include "go-linemap.h"
+#include "go-llvm-linemap.h"
 #include "go-location.h"
 #include "go-llvm-btype.h"
 #include "go-llvm-bexpression.h"
@@ -39,6 +39,10 @@ class BasicBlock;
 class Constant;
 class ConstantFolder;
 class DataLayout;
+class DICompileUnit;
+class DIFile;
+class DIScope;
+class DIBuilder;
 class Function;
 class Instruction;
 class LLVMContext;
@@ -65,7 +69,7 @@ class Llvm_backend : public Backend, public TypeManager, public NameGen {
 public:
   Llvm_backend(llvm::LLVMContext &context,
                llvm::Module *module,
-               Linemap *linemap);
+               Llvm_linemap *linemap);
   ~Llvm_backend();
 
   // Types.
@@ -315,7 +319,7 @@ public:
 
   void write_export_data(const char *bytes, unsigned int size);
 
-  Linemap *linemap() const { return linemap_; }
+  Llvm_linemap *linemap() const { return linemap_; }
 
   // Module and datalayout
   llvm::Module &module() { return *module_; }
@@ -366,7 +370,6 @@ public:
   unsigned traceLevel() const { return traceLevel_; }
 
  private:
-
   Bexpression *errorExpression() const { return errorExpression_; }
   Bstatement *errorStatement() const { return errorStatement_; }
 
@@ -374,35 +377,18 @@ public:
   Bfunction *defineBuiltinFcn(const std::string &name,
                               llvm::Function *fcn);
 
-  // varargs convenience wrapper for define_builtin_fcn.
-  // creates a libcall builtin. If the builtin being created is defined
-  // in llvm/Analysis/TargetLibraryInfo.def, then the proper enumeration
-  // should be passed in "libfuncID" (otherwise pass NumLibFuncs).
-  // varargs: first arg after libfuncID is return type, following
-  // arguments are parameter types, followed by NULL type indicating
-  // end of params.
-  void defineLibcallBuiltin(const char *name, const char *libname,
-                            unsigned libfuncID, ...);
+  // Return top of DI scope stack
+  llvm::DIScope *currentDIScope();
 
-  // similar to the routine above, but takes a vector of
-  // types as opposed to an argument list.
-  void defineLibcallBuiltin(const char *name, const char *libname,
-                            const std::vector<llvm::Type *> &types,
-                            unsigned libfuncID);
+  // Push / pop scope
+  llvm::DIScope *popDIScope();
+  void pushDIScope(llvm::DIScope *);
 
-  // varargs convenience wrapper for define_builtin_fcn;
-  // creates in intrinsic builtin by looking up intrinsic
-  // 'intrinsicID'; variable arguments the overloaded types required
-  // by llvm::Intrinsic::getDeclaration (see the comments on that
-  // function for more info) terminated by NULL.
-  void defineIntrinsicBuiltin(const char *name, const char *libname,
-                              unsigned intrinsicID, ...);
+  // Return DIFile associated with specified location
+  llvm::DIFile *diFileFromLocation(Location location);
 
-  // more helpers for builtin creation
-  void defineAllBuiltins();
-  void defineSyncFetchAndAddBuiltins();
-  void defineIntrinsicBuiltins();
-  void defineTrigBuiltins();
+  // Helper to initialize compilation unit scope
+  void setupDICompUnit();
 
   // Certain Bexpressions we want to cache (constants for example,
   // or lvalue references to global variables). This helper looks up
@@ -431,35 +417,6 @@ public:
                            llvm::GlobalValue::LinkageTypes linkage,
                            llvm::Constant *initializer,
                            unsigned alignmentInBytes = 0);
-
-#if 0
-  // Helper to fold contents of one instruction into another.
-  static void
-  incorporateExpression(Bexpression *dst,
-                        Bexpression *src,
-                        std::set<llvm::Instruction *> *visited);
-
-  enum MkExprAction { AppendInst, DontAppend };
-
-  // Create a new Bexpression with the specified LLMV value and Btype,
-  // based on the contents of a list of source expressions (list terminated
-  // with a null pointer). If 'action' is set to AppendInst, then the
-  // specified value is an instruction that should be appended to the
-  // result Bexpression; if 'action' is DontAppend then the value
-  // is not an inst that should be appended.
-  Bexpression *makeExpression(llvm::Value *value,
-                              MkExprAction action,
-                              Btype *btype,
-                              Location location,
-                              Bexpression *src, ...);
-
-  // Similar to the method above, but array-based and not varargs.
-  Bexpression *makeExpression(llvm::Value *value,
-                              MkExprAction action,
-                              Btype *btype,
-                              Location location,
-                              const std::vector<Bexpression *> &srcs);
-#endif
 
   // Helper for creating a constant-valued array/struct expression.
   Bexpression *makeConstCompositeExpr(Btype *btype,
@@ -644,10 +601,19 @@ private:
   // Builder for constructing Bexpressions and Bstatements.
   BnodeBuilder nbuilder_;
 
+  // Debug info builder
+  std::unique_ptr<llvm::DIBuilder> dibuilder_;
+
+  // Root debug meta-data scope for compilation unit
+  llvm::DICompileUnit *diCompileUnit_;
+
+  // Stack of DI scopes
+  std::vector<llvm::DIScope*> diScopeStack_;
+
   // Linemap to use. If client did not supply a linemap during
   // construction, then ownLinemap_ is filled in.
-  Linemap *linemap_;
-  std::unique_ptr<Linemap> ownLinemap_;
+  Llvm_linemap *linemap_;
+  std::unique_ptr<Llvm_linemap> ownLinemap_;
 
   // Address space designator for pointer types.
   unsigned addressSpace_;

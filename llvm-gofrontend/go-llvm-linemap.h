@@ -7,8 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// LLVM/go implementation of Linemap class. This class is exposed
-// primarily for unit testing.
+// LLVM/go implementation of Linemap class.
 //
 //===----------------------------------------------------------------------===//
 
@@ -48,12 +47,22 @@ class Llvm_linemap : public Linemap
   std::string
   to_string(Location);
 
+  std::string statistics();
+
   int
   location_line(Location);
 
-  std::string statistics();
+  std::string
+  location_file(Location);
 
- protected:
+  unsigned
+  location_column(Location);
+
+  // Return first file mentioned in a returned location. This will
+  // be the empty string if no files have been started.
+  std::string
+  get_initial_file();
+
   Location
   get_predeclared_location();
 
@@ -80,9 +89,9 @@ class Llvm_linemap : public Linemap
 
   // Stores the file ID associated with a range of handle
   struct Segment {
-    // Lo/hi handles in this range
+    // lo/hi handles in this range
     unsigned lo, hi;
-    // File id for this collection of handles
+    // file id for this collection of handles
     unsigned fidx;
 
     Segment(unsigned low, unsigned high, unsigned fileid)
@@ -93,7 +102,7 @@ class Llvm_linemap : public Linemap
     }
   };
 
-  // Given a File/line/column triple, add an entry to the linemap for
+  // Given a file/line/column triple, add an entry to the linemap for
   // the triple and return a handle for it.
   unsigned add_encoded_location(const FLC &flc);
 

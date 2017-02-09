@@ -15,7 +15,7 @@
 #define LLVMGOFRONTEND_GO_LLVM_BEXPRESSION_H
 
 // Currently these need to be included before backend.h
-#include "go-linemap.h"
+#include "go-llvm-linemap.h"
 #include "go-location.h"
 #include "go-llvm-btype.h"
 #include "go-llvm-bnode.h"
@@ -177,10 +177,10 @@ class Bexpression : public Bnode, public Binstructions {
 
   // debugging
   void dumpInstructions(llvm::raw_ostream &os, unsigned ilevel,
-                        Linemap *linemap, bool terse) const;
+                        Llvm_linemap *linemap, bool terse) const;
 
   // dump with source line info
-  void srcDump(Linemap *);
+  void srcDump(Llvm_linemap *);
 
   friend class BnodeBuilder;
 

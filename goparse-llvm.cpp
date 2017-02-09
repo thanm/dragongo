@@ -181,7 +181,7 @@ static void DiagnosticHandler(const DiagnosticInfo &DI, void *Context) {
 static Llvm_backend *init_gogo(TargetMachine *Target,
                                llvm::LLVMContext &Context,
                                llvm::Module *module,
-                               Linemap *linemap)
+                               Llvm_linemap *linemap)
 {
   struct go_create_gogo_args args;
   unsigned bpi = Target->getPointerSize() * 8;
@@ -316,7 +316,7 @@ int main(int argc, char **argv)
   if (DumpIR)
     backend->dumpModule();
   if (TraceLevel)
-    std::cerr << "linemap stats:\n" << linemap->statistics();
+    std::cerr << "linemap stats:" << linemap->statistics() << "\n";
 
   llvm::Module *M = module.get();
 
