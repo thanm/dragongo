@@ -2763,6 +2763,7 @@ void Llvm_backend::write_global_definitions(
     const std::vector<Bvariable *> &variable_decls) {
 
   finalizeExportData();
+  dibuilder_->finalize();
 
   // At the moment there isn't anything to do here with the
   // inputs we're being passed.
