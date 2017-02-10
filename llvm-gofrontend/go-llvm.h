@@ -328,6 +328,12 @@ public:
   // Type manager functionality
   TypeManager *typeManager() const;
 
+  // DI builder
+  llvm::DIBuilder &dibuilder() { return *dibuilder_.get(); }
+
+  // Return top-level debug meta data object for module
+  llvm::DICompileUnit *getDICompUnit();
+
   // Run the module verifier.
   void verifyModule();
 
@@ -376,19 +382,6 @@ public:
   // create a Bfunction for a predefined builtin function with specified name
   Bfunction *defineBuiltinFcn(const std::string &name,
                               llvm::Function *fcn);
-
-  // Return top of DI scope stack
-  llvm::DIScope *currentDIScope();
-
-  // Push / pop scope
-  llvm::DIScope *popDIScope();
-  void pushDIScope(llvm::DIScope *);
-
-  // Return DIFile associated with specified location
-  llvm::DIFile *diFileFromLocation(Location location);
-
-  // Helper to initialize compilation unit scope
-  void setupDICompUnit();
 
   // Certain Bexpressions we want to cache (constants for example,
   // or lvalue references to global variables). This helper looks up
@@ -606,9 +599,6 @@ private:
 
   // Root debug meta-data scope for compilation unit
   llvm::DICompileUnit *diCompileUnit_;
-
-  // Stack of DI scopes
-  std::vector<llvm::DIScope*> diScopeStack_;
 
   // Linemap to use. If client did not supply a linemap during
   // construction, then ownLinemap_ is filled in.

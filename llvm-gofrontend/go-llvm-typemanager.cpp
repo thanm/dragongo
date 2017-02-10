@@ -12,12 +12,14 @@
 //===----------------------------------------------------------------------===//
 
 #include "go-llvm-typemanager.h"
+#include "go-llvm-dibuildhelper.h"
 #include "go-llvm-bexpression.h"
 
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/Type.h"
 
 TypeManager::TypeManager(llvm::LLVMContext &context)
@@ -160,9 +162,9 @@ BFunctionType *TypeManager::makeAuxFcnType(llvm::FunctionType *ft)
     results.push_back(makeAuxType(ft->getReturnType()));
   for (unsigned ii = 0; ii < ft->getNumParams(); ++ii)
     params.push_back(makeAuxType(ft->getParamType(ii)));
+  Location loc;
   BFunctionType *rval =
-      new BFunctionType(recvTyp, params, results,
-                        rStructTyp, ft);
+      new BFunctionType(recvTyp, params, results, rStructTyp, ft, loc);
   auxTypeMap_[ft] = rval;
   return rval;
 }
@@ -173,7 +175,8 @@ Btype *TypeManager::makeAuxType(llvm::Type *lt) {
   auto it = auxTypeMap_.find(lt);
   if (it != auxTypeMap_.end())
     return it->second;
-  Btype *rval = new Btype(Btype::AuxT, lt);
+  Location loc;
+  Btype *rval = new Btype(Btype::AuxT, lt, loc);
   auxTypeMap_[lt] = rval;
   return rval;
 }
@@ -214,7 +217,8 @@ Btype *TypeManager::floatType(int bits)
   llvm::Type *llft = makeLLVMFloatType(bits);
 
   // Consult cache
-  BFloatType cand(bits, llft);
+  Location loc;
+  BFloatType cand(bits, llft, loc);
   auto it = anonTypes_.find(&cand);
   if (it != anonTypes_.end()) {
     Btype *existing = *it;
@@ -224,7 +228,7 @@ Btype *TypeManager::floatType(int bits)
   }
 
   // Install in cache
-  BFloatType *rval = new BFloatType(bits, llft);
+  BFloatType *rval = new BFloatType(bits, llft, loc);
   anonTypes_.insert(rval);
   return rval;
 }
@@ -265,7 +269,8 @@ Btype *TypeManager::integerType(bool is_unsigned, int bits)
   llvm::Type *llit = llvm::IntegerType::get(context_, bits);
 
   // Check for and return existing anon type if we have one already
-  BIntegerType cand(is_unsigned, bits, llit);
+  Location loc;
+  BIntegerType cand(is_unsigned, bits, llit, loc);
   auto it = anonTypes_.find(&cand);
   if (it != anonTypes_.end()) {
     Btype *existing = *it;
@@ -275,7 +280,7 @@ Btype *TypeManager::integerType(bool is_unsigned, int bits)
   }
 
   // Install in cache
-  BIntegerType *rval = new BIntegerType(is_unsigned, bits, llit);
+  BIntegerType *rval = new BIntegerType(is_unsigned, bits, llit, loc);
   anonTypes_.insert(rval);
   return rval;
 }
@@ -327,40 +332,58 @@ bool TypeManager::addPlaceholderRefs(Btype *btype)
   return rval;
 }
 
+// The front end creates structures with fields that are
+// function-type as opposed to pointer-to-function type -- this
+// doesn't play well with LLVM, so rewrite the field types
+// in this instance.
+
+std::vector<Btyped_identifier>
+TypeManager::sanitizeFields(const std::vector<Btyped_identifier> &fields)
+{
+  std::vector<Btyped_identifier> pfields(fields);
+  for (unsigned i = 0; i < fields.size(); ++i) {
+    if (fields[i].btype->type()->isFunctionTy())
+      pfields[i].btype = pointerType(fields[i].btype);
+  }
+  return pfields;
+}
+
 // Make a struct type.
 
-Btype *TypeManager::structType(const std::vector<Btyped_identifier> &fields)
+Btype *TypeManager::structType(const std::vector<Btyped_identifier> &rawfields)
 {
   // Return error type if any field has error type; look for placeholders
   bool hasPlaceField = false;
-  for (unsigned i = 0; i < fields.size(); ++i) {
-    if (fields[i].btype == errorType_)
+  for (unsigned i = 0; i < rawfields.size(); ++i) {
+    if (rawfields[i].btype == errorType_)
       return errorType_;
-    if (fields[i].btype->isUnresolvedPlaceholder())
+    if (rawfields[i].btype->isUnresolvedPlaceholder())
       hasPlaceField = true;
   }
 
+  Location loc;
   BStructType *rval = nullptr;
   llvm::Type *llst = nullptr;
+  std::vector<Btyped_identifier> fields = sanitizeFields(rawfields);
   if (hasPlaceField) {
     // If any of the fields have placeholder type, then we can't
     // create a concrete LLVM type, so manufacture a placeholder
     // instead.
     llst = makeOpaqueLlvmType("IPST");
-    rval = new BStructType(fields, llst);
+    rval = new BStructType(fields, llst, loc);
     rval->setPlaceholder(addPlaceholderRefs(rval));
   } else {
     // No placeholder fields -- manufacture the concrete LLVM, then
     // check for and return existing anon type if we have one already.
     llst = makeLLVMStructType(fields);
-    BStructType cand(fields, llst);
+    BStructType cand(fields, llst, loc);
     auto it = anonTypes_.find(&cand);
     if (it != anonTypes_.end()) {
       Btype *existing = *it;
       assert(existing->castToBStructType());
       return existing;
     }
-    rval = new BStructType(fields, llst);
+    rval = new BStructType(fields, llst, loc);
   }
 
   if (traceLevel() > 1) {
@@ -384,9 +407,9 @@ llvm::Type *TypeManager::makeOpaqueLlvmType(const char *tag) {
 
 // Create a placeholder for a struct type.
 Btype *TypeManager::placeholderStructType(const std::string &name,
-                                             Location location)
+                                          Location location)
 {
-  BStructType *pst = new BStructType(name);
+  BStructType *pst = new BStructType(name, location);
   llvm::Type *opaque = makeOpaqueLlvmType("PST");
   pst->setType(opaque);
   placeholders_.insert(pst);
@@ -431,7 +454,8 @@ Btype *TypeManager::pointerType(Btype *toType)
   llvm::Type *llpt = llvm::PointerType::get(lltot, addressSpace_);
 
   // Check for and return existing anon type if we have one already
-  BPointerType cand(toType, llpt);
+  Location loc;
+  BPointerType cand(toType, llpt, loc);
   auto it = anonTypes_.find(&cand);
   if (it != anonTypes_.end()) {
     Btype *existing = *it;
@@ -441,7 +465,7 @@ Btype *TypeManager::pointerType(Btype *toType)
   }
 
   // Create new type
-  BPointerType *rval = new BPointerType(toType, llpt);
+  BPointerType *rval = new BPointerType(toType, llpt, loc);
   rval->setPlaceholder(addPlaceholderRefs(rval));
   if (traceLevel() > 1) {
     std::cerr << "\n^ pointer type "
@@ -466,9 +490,10 @@ Btype *TypeManager::pointerType(Btype *toType)
 // Create a placeholder for a pointer type.
 
 Btype *TypeManager::placeholderPointerType(const std::string &name,
-                                           Location location, bool forfunc)
+                                           Location location,
+                                           bool forfunc)
 {
-  Btype *ppt = new BPointerType(name);
+  Btype *ppt = new BPointerType(name, location);
   llvm::Type *opaque = makeOpaqueLlvmType("PPT");
   llvm::PointerType *pto = llvm::PointerType::get(opaque, addressSpace_);
   ppt->setType(pto);
@@ -518,7 +543,7 @@ Btype *
 TypeManager::functionType(const Btyped_identifier &receiver,
                            const std::vector<Btyped_identifier> &parameters,
                             const std::vector<Btyped_identifier> &results,
-                            Btype *result_struct, Location) {
+                            Btype *result_struct, Location location) {
 
   // Vett the parameters and results
   std::vector<Btype *> paramTypes;
@@ -554,7 +579,8 @@ TypeManager::functionType(const Btyped_identifier &receiver,
                                           resultTypes, rbtype);
 
   // Consult cache
-  BFunctionType cand(receiver.btype, paramTypes, resultTypes, rbtype, llft);
+  BFunctionType cand(receiver.btype, paramTypes, resultTypes, rbtype,
+                     llft, location);
   auto it = anonTypes_.find(&cand);
   if (it != anonTypes_.end()) {
     Btype *existing = *it;
@@ -566,7 +592,7 @@ TypeManager::functionType(const Btyped_identifier &receiver,
   // Manufacture new BFunctionType to return
   BFunctionType *rval = new BFunctionType(receiver.btype,
                                           paramTypes, resultTypes,
-                                          rbtype, llft);
+                                          rbtype, llft, location);
 
   // Do some book-keeping
   bool isPlace = false;
@@ -613,7 +639,8 @@ Btype *TypeManager::arrayType(Btype *elemType, Bexpression *length)
   llvm::Type *llat = llvm::ArrayType::get(elemType->type(), asize);
 
   // Check for and return existing anon type if we have one already
-  BArrayType cand(elemType, length, llat);
+  Location loc;
+  BArrayType cand(elemType, length, llat, loc);
   auto it = anonTypes_.find(&cand);
   if (it != anonTypes_.end()) {
     Btype *existing = *it;
@@ -623,7 +650,7 @@ Btype *TypeManager::arrayType(Btype *elemType, Bexpression *length)
   }
 
   // Create appropriate Btype
-  BArrayType *rval = new BArrayType(elemType, length, llat);
+  BArrayType *rval = new BArrayType(elemType, length, llat, loc);
   rval->setPlaceholder(addPlaceholderRefs(rval));
 
   if (traceLevel() > 1) {
@@ -643,9 +670,9 @@ Btype *TypeManager::arrayType(Btype *elemType, Bexpression *length)
 // Create a placeholder for an array type.
 
 Btype *TypeManager::placeholderArrayType(const std::string &name,
-                                            Location location)
+                                         Location location)
 {
-  Btype *pat = new BArrayType(name);
+  Btype *pat = new BArrayType(name, location);
   llvm::Type *opaque = makeOpaqueLlvmType("PAT");
   pat->setType(opaque);
   placeholders_.insert(pat);
@@ -677,7 +704,7 @@ Btype *TypeManager::elementTypeByIndex(Btype *btype, unsigned fieldIndex)
 }
 
 void TypeManager::postProcessResolvedPointerPlaceholder(BPointerType *bpt,
-                                                         Btype *btype)
+                                                        Btype *btype)
 {
   assert(bpt);
   assert(bpt->isPlaceholder());
@@ -830,7 +857,7 @@ void TypeManager::postProcessResolvedPlaceholder(Btype *btype)
 // seem like a horrible thing, just kind of curious.
 
 bool TypeManager::setPlaceholderPointerType(Btype *placeholder,
-                                             Btype *to_type)
+                                            Btype *to_type)
 {
   assert(placeholder);
   assert(to_type);
@@ -852,7 +879,9 @@ bool TypeManager::setPlaceholderPointerType(Btype *placeholder,
   }
 
   // Update the target type for the pointer
-  placeholder->setType(to_type->type());
+  BPointerType *bpt = placeholder->castToBPointerType();
+  bpt->setToType(to_type);
+  bpt->setType(to_type->type());
 
   // Decide what to do next.
   if (to_type->isUnresolvedPlaceholder()) {
@@ -918,11 +947,15 @@ bool TypeManager::setPlaceholderFunctionType(Btype *placeholder,
 
 bool
 TypeManager::setPlaceholderStructType(Btype *placeholder,
-                             const std::vector<Btyped_identifier> &fields)
+                             const std::vector<Btyped_identifier> &rawfields)
 {
   if (placeholder == errorType_)
     return false;
-
+  for (unsigned i = 0; i < rawfields.size(); ++i) {
+    if (rawfields[i].btype == errorType_)
+      return errorType_;
+  }
+  std::vector<Btyped_identifier> fields = sanitizeFields(rawfields);
   assert(anonTypes_.find(placeholder) == anonTypes_.end());
   assert(placeholders_.find(placeholder) != placeholders_.end());
   BStructType *phst = placeholder->castToBStructType();
@@ -1013,13 +1046,16 @@ Btype *TypeManager::namedType(const std::string &name,
   // TODO: add support for debug metadata
 
   Btype *rval = btype->clone();
+  rval->setLocation(location);
   addPlaceholderRefs(rval);
   rval->setName(name);
   namedTypes_.insert(rval);
+  revNames_[btype] = rval;
 
   if (traceLevel() > 1) {
     std::cerr << "\n^ named type '" << name << "' "
-              << ((void*)rval) << " [llvm type "
+              << ((void*)rval) << " created from "
+              << ((void*)btype) << " [llvm type "
               << ((void*) rval->type()) << "]\n";
     rval->dump();
   }
@@ -1139,11 +1175,14 @@ llvm::Type *TypeManager::placeholderProxyType(Btype *typ,
       // All pointers should be sized the same
       return llvmPtrType_;
     }
+    case Btype::FunctionT: {
+      // This is hacky, but it turns out we do need this
+      // because of the way FE handles function types.
+      // Treat function type as pointer-to-function type.
+      return llvmPtrType_;
+    }
     case Btype::AuxT: {
       assert(false && "not expecting aux type here");
-    }
-    case Btype::FunctionT: {
-      assert(false && "not expecting function type here");
     }
     default: {
       assert(false && "not expecting scalar type here");
@@ -1234,8 +1273,13 @@ bool TypeManager::isFuncDescriptorType(llvm::Type *typ)
   llvm::StructType *st = llvm::cast<llvm::StructType>(typ);
   if (st->getNumElements() != 1)
     return false;
-  if (st->getElementType(0) != llvmIntegerType_ &&
-      !st->getElementType(0)->isFunctionTy())
+  llvm::Type *f0t = st->getElementType(0);
+  llvm::PointerType *f0tpt = nullptr;
+  if (f0t->isPointerTy())
+    f0tpt = llvm::cast<llvm::PointerType>(f0t);
+  if (f0t != llvmIntegerType_ &&
+      !f0t->isFunctionTy() &&
+      !(f0tpt && f0tpt->getElementType()->isFunctionTy()))
     return false;
   return true;
 }
@@ -1262,4 +1306,280 @@ bool TypeManager::isPtrToVoidType(llvm::Type *typ)
     return false;
   llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
   return pt->getElementType() == llvmInt8Type_;
+}
+
+
+std::string TypeManager::typToString(Btype *typ)
+{
+  std::map<Btype *, std::string> smap;
+  return typToStringRec(typ, smap);
+}
+
+std::string
+TypeManager::typToStringRec(Btype *typ, std::map<Btype *, std::string> &smap)
+{
+  if (namedTypes_.find(typ) != namedTypes_.end())
+    return typ->name();
+
+  auto rnit = revNames_.find(typ);
+  if (rnit != revNames_.end())
+    return rnit->second->name();
+
+  auto smit = smap.find(typ);
+  if (smit != smap.end())
+    return smit->second;
+
+  std::stringstream ss;
+  switch(typ->flavor()) {
+    case Btype::AuxT: {
+      if (typ->type() == llvmVoidType_) {
+        ss << "void";
+        break;
+      }
+      // This is a hack, but it takes care of things like circular pointers, etc
+      std::string s;
+      llvm::raw_string_ostream os(s);
+      typ->type()->print(os);
+      ss << os.str();
+      break;
+    }
+    case Btype::FloatT: {
+      BFloatType *bft = typ->castToBFloatType();
+      ss << "float" << bft->bits();
+      break;
+    }
+    case Btype::IntegerT: {
+      BIntegerType *bit = typ->castToBIntegerType();
+      if (bit->isUnsigned())
+        ss << "u";
+      ss << "int" << bit->bits();
+      break;
+    }
+    case Btype::PointerT: {
+      BPointerType *bpt = typ->castToBPointerType();
+      ss << "*" << typToStringRec(bpt->toType(), smap);
+      break;
+    }
+    case Btype::StructT: {
+      BStructType *bst = typ->castToBStructType();
+
+      // install temp entry to break cycles
+      std::stringstream sst;
+      sst << "$struct$" << smap.size();
+      smap[typ] = sst.str();
+
+      ss << "struct{";
+      const std::vector<Backend::Btyped_identifier> &fields = bst->fields();
+      for (unsigned i = 0; i < fields.size(); ++i) {
+        ss << (i == 0 ? "" : ",");
+        ss << typToStringRec(fields[i].btype, smap);
+      }
+      ss << "}";
+      break;
+    }
+    case Btype::FunctionT: {
+      BFunctionType *bft = typ->castToBFunctionType();
+      ss << "func(";
+      if (bft->receiverType())
+        ss << typToStringRec(bft->receiverType(), smap);
+      const std::vector<Btype *> &parms = bft->paramTypes();
+      for (unsigned i = 0; i < parms.size(); ++i) {
+        ss << ((i == 0 && !bft->receiverType()) ? "" : ",");
+        ss << typToStringRec(parms[i], smap);
+      }
+      ss << ")";
+      ss << typToStringRec(bft->resultType(), smap);
+      break;
+    }
+    case Btype::ArrayT: {
+      BArrayType *bat = typ->castToBArrayType();
+      ss << "[" << bat->nelSize() << "]"
+         << typToStringRec(bat->elemType(), smap);
+      break;
+    }
+    default: assert(0);
+  }
+  smap[typ] = ss.str();
+  return ss.str();
+}
+
+llvm::DIType *TypeManager::buildCircularPointerDIType(Btype *typ,
+                                                      DIBuildHelper &helper)
+{
+  auto rnit = revNames_.find(typ);
+  if (rnit != revNames_.end())
+    typ = rnit->second;
+
+  std::unordered_map<Btype *, llvm::DIType*> &typeCache = helper.typeCache();
+
+  // Create replaceable placeholder
+  llvm::DIBuilder &dibuilder = helper.dibuilder();
+  unsigned tag = llvm::dwarf::DW_TAG_structure_type;
+  llvm::DIScope *scope = helper.moduleScope();
+  llvm::DIFile *file = helper.diFileFromLocation(typ->location());
+  unsigned lineNumber = helper.linemap()->location_line(typ->location());
+  llvm::DICompositeType *placeholder =
+      dibuilder.createReplaceableCompositeType(tag, typToString(typ),
+                                               scope, file, lineNumber);
+  typeCache[typ] = placeholder;
+
+  // Convert what it points to
+  Btype *toType = circularTypeLoadConversion(typ);
+  llvm::DIType *toDIType = buildDIType(toType, helper);
+
+  // Now create final pointer type
+  uint64_t bits = datalayout_->getTypeSizeInBits(typ->type());
+  llvm::DIType *result = dibuilder.createPointerType(toDIType, bits);
+
+  // Replace the temp
+  dibuilder.replaceTemporary(llvm::TempDIType(placeholder), result);
+
+  // Update cache
+  typeCache[typ] = result;
+
+  // Done.
+  return result;
+}
+
+llvm::DIType *TypeManager::buildStructDIType(BStructType *bst,
+                                             DIBuildHelper &helper)
+{
+  auto rnit = revNames_.find(bst);
+  if (rnit != revNames_.end())
+    bst = rnit->second->castToBStructType();
+
+  std::unordered_map<Btype *, llvm::DIType*> &typeCache = helper.typeCache();
+
+  // Create replaceable placeholder
+  llvm::DIBuilder &dibuilder = helper.dibuilder();
+  unsigned tag = llvm::dwarf::DW_TAG_structure_type;
+  llvm::DIScope *scope = helper.moduleScope();
+  llvm::DIFile *file = helper.diFileFromLocation(bst->location());
+  unsigned lineNumber = helper.linemap()->location_line(bst->location());
+  llvm::DICompositeType *placeholder =
+      dibuilder.createReplaceableCompositeType(tag, typToString(bst),
+                                               scope, file, lineNumber);
+  typeCache[bst] = placeholder;
+
+  // Process struct members
+  llvm::SmallVector<llvm::Metadata *, 16> members;
+  const std::vector<Backend::Btyped_identifier> &fields = bst->fields();
+  for (unsigned fidx = 0; fidx < bst->fields().size(); ++fidx) {
+    const Backend::Btyped_identifier &field = fields[fidx];
+    llvm::DIType *fieldType = buildDIType(field.btype, helper);
+    uint64_t memberBits = typeSize(field.btype);
+    uint32_t memberAlign = typeFieldAlignment(field.btype);
+    uint64_t memberOffset = typeFieldOffset(bst, fidx);
+    unsigned lineNumber = helper.linemap()->location_line(field.location);
+    llvm::DIDerivedType *ft =
+        dibuilder.createMemberType(scope, field.name, file, lineNumber,
+                                   memberBits, memberAlign, memberOffset,
+                                   llvm::DINode::FlagZero,
+                                   fieldType);
+    members.push_back(ft);
+  }
+  auto memberArray = dibuilder.getOrCreateArray(members);
+
+  // Now create struct type itself.
+  uint64_t sizeInBits = datalayout_->getTypeSizeInBits(bst->type());
+  uint32_t alignInBits = datalayout_->getPrefTypeAlignment(bst->type());
+  llvm::DIType *derivedFrom = nullptr;
+  llvm::DICompositeType *dist =
+      dibuilder.createStructType(scope, typToString(bst),
+                                 file, lineNumber, sizeInBits, alignInBits,
+                                 llvm::DINode::FlagZero, derivedFrom,
+                                 memberArray);
+
+  // Replace the temp
+  dibuilder.replaceTemporary(llvm::TempDIType(placeholder), dist);
+
+  // Update cache
+  typeCache[bst] = dist;
+
+  // Done.
+  return dist;
+}
+
+llvm::DIType *TypeManager::buildDIType(Btype *typ, DIBuildHelper &helper)
+{
+  llvm::DIBuilder &dibuilder = helper.dibuilder();
+
+  std::unordered_map<Btype *, llvm::DIType*> &typeCache =
+      helper.typeCache();
+  auto tcit = typeCache.find(typ);
+  if (tcit != typeCache.end())
+    return tcit->second;
+
+  switch(typ->flavor()) {
+    case Btype::AuxT: {
+      // FIXME: at the moment Aux types are only created for types
+      // that have no direct Go correspondent (for example, the type
+      // of an intrinsic function defined by LLVM and not Go) -- there
+      // should be no need include such things in the debug meta data.
+      // If it turns out that we do need to emit meta-data for an aux
+      // type, more special-case code will need to be added here.
+      if (typ->type() == llvmVoidType_)
+        return dibuilder.createBasicType("void", 0, 0);
+      auto it = revNames_.find(typ);
+      if (it != revNames_.end())
+        return buildDIType(it->second, helper);
+
+      // Special case for circular pointer types
+      auto cpit = circularPointerTypes_.find(typ->type());
+      if (cpit != circularPointerTypes_.end())
+        return buildCircularPointerDIType(typ, helper);
+
+      std::cerr << "unhandled aux type: "; typ->dump();
+      assert(false);
+      return nullptr;
+    }
+    case Btype::FloatT: {
+      BFloatType *bft = typ->castToBFloatType();
+      std::string tstr = typToString(typ);
+      return dibuilder.createBasicType(tstr, bft->bits(),
+                                       llvm::dwarf::DW_ATE_float);
+    }
+    case Btype::IntegerT: {
+      const BIntegerType *bit = typ->castToBIntegerType();
+      unsigned encoding =
+          (bit->isUnsigned() ?
+           llvm::dwarf::DW_ATE_unsigned :
+           llvm::dwarf::DW_ATE_signed);
+      std::string tstr = typToString(typ);
+      return dibuilder.createBasicType(tstr, bit->bits(), encoding);
+    }
+    case Btype::PointerT: {
+      const BPointerType *bpt = typ->castToBPointerType();
+      llvm::DIType *toDI = buildDIType(bpt->toType(), helper);
+      uint64_t bits = datalayout_->getTypeSizeInBits(typ->type());
+      return dibuilder.createPointerType(toDI, bits);
+    }
+    case Btype::ArrayT: {
+      const BArrayType *bat = typ->castToBArrayType();
+      llvm::DIType *elemDI = buildDIType(bat->elemType(), helper);
+      uint64_t arSize = bat->nelSize();
+      uint64_t arAlign = datalayout_->getTypeSizeInBits(typ->type());
+      llvm::SmallVector<llvm::Metadata *, 1> subscripts;
+      subscripts.push_back(dibuilder.getOrCreateSubrange(0, arSize));
+      llvm::DINodeArray subsAr = dibuilder.getOrCreateArray(subscripts);
+      return dibuilder.createArrayType(arSize, arAlign, elemDI, subsAr);
+    }
+    case Btype::StructT: {
+      BStructType *bst = typ->castToBStructType();
+      return buildStructDIType(bst, helper);
+    }
+    case Btype::FunctionT: {
+      const BFunctionType *bft = typ->castToBFunctionType();
+      llvm::SmallVector<llvm::Metadata *, 16> ptypes;
+      ptypes.push_back(buildDIType(bft->resultType(), helper));
+      if (bft->receiverType())
+        ptypes.push_back(buildDIType(bft->receiverType(), helper));
+      for (auto &pt : bft->paramTypes())
+        ptypes.push_back(buildDIType(pt, helper));
+      auto paramTypes = dibuilder.getOrCreateTypeArray(ptypes);
+      return dibuilder.createSubroutineType(paramTypes);
+    }
+  }
+  assert(false && "should not reach here");
+  return nullptr;
 }

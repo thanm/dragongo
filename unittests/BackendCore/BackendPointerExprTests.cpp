@@ -119,17 +119,15 @@ TEST(BackendExprTests, CreateFunctionCodeExpression) {
   h.mkAssign(vex3, rvex3);
 
   const char *exp = R"RAW_RESULT(
-      store { i64 } { i64 ptrtoint (i64 (i32, i32, i64*)* @foo to i64) },
-             { i64 }* %fdloc1
-      store { i64 }* %fdloc1, { i64 }** %fploc1
-      store { i64 (i32, i32, i64*) }* null, { i64 (i32, i32, i64*) }** %fploc2
-      %fploc1.ld.0 = load { i64 }*, { i64 }** %fploc1
-      %cast = bitcast { i64 }* %fploc1.ld.0 to { i64 (i32, i32, i64*) }*
-      store { i64 (i32, i32, i64*) }* %cast, { i64 (i32, i32, i64*) }** %fploc2
-      %fploc2.ld.0 = load { i64 (i32, i32, i64*) }*,
-            { i64 (i32, i32, i64*) }** %fploc2
-      %cast = bitcast { i64 (i32, i32, i64*) }* %fploc2.ld.0 to { i64 }*
-      store { i64 }* %cast, { i64 }** %fploc1
+     store { i64 } { i64 ptrtoint (i64 (i32, i32, i64*)* @foo to i64) }, { i64 }* %fdloc1
+     store { i64 }* %fdloc1, { i64 }** %fploc1
+     store { i64 (i32, i32, i64*)* }* null, { i64 (i32, i32, i64*)* }** %fploc2
+     %fploc1.ld.0 = load { i64 }*, { i64 }** %fploc1
+     %cast = bitcast { i64 }* %fploc1.ld.0 to { i64 (i32, i32, i64*)* }*
+     store { i64 (i32, i32, i64*)* }* %cast, { i64 (i32, i32, i64*)* }** %fploc2
+     %fploc2.ld.0 = load { i64 (i32, i32, i64*)* }*, { i64 (i32, i32, i64*)* }** %fploc2
+     %cast = bitcast { i64 (i32, i32, i64*)* }* %fploc2.ld.0 to { i64 }*
+     store { i64 }* %cast, { i64 }** %fploc1
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);

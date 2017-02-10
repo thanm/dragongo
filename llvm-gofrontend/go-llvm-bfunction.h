@@ -36,13 +36,15 @@ class raw_ostream;
 
 class Bfunction : public NameGen {
 public:
-  Bfunction(llvm::Function *f, BFunctionType *fcnType,
-            const std::string &asmName);
+  Bfunction(llvm::Function *f, BFunctionType *fcnType, const std::string &name,
+            const std::string &asmName, Location location);
   ~Bfunction();
 
   llvm::Function *function() const { return function_; }
   BFunctionType *fcnType() const { return fcnType_; }
+  const std::string &name() const { return name_; }
   const std::string &asmName() const { return asmName_; }
+  Location location() const { return location_; }
 
   enum SplitStackDisposition { YesSplit, NoSplit };
   void setSplitStack(SplitStackDisposition disp) { splitStack_ = disp; }
@@ -104,8 +106,10 @@ private:
   std::vector<Blabel *> labels_;
   llvm::Function *function_;
   BFunctionType *fcnType_;
+  std::string name_;
   std::string asmName_;
   unsigned labelCount_;
+  Location location_;
   SplitStackDisposition splitStack_;
 };
 

@@ -32,6 +32,7 @@ go-llvm-bstatement.cpp
 go-llvm-btype.cpp
 go-llvm-bvariable.cpp
 go-llvm-diagnostics.cpp
+go-llvm-dibuildhelper.cpp
 go-llvm-genblocks.cpp
 go-llvm-linemap.cpp
 go-llvm-tree-integrity.cpp

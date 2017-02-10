@@ -26,11 +26,16 @@
 
 Bfunction::Bfunction(llvm::Function *f,
                      BFunctionType *fcnType,
-                     const std::string &asmName)
-    : function_(f), fcnType_(fcnType), asmName_(asmName), labelCount_(0),
-      splitStack_(YesSplit) {}
+                     const std::string &name,
+                     const std::string &asmName,
+                     Location location)
+    : function_(f), fcnType_(fcnType), name_(name), asmName_(asmName),
+      labelCount_(0), location_(location), splitStack_(YesSplit)
+{
+}
 
-Bfunction::~Bfunction() {
+Bfunction::~Bfunction()
+{
   for (auto ais : allocas_)
     delete ais;
   for (auto &kv : argToVal_)

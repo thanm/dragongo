@@ -18,6 +18,7 @@
 #include "go-c.h"
 #include "go-system.h"
 #include "go-llvm-linemap.h"
+#include "go-llvm-dibuildhelper.h"
 #include "gogo.h"
 
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -113,7 +114,8 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
       llvm::Type::getVoidTy(context_), elems, isVarargs);
   llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
   llvm::Function *ef = llvm::Function::Create(eft, plinkage, "", module_);
-  errorFunction_.reset(new Bfunction(ef, makeAuxFcnType(eft), ""));
+  errorFunction_.reset(new Bfunction(ef, makeAuxFcnType(eft), "", "",
+                                     Location()));
 
   // Reuse the error function as the value for error_expression
   errorExpression_ = nbuilder_.mkError(errorType());
@@ -143,30 +145,13 @@ Llvm_backend::~Llvm_backend() {
     delete bfcn;
 }
 
-llvm::DIScope *Llvm_backend::currentDIScope()
+llvm::DICompileUnit *Llvm_backend::getDICompUnit()
 {
-  if (! diCompileUnit_)
-    setupDICompUnit();
-  return diScopeStack_.back();
-}
+  if (diCompileUnit_)
+    return diCompileUnit_;
 
-llvm::DIScope *Llvm_backend::popDIScope()
-{
-  assert(diScopeStack_.size());
-  llvm::DIScope *popped = diScopeStack_.back();
-  diScopeStack_.pop_back();
-  return popped;
-}
-
-void Llvm_backend::pushDIScope(llvm::DIScope *scope)
-{
-  assert(scope);
-  diScopeStack_.push_back(scope);
-}
-
-void Llvm_backend::setupDICompUnit()
-{
   // Create debug info builder
+  assert(dibuilder_.get() == nullptr);
   dibuilder_.reset(new llvm::DIBuilder(*module_));
 
   // Create compile unit
@@ -182,7 +167,7 @@ void Llvm_backend::setupDICompUnit()
                                     "llvm-goparse", isOptimized,
                                     compileFlags, runtimeVersion);
 
-  pushDIScope(diCompileUnit_);
+  return diCompileUnit_;
 }
 
 TypeManager *Llvm_backend::typeManager() const {
@@ -409,7 +394,8 @@ Bfunction *Llvm_backend::defineBuiltinFcn(const std::string &name,
   llvm::FunctionType *llft =
       llvm::cast<llvm::FunctionType>(llpft->getElementType());
   BFunctionType *fcnType = makeAuxFcnType(llft);
-  Bfunction *bfunc = new Bfunction(fcn, fcnType, name);
+  Location pdcl = linemap()->get_predeclared_location();
+  Bfunction *bfunc = new Bfunction(fcn, fcnType, name, name, pdcl);
   return bfunc;
 }
 
@@ -2403,7 +2389,7 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
 
   BFunctionType *fcnType = fntype->castToBFunctionType();
   assert(fcnType);
-  Bfunction *bfunc = new Bfunction(fcn, fcnType, asm_name);
+  Bfunction *bfunc = new Bfunction(fcn, fcnType, name, asm_name, location);
 
   // split-stack or nosplit
   if (! disable_split_stack)
@@ -2417,21 +2403,6 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   // to look a little more closely at how -ffunction-sections is implemented
   // for clang/LLVM.
   assert(!in_unique_section || is_declaration);
-
-#if 0
-  // Debug info setup
-  llvm::DISubroutineType *dst = fcnType->diType();
-  unsigned fcnLine = linemap()->location_line(location);
-  bool isLocalToUnit = false; // FIXME -- look at exported/non-exported
-  bool isDefinition = true;
-  unsigned scopeLine = fcnLine; // FIXME -- determine correct value here
-  auto difunc =
-      dibuilder_->createFunction(currentDIScope(), name, asm_name,
-                                diFileFromLocation(location),
-                                fcnLine, dst, isLocalToUnit,
-                                isDefinition, scopeLine);
-  pushDIScope(scope);
-#endif
 
   functions_.push_back(bfunc);
 
@@ -2468,9 +2439,8 @@ bool Llvm_backend::function_set_parameters(
 //
 class GenBlocks {
 public:
-  GenBlocks(llvm::LLVMContext &context, Llvm_backend *be, Bfunction *function)
-      : context_(context), be_(be), function_(function),
-        emitOrphanedCode_(false) {}
+  GenBlocks(llvm::LLVMContext &context, Llvm_backend *be,
+            Bfunction *function, llvm::DIScope *scope);
 
   llvm::BasicBlock *walk(Bnode *node, llvm::BasicBlock *curblock);
   Bfunction *function() { return function_; }
@@ -2485,16 +2455,46 @@ public:
   llvm::BasicBlock *getBlockForLabel(LabelId lab);
   llvm::BasicBlock *walkExpr(llvm::BasicBlock *curblock, Bexpression *expr);
 
-private:
+  llvm::DIBuilder &dibuilder() { return be_->dibuilder(); }
+  Llvm_linemap *linemap() { return be_->linemap(); }
+
+ private:
   llvm::LLVMContext &context_;
   Llvm_backend *be_;
   Bfunction *function_;
+  DIBuildHelper dibuildhelper_;
   std::map<LabelId, llvm::BasicBlock *> labelmap_;
   bool emitOrphanedCode_;
 };
 
+GenBlocks::GenBlocks(llvm::LLVMContext &context,
+                     Llvm_backend *be,
+                     Bfunction *function,
+                     llvm::DIScope *scope)
+    : context_(context), be_(be), function_(function),
+      dibuildhelper_(be->typeManager(), be->linemap(),
+                     be->dibuilder(), be->getDICompUnit()),
+      emitOrphanedCode_(false)
+{
+  // Debug info setup for function
+  llvm::DIType *dit = be_->buildDIType(function->fcnType(), dibuildhelper_);
+  llvm::DISubroutineType *dst =
+      llvm::cast<llvm::DISubroutineType>(dit);
+  unsigned fcnLine = linemap()->location_line(function->location());
+  bool isLocalToUnit = false; // FIXME -- look at exported/non-exported
+  bool isDefinition = true;
+  unsigned scopeLine = fcnLine; // FIXME -- determine correct value here
+  llvm::DIFile *difile =
+      dibuildhelper_.diFileFromLocation(function->location());
+  auto difunc =
+      dibuilder().createFunction(scope, function->name(), function->asmName(),
+                                 difile, fcnLine, dst, isLocalToUnit,
+                                 isDefinition, scopeLine);
+  dibuildhelper_.pushDIScope(difunc);
+}
+
 llvm::BasicBlock *GenBlocks::mkLLVMBlock(const std::string &name,
-                                     unsigned expl)
+                                         unsigned expl)
 {
   std::string tname = be_->namegen(name, expl);
   llvm::Function *func = function()->function();
@@ -2726,9 +2726,6 @@ bool Llvm_backend::function_set_body(Bfunction *function,
     code_stmt->dump();
   }
 
-  // Trigger DI building (temp hack)
-  currentDIScope();
-
   // Sanity checks
   if (checkIntegrity_)
     enforceTreeIntegrity(code_stmt);
@@ -2737,7 +2734,7 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   llvm::BasicBlock *entryBlock = genEntryBlock(function);
 
   // Walk the code statements
-  GenBlocks gb(context_, this, function);
+  GenBlocks gb(context_, this, function, getDICompUnit());
   llvm::BasicBlock *block = gb.walk(code_stmt, entryBlock);
 
   // Fix up epilog block if needed

@@ -143,7 +143,7 @@ Btype *Btype::clone() const
   switch(flavor_) {
     case AuxT:
     case FloatT: {
-      rval = new Btype(flavor(), type());
+      rval = new Btype(flavor(), type(), location());
       break;
     }
     case IntegerT: {
@@ -192,11 +192,4 @@ uint64_t BArrayType::nelSize() const
   assert(lc);
   uint64_t asize = lc->getValue().getZExtValue();
   return asize;
-}
-
-// For now
-
-llvm::DISubroutineType *BFunctionType::diType()
-{
-  return nullptr;
 }

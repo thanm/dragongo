@@ -35,6 +35,38 @@ TEST(BackendFcnTests, MakeEmptyFunction) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendFcnTests, MakeFuncWithLotsOfArgs) {
+
+  // Create empty function
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bi64t = be->integer_type(false, 64);
+  Bexpression *val10 = mkInt64Const(be, int64_t(10));
+  Btype *at10 = be->array_type(bi64t, val10);
+  Btype *st3 = mkBackendThreeFieldStruct(be);
+  BFunctionType *befty1 = mkFuncTyp(be,
+                                    L_RCV, st3,
+                                    L_PARM, at10,
+                                    L_PARM, be->bool_type(),
+                                    L_PARM, bi32t,
+                                    L_PARM, bi64t,
+                                    L_PARM, be->pointer_type(st3),
+                                    L_RES, bi32t,
+                                    L_RES, bi64t,
+                                    L_END);
+  h.mkFunction("foo", befty1);
+
+  const char *exp = R"RAW_RESULT(
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 TEST(BackendFcnTests, MakeFunction) {
   LLVMContext C;
 
@@ -160,6 +192,48 @@ TEST(BackendFcnTests, MakeBlocks) {
   const std::vector<Bvariable *> vars;
   Bblock *bb = be->block(bfcn, nullptr, vars, Location(), Location());
   ASSERT_TRUE(bb != nullptr);
+}
+
+TEST(BackendFcnTests, MakeFuncWithRecursiveTypeParam) {
+
+  // Create empty function
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+  Location loc;
+
+  // type P *P
+  Btype *cpht = be->placeholder_pointer_type("ph", loc, false);
+  Btype *cpt = be->circular_pointer_type(cpht, false);
+  be->set_placeholder_pointer_type(cpht, cpt);
+
+  // struct A { f2 bool, fn *A }
+  Btype *php = be->placeholder_pointer_type("ph", loc, false);
+  std::vector<Backend::Btyped_identifier> fields = {
+      Backend::Btyped_identifier("f1", be->bool_type(), Location()),
+      Backend::Btyped_identifier("fn", php, Location())
+  };
+  Btype *bst = be->struct_type(fields);
+  Btype *bpst = be->pointer_type(bst);
+  be->set_placeholder_pointer_type(php, bpst);
+  Btype *bi64t = be->integer_type(false, 64);
+  BFunctionType *befty1 = mkFuncTyp(be,
+                                    L_RCV, php,
+                                    L_PARM, cpt,
+                                    L_PARM, bpst,
+                                    L_PARM, be->bool_type(),
+                                    L_PARM, bst,
+                                    L_RES, bi64t,
+                                    L_END);
+  h.mkFunction("foo", befty1);
+
+  const char *exp = R"RAW_RESULT(
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish();
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 }

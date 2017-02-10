@@ -300,6 +300,12 @@ TEST(BackendCoreTests, TypeUtils) {
   EXPECT_EQ(be->type_size(st), int64_t(16));
   EXPECT_EQ(be->type_alignment(st), 8);
 
+  // Strictly speaking, one should be asking for the size
+  // of a pointer-to-function type, not a function type, however
+  // it does appear that this needs to be supported.
+  Btype *emptyf = mkFuncTyp(be.get(), L_END);
+  EXPECT_EQ(be->type_size(emptyf), be->type_size(be->pointer_type(u64)));
+
   // type field alignment
   Btype *u32 = be->integer_type(true, 32);
   EXPECT_EQ(be->type_field_alignment(u32), 4);

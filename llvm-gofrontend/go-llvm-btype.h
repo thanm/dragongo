@@ -42,11 +42,14 @@ class Btype {
   enum TyFlavor {
     ArrayT, FloatT, FunctionT, IntegerT, PointerT, StructT, AuxT
   };
-  explicit Btype(TyFlavor flavor, llvm::Type *type) :
-      type_(type), flavor_(flavor), isPlaceholder_(false) { }
+  Btype(TyFlavor flavor, llvm::Type *type, Location location)
+      : type_(type), location_(location), flavor_(flavor),
+        isPlaceholder_(false) { }
   virtual ~Btype() { }
 
   TyFlavor flavor() const { return flavor_; }
+  Location location() const { return location_; }
+  void setLocation(Location loc) { location_ = loc; }
 
   // Underlying LLVM type.
   llvm::Type *type() const { return type_; }
@@ -101,23 +104,26 @@ class Btype {
 
  private:
   Btype() : type_(NULL) {}
-  llvm::Type *type_;
-  TyFlavor flavor_;
   std::string name_;
+  llvm::Type *type_;
+  Location location_;
+  TyFlavor flavor_;
   bool isPlaceholder_;
 };
 
 class BIntegerType : public Btype {
  public:
-  BIntegerType(bool isUnsigned, unsigned bits, llvm::Type *type)
-      : Btype(IntegerT, type), bits_(bits), isUnsigned_(isUnsigned) { }
+  BIntegerType(bool isUnsigned, unsigned bits,
+               llvm::Type *type, Location location)
+      : Btype(IntegerT, type, location),
+        bits_(bits), isUnsigned_(isUnsigned) { }
 
   bool isUnsigned() const { return isUnsigned_; }
   unsigned bits() const { return bits_; }
 
   // Create a shallow copy of this type
   Btype *clone() const {
-    return new BIntegerType(isUnsigned_, bits_, type());
+    return new BIntegerType(isUnsigned_, bits_, type(), location());
   }
 
  private:
@@ -137,14 +143,14 @@ inline const BIntegerType *Btype::castToBIntegerType() const {
 
 class BFloatType : public Btype {
  public:
-  BFloatType(unsigned bits, llvm::Type *type)
-      : Btype(FloatT, type), bits_(bits) { }
+  BFloatType(unsigned bits, llvm::Type *type, Location location)
+      : Btype(FloatT, type, location), bits_(bits) { }
 
   unsigned bits() const { return bits_; }
 
   // Create a shallow copy of this type
   Btype *clone() const {
-    return new BFloatType(bits_, type());
+    return new BFloatType(bits_, type(), location());
   }
 
  private:
@@ -165,13 +171,13 @@ class BStructType : public Btype {
  public:
 
   // For concrete struct types
-  explicit BStructType(const std::vector<Backend::Btyped_identifier> &fields,
-                       llvm::Type *type)
-      : Btype(StructT, type), fields_(fields) { }
+  BStructType(const std::vector<Backend::Btyped_identifier> &fields,
+              llvm::Type *type, Location location)
+      : Btype(StructT, type, location), fields_(fields) { }
 
   // For placeholder struct types
-  explicit BStructType(const std::string &name)
-      : Btype(StructT, nullptr)
+  BStructType(const std::string &name, Location location)
+      : Btype(StructT, nullptr, location)
   {
     setPlaceholder(true);
     setName(name);
@@ -196,7 +202,7 @@ class BStructType : public Btype {
 
   // Create a shallow copy of this type
   Btype *clone() const {
-    return new BStructType(fields_, type());
+    return new BStructType(fields_, type(), location());
   }
 
  private:
@@ -216,16 +222,19 @@ inline const BStructType *Btype::castToBStructType() const {
 class BArrayType : public Btype {
  public:
   // For concrete array types
-  explicit BArrayType(Btype *elemType, Bexpression *nelements, llvm::Type *type)
-      : Btype(ArrayT, type), elemType_(elemType), nelements_(nelements)
+  BArrayType(Btype *elemType, Bexpression *nelements,
+             llvm::Type *type, Location location)
+      : Btype(ArrayT, type, location),
+        elemType_(elemType), nelements_(nelements)
   {
     if (elemType_->isPlaceholder())
       setPlaceholder(true);
   }
 
   // For placeholder array types
-  explicit BArrayType(const std::string &name)
-      : Btype(ArrayT, nullptr), elemType_(nullptr), nelements_(nullptr)
+  BArrayType(const std::string &name, Location location)
+      : Btype(ArrayT, nullptr, location),
+        elemType_(nullptr), nelements_(nullptr)
   {
     setPlaceholder(true);
     setName(name);
@@ -248,7 +257,7 @@ class BArrayType : public Btype {
 
   // Create a shallow copy of this type
   Btype *clone() const {
-    return new BArrayType(elemType_, nelements_, type());
+    return new BArrayType(elemType_, nelements_, type(), location());
   }
 
  private:
@@ -269,15 +278,15 @@ inline const BArrayType *Btype::castToBArrayType() const {
 class BPointerType : public Btype {
  public:
   // For concrete pointer types
-  explicit BPointerType(Btype *toType, llvm::Type *type)
-      : Btype(PointerT, type), toType_(toType) {
+  BPointerType(Btype *toType, llvm::Type *type, Location location)
+      : Btype(PointerT, type, location), toType_(toType) {
     if (toType_->isPlaceholder())
       setPlaceholder(true);
   }
 
   // For placeholder pointers
-  explicit BPointerType(const std::string &name)
-      : Btype(PointerT, nullptr), toType_(nullptr) {
+  BPointerType(const std::string &name, Location location)
+      : Btype(PointerT, nullptr, location), toType_(nullptr) {
     setPlaceholder(true);
     setName(name);
   }
@@ -291,7 +300,7 @@ class BPointerType : public Btype {
 
   // Create a shallow copy of this type
   Btype *clone() const {
-    return new BPointerType(toType_, type());
+    return new BPointerType(toType_, type(), location());
   }
 
  private:
@@ -314,8 +323,9 @@ class BFunctionType : public Btype {
                 const std::vector<Btype *> &paramTypes,
                 const std::vector<Btype *> &resultTypes,
                 Btype *rtype,
-                llvm::Type *type)
-      : Btype(FunctionT, type), receiverType_(receiverType),
+                llvm::Type *type,
+                Location location)
+      : Btype(FunctionT, type, location), receiverType_(receiverType),
         paramTypes_(paramTypes), resultTypes_(resultTypes),
         rtype_(rtype) { }
 
@@ -326,11 +336,8 @@ class BFunctionType : public Btype {
   // Create a shallow copy of this type
   Btype *clone() const {
     return new BFunctionType(receiverType_, paramTypes_, resultTypes_, rtype_,
-                             type());
+                             type(), location());
   }
-
-  // Debug meta data
-  llvm::DISubroutineType *diType();
 
  private:
   Btype *receiverType_;

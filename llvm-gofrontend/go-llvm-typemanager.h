@@ -23,6 +23,7 @@
 
 namespace llvm {
 class DataLayout;
+class DIType;
 class Instruction;
 class LLVMContext;
 class Module;
@@ -30,6 +31,8 @@ class Value;
 class raw_ostream;
 class FunctionType;
 }
+
+class DIBuildHelper;
 
 using Btyped_identifier = Backend::Btyped_identifier;
 
@@ -61,7 +64,7 @@ class TypeManager {
   bool setPlaceholderFunctionType(Btype *, Btype *);
   Btype *placeholderStructType(const std::string &, Location);
   bool setPlaceholderStructType(Btype *placeholder,
-                                   const std::vector<Btyped_identifier> &);
+                                const std::vector<Btyped_identifier> &);
   Btype *placeholderArrayType(const std::string &, Location);
   bool setPlaceholderArrayType(Btype *, Btype *, Bexpression *);
   Btype *namedType(const std::string &, Btype *, Location);
@@ -180,11 +183,29 @@ class TypeManager {
   void initializeTypeManager(Bexpression *errorExpression,
                              const llvm::DataLayout *datalayout,
                              NameGen *nt);
+
+  // For named types, this returns the declared type name. If a type
+  // is unnamed, then it returns a stringified representation of the
+  // type (e.g, "[10]uint64").
+  std::string typToString(Btype *typ);
+
+  // Debug meta-data generation
+  llvm::DIType *buildDIType(Btype *typ, DIBuildHelper &helper);
+
   // For debugging
   unsigned traceLevel() const { return traceLevel_; }
   void setTypeManagerTraceLevel(unsigned level) { traceLevel_ = level; }
 
  private:
+
+  std::string typToStringRec(Btype *typ, std::map<Btype *, std::string> &tab);
+
+  llvm::DIType *buildStructDIType(BStructType *bst, DIBuildHelper &helper);
+
+  llvm::DIType *buildCircularPointerDIType(Btype *typ, DIBuildHelper &helper);
+
+  std::vector<Btyped_identifier>
+  sanitizeFields(const std::vector<Btyped_identifier> &fields);
 
   // For computing size-equivalent types for unresolved placeholders
   typedef std::unordered_map<Btype *, llvm::Type *> pproxymap;
@@ -251,6 +272,9 @@ class TypeManager {
   // Repository for named types (those specifically created by the
   // ::named_type method).
   std::unordered_set<Btype *> namedTypes_;
+
+  // This maps a btype to the named type that was created from it.
+  std::unordered_map<Btype *, Btype *> revNames_;
 
   // Records all placeholder types explicitly created via
   // Backend::placeholder_<XYZ>_type() method calls.
