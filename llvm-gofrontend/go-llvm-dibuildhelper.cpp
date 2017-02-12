@@ -19,6 +19,7 @@
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/DebugInfo.h"
 #include "llvm/IR/DebugInfoMetadata.h"
+#include "llvm/IR/DebugLoc.h"
 
 DIBuildHelper::DIBuildHelper(TypeManager *typemanager,
                              Llvm_linemap *linemap,
@@ -37,6 +38,14 @@ llvm::DIFile *DIBuildHelper::diFileFromLocation(Location location)
 #endif
   std::string locfile = linemap()->location_file(location);
   return dibuilder().createFile(locfile, "/something");
+}
+
+llvm::DebugLoc DIBuildHelper::debugLocFromLocation(Location loc)
+{
+  llvm::LLVMContext &context = typemanager()->context();
+  return llvm::DILocation::get(context, linemap()->location_line(loc),
+                               linemap()->location_column(loc),
+                               currentDIScope());
 }
 
 llvm::DIScope *DIBuildHelper::currentDIScope()

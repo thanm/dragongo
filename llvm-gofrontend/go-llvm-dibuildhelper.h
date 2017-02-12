@@ -23,6 +23,8 @@ namespace llvm {
 class DIBuilder;
 class DIScope;
 class DIFile;
+class DILocation;
+class DebugLoc;
 class DIType;
 class Type;
 }
@@ -43,6 +45,8 @@ class DIBuildHelper {
                 llvm::DIScope *moduleScope);
 
   llvm::DIFile *diFileFromLocation(Location location);
+
+  llvm::DebugLoc debugLocFromLocation(Location location);
 
   // Return module scope
   llvm::DIScope *moduleScope() const { return moduleScope_; }

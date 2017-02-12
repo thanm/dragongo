@@ -2456,6 +2456,7 @@ public:
   llvm::BasicBlock *walkExpr(llvm::BasicBlock *curblock, Bexpression *expr);
 
   llvm::DIBuilder &dibuilder() { return be_->dibuilder(); }
+  DIBuildHelper &dibuildhelper() { return dibuildhelper_; }
   Llvm_linemap *linemap() { return be_->linemap(); }
 
  private:
@@ -2520,6 +2521,10 @@ llvm::BasicBlock *GenBlocks::walkExpr(llvm::BasicBlock *curblock,
 
   // Now visit instructions for this expr
   for (auto inst : expr->instructions()) {
+    Location eloc = expr->location();
+    if (!linemap()->is_unknown(eloc) && !linemap()->is_predeclared(eloc))
+      inst->setDebugLoc(dibuildhelper().debugLocFromLocation(eloc));
+
     if (curblock)
       curblock->getInstList().push_back(inst);
     else
