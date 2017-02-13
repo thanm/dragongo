@@ -2443,6 +2443,8 @@ public:
             Bfunction *function, llvm::DIScope *scope);
 
   llvm::BasicBlock *walk(Bnode *node, llvm::BasicBlock *curblock);
+  void finishFunction();
+
   Bfunction *function() { return function_; }
   llvm::BasicBlock *genIf(Bstatement *ifst,
                           llvm::BasicBlock *curblock);
@@ -2478,6 +2480,11 @@ GenBlocks::GenBlocks(llvm::LLVMContext &context,
       emitOrphanedCode_(false)
 {
   dibuildhelper_.beginFunction(scope, function);
+}
+
+void GenBlocks::finishFunction()
+{
+  dibuildhelper_.endFunction(function_);
 }
 
 llvm::BasicBlock *GenBlocks::mkLLVMBlock(const std::string &name,
@@ -2727,6 +2734,7 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   // Walk the code statements
   GenBlocks gb(context_, this, function, getDICompUnit());
   llvm::BasicBlock *block = gb.walk(code_stmt, entryBlock);
+  gb.finishFunction();
 
   // Fix up epilog block if needed
   fixupEpilogBlog(function, block);

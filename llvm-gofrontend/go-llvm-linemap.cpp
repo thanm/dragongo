@@ -19,20 +19,22 @@ Linemap* Linemap::instance_ = NULL;
 Llvm_linemap::Llvm_linemap()
     : Linemap()
     , unknown_fidx_(0)
+    , builtin_fidx_(1)
     , current_fidx_(0)
     , current_line_(0xffffffff)
-    , predeclared_handle_(1)
-    , unknown_handle_(0)
+    , builtin_handle_(NoHandle)
+    , unknown_handle_(NoHandle)
     , firsthandle_(NoHandle)
     , lasthandle_(NoHandle)
     , lookups_(0)
     , in_file_(false)
 {
   files_.push_back("");
+  files_.push_back("<built-in>");
   unknown_handle_ = add_encoded_location(FLC(unknown_fidx_, 0, 0));
-  predeclared_handle_ = add_encoded_location(FLC(unknown_fidx_, 1, 1));
-  firsthandle_ = unknown_handle_;
-  lasthandle_ = predeclared_handle_;
+  builtin_handle_ = add_encoded_location(FLC(builtin_fidx_, 1, 1));
+  segments_.push_back(Segment(unknown_handle_, unknown_handle_, unknown_fidx_));
+  segments_.push_back(Segment(builtin_handle_, builtin_handle_, builtin_fidx_));
 }
 
 Llvm_linemap::~Llvm_linemap()
@@ -103,9 +105,10 @@ Llvm_linemap::start_file(const char *file_name, unsigned line_begin)
 std::string
 Llvm_linemap::to_string(Location location)
 {
-  if (location.handle() == predeclared_handle_ ||
-      location.handle() == unknown_handle_)
+  if (location.handle() == unknown_handle_)
     return "";
+  if (location.handle() == builtin_handle_)
+    return "<built-in>";
 
   FLC flc = decode_location(location.handle());
   const std::string &path = files_[flc.fidx];
@@ -170,9 +173,9 @@ Llvm_linemap::get_location(unsigned column)
 std::string
 Llvm_linemap::get_initial_file()
 {
-  if (files_.size() < 2)
+  if (files_.size() < 3)
     return "";
-  return files_[1];
+  return files_[2];
 }
 
 // Get the unknown location.
@@ -188,7 +191,7 @@ Llvm_linemap::get_unknown_location()
 Location
 Llvm_linemap::get_predeclared_location()
 {
-  return Location(predeclared_handle_);
+  return Location(builtin_handle_);
 }
 
 // Return whether a location is the predeclared location.
@@ -196,7 +199,7 @@ Llvm_linemap::get_predeclared_location()
 bool
 Llvm_linemap::is_predeclared(Location loc)
 {
-  return loc.handle() == predeclared_handle_;
+  return loc.handle() == builtin_handle_;
 }
 
 // Return whether a location is the unknown location.

@@ -27,12 +27,12 @@ TEST(LinemapTests, BasicLinemap) {
   Location pdl = Linemap::predeclared_location();
   EXPECT_TRUE(ul.handle() != pdl.handle());
   EXPECT_EQ(lm->to_string(ul), "");
-  EXPECT_EQ(lm->to_string(pdl), "");
+  EXPECT_EQ(lm->to_string(pdl), "<built-in>");
   EXPECT_EQ(lm->get_initial_file(), "");
 
   lm->start_file("foo.go", 10);
   EXPECT_EQ(lm->to_string(ul), "");
-  EXPECT_EQ(lm->to_string(pdl), "");
+  EXPECT_EQ(lm->to_string(pdl), "<built-in>");
   EXPECT_EQ(lm->get_initial_file(), "foo.go");
   Location f10 = lm->get_location(1);
   lm->start_line(12, 256);
@@ -75,7 +75,7 @@ TEST(LinemapTests, BasicLinemap) {
   EXPECT_EQ(lm->to_string(x12), lm->to_string(f12));
 
   std::string stats = lm->statistics();
-  EXPECT_EQ(stats, "accesses=9 files=4 segments=3 "
+  EXPECT_EQ(stats, "accesses=9 files=5 segments=4 "
             "locmem=22 bytes/location=2.4");
 }
 

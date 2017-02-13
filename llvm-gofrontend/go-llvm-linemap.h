@@ -123,12 +123,14 @@ class Llvm_linemap : public Linemap
   std::vector<unsigned char> encoded_locations_;
   // Predefined "unknown file" file ID.
   unsigned unknown_fidx_;
+  // Predefined file ID for predeclared or builtin locations.
+  unsigned builtin_fidx_;
   // Current file ID (most recent file passed to start_file)
   unsigned current_fidx_;
   // Current line.
   unsigned current_line_;
   // Special handle for predeclared location.
-  unsigned predeclared_handle_;
+  unsigned builtin_handle_;
   // Special handle for unknown location.
   unsigned unknown_handle_;
   // First handle in the segment we are building (not yet in segment table).

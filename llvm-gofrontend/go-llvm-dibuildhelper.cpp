@@ -39,7 +39,7 @@ void DIBuildHelper::beginFunction(llvm::DIScope *scope, Bfunction *function)
 {
   known_locations_ = 0;
 
-  // Create proper DIType for unction
+  // Create proper DIType for function
   llvm::DIType *dit =
       typemanager()->buildDIType(function->fcnType(), *this);
   llvm::DISubroutineType *dst =
@@ -121,6 +121,8 @@ llvm::DIFile *DIBuildHelper::diFileFromLocation(Location location)
   std::string locfile = linemap()->location_file(location);
   llvm::StringRef locdir = llvm::sys::path::parent_path(locfile);
   llvm::StringRef locfilename = llvm::sys::path::filename(locfile);
+  if (linemap()->is_predeclared(location))
+    locdir = "";
 #if 0
   llvm::SmallString<256> currentDir;
   llvm::sys::fs::current_path(currentDir);
