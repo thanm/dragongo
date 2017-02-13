@@ -12,6 +12,8 @@
 #include "go-llvm-linemap.h"
 #include "go-location.h"
 
+#include "llvm/Support/Path.h"
+
 namespace {
 
 TEST(LinemapTests, CreateLinemap) {

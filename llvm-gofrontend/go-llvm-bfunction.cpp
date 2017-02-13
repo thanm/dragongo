@@ -81,6 +81,19 @@ Bvariable *Bfunction::local_variable(const std::string &name,
   return bv;
 }
 
+std::vector<Bvariable*> Bfunction::getFunctionLocalVars()
+{
+  std::vector<Bvariable*> res;
+  for (auto &aa : allocas_) {
+    auto it = valueVarMap_.find(aa);
+    assert(it != valueVarMap_.end());
+    Bvariable *v = it->second;
+    if (v->flavor() == LocalVar)
+      res.push_back(v);
+  }
+  return res;
+}
+
 llvm::Argument *Bfunction::getNthArg(unsigned argIdx) {
   assert(function()->getFunctionType()->getNumParams() != 0);
   if (arguments_.empty())

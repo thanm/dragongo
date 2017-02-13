@@ -28,12 +28,13 @@ class Value;
 
 // Back end variable class
 
-enum WhichVar { ParamVar, GlobalVar, LocalVar, ErrorVar };
+enum WhichVar { ParamVar, GlobalVar, LocalVar, BlockVar, ErrorVar };
 
 class Bvariable {
 public:
-  explicit Bvariable(Btype *type, Location location, const std::string &name,
-                     WhichVar which, bool address_taken, llvm::Value *value)
+  explicit Bvariable(Btype *type, Location location,
+                     const std::string &name, WhichVar which,
+                     bool address_taken, llvm::Value *value)
       : name_(name), location_(location), value_(value), type_(type),
         which_(which), addrtaken_(address_taken) {}
 

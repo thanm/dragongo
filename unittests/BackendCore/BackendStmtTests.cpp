@@ -38,7 +38,7 @@ TEST(BackendStmtTests, TestInitStmt) {
   ASSERT_TRUE(bad != nullptr);
   EXPECT_EQ(bad, be->error_statement());
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -82,7 +82,7 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
   ASSERT_TRUE(badas != nullptr);
   EXPECT_EQ(badas, be->error_statement());
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -114,7 +114,7 @@ TEST(BackendStmtTests, TestReturnStmt) {
   Bstatement *bret = be->return_statement(func, bvals, loc);
   EXPECT_EQ(bret, be->error_statement());
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -142,7 +142,7 @@ TEST(BackendStmtTests, TestLabelGotoStmts) {
   Bstatement *ldef = be->label_definition_statement(lab1);
   h.addStmt(ldef);
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -181,7 +181,7 @@ TEST(BackendStmtTests, TestIfStmt) {
   // return 10101
   h.mkReturn(mkInt64Const(be, 10101));
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 
   // verify
@@ -261,7 +261,7 @@ TEST(BackendStmtTests, TestSwitchStmt) {
   // return 10101
   h.mkReturn(mkInt64Const(be, 10101));
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 
   // verify

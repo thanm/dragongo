@@ -134,7 +134,7 @@ TEST(BackendNodeTests, VerifyVisitorBehavior) {
 
   h.mkExprStmt(sub);
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 

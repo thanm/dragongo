@@ -190,7 +190,7 @@ TEST(BackendExprTests, TestConversionExpressions) {
       be->convert_expression(be->error_type(), bzero, Location());
   EXPECT_EQ(econ, be->error_expression());
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -218,7 +218,7 @@ TEST(BackendExprTests, TestMoreConversionExpressions) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -352,7 +352,7 @@ TEST(BackendExprTests, TestCompareOps) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -401,7 +401,7 @@ TEST(BackendExprTests, TestArithOps) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -442,7 +442,7 @@ TEST(BackendExprTests, TestMoreArith) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -510,7 +510,7 @@ TEST(BackendExprTests, TestLogicalOps) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -537,7 +537,7 @@ TEST(BackendExprTests, CreateStringConstantExpressions) {
     EXPECT_TRUE(isOK && "Value does not have expected contents");
   }
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -547,7 +547,7 @@ TEST(BackendExprTests, TestConditionalExpression1) {
   Llvm_backend *be = h.be();
   BFunctionType *befty1 = mkFuncTyp(be, L_END);
   Bfunction *func = h.mkFunction("foo", befty1);
-  Location loc;
+  Location loc = h.loc();
 
   // Local vars
   Btype *bi64t = be->integer_type(false, 64);
@@ -555,8 +555,8 @@ TEST(BackendExprTests, TestConditionalExpression1) {
   Bvariable *pv2 = h.mkLocal("b", bi64t);
 
   // Two calls, no type
-  Bexpression *call1 = mkCallExpr(be, func, nullptr);
-  Bexpression *call2 = mkCallExpr(be, func, nullptr);
+  Bexpression *call1 = h.mkCallExpr(be, func, nullptr);
+  Bexpression *call2 = h.mkCallExpr(be, func, nullptr);
   Bexpression *vex1 = be->var_expression(pv1, VE_rvalue, loc);
   Bexpression *vex2 = be->var_expression(pv2, VE_rvalue, loc);
   Bexpression *cmp = be->binary_expression(OPERATOR_LT, vex1, vex2, loc);
@@ -565,30 +565,33 @@ TEST(BackendExprTests, TestConditionalExpression1) {
   h.mkExprStmt(condex);
 
   const char *exp = R"RAW_RESULT(
-      define void @foo() #0 {
-      entry:
-        %a = alloca i64
-        %b = alloca i64
-        store i64 0, i64* %a
-        store i64 0, i64* %b
-        %a.ld.0 = load i64, i64* %a
-        %b.ld.0 = load i64, i64* %b
-        %icmp.0 = icmp slt i64 %a.ld.0, %b.ld.0
-        %zext.0 = zext i1 %icmp.0 to i8
-        %trunc.0 = trunc i8 %zext.0 to i1
-        br i1 %trunc.0, label %then.0, label %else.0
-      then.0:                                           ; preds = %entry
-        call void @foo()
-        br label %fallthrough.0
-      fallthrough.0:                                ; preds = %else.0, %then.0
-        ret void
-      else.0:                                           ; preds = %entry
-        call void @foo()
-        br label %fallthrough.0
-      }
+     define void @foo() #0 {
+     entry:
+       %a = alloca i64
+       %b = alloca i64
+       store i64 0, i64* %a
+       store i64 0, i64* %b
+       %a.ld.0 = load i64, i64* %a
+       %b.ld.0 = load i64, i64* %b
+       %icmp.0 = icmp slt i64 %a.ld.0, %b.ld.0
+       %zext.0 = zext i1 %icmp.0 to i8
+       %trunc.0 = trunc i8 %zext.0 to i1
+       br i1 %trunc.0, label %then.0, label %else.0
+
+     then.0:                                           ; preds = %entry
+       call void @foo()
+       br label %fallthrough.0
+
+     fallthrough.0:                                    ; preds = %else.0, %then.0
+       ret void
+
+     else.0:                                           ; preds = %entry
+       call void @foo()
+       br label %fallthrough.0
+     }
     )RAW_RESULT";
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 
   bool isOK = h.expectValue(func->function(), exp);
@@ -608,7 +611,7 @@ TEST(BackendExprTests, TestConditionalExpression2) {
   Bvariable *pv1 = h.mkLocal("a", bi64t);
 
   // Call on true branch,
-  Bexpression *call1 = mkCallExpr(be, func, nullptr);
+  Bexpression *call1 = h.mkCallExpr(be, func, nullptr);
   Bexpression *ve = be->var_expression(pv1, VE_rvalue, loc);
   Bexpression *cmp = be->binary_expression(OPERATOR_LT,
                                            mkInt64Const(be, int64_t(3)),
@@ -625,15 +628,12 @@ TEST(BackendExprTests, TestConditionalExpression2) {
         %tmpv.0 = alloca i64
         store i64 0, i64* %a
         br i1 true, label %then.0, label %else.0
-
       then.0:                                           ; preds = %entry
         call void @foo()
         br label %fallthrough.0
-
-      fallthrough.0:                                    ; preds = %else.0, %then.0
+      fallthrough.0:                         ; preds = %else.0, %then.0
         %tmpv.0.ld.0 = load i64, i64* %tmpv.0
         ret void
-
       else.0:                                           ; preds = %entry
         %a.ld.0 = load i64, i64* %a
         store i64 %a.ld.0, i64* %tmpv.0
@@ -641,7 +641,7 @@ TEST(BackendExprTests, TestConditionalExpression2) {
       }
     )RAW_RESULT";
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 
   bool isOK = h.expectValue(func->function(), exp);
@@ -685,7 +685,7 @@ TEST(BackendExprTests, TestCompoundExpression) {
       }
     )RAW_RESULT";
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 
   // Note that this
@@ -751,7 +751,7 @@ TEST(BackendExprTests, TestLhsConditionalExpression) {
       }
     )RAW_RESULT";
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 
   // Note that this
@@ -807,7 +807,7 @@ TEST(BackendExprTests, TestUnaryExpression) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -827,7 +827,7 @@ TEST(BackendExprTests, TestCallArgConversions) {
   Location loc;
 
   Bexpression *nil = be->nil_pointer_expression();
-  Bexpression *call1 = mkCallExpr(be, func, nil, nil, nil, nullptr);
+  Bexpression *call1 = h.mkCallExpr(be, func, nil, nil, nil, nullptr);
   h.mkExprStmt(call1);
 
   const char *exp = R"RAW_RESULT(
@@ -838,7 +838,7 @@ TEST(BackendExprTests, TestCallArgConversions) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 

@@ -8,6 +8,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "TestUtils.h"
+#include "llvm/IR/DebugInfo.h"
 
 namespace goBackendUnitTests {
 
@@ -399,25 +400,6 @@ Bexpression *mkFuncDescExpr(Backend *be, Bfunction *fcn)
   return be->constructor_expression(fdescst, vals, loc);
 }
 
-// Produce a call expression targeting the specified function. Variable
-// args are parameter values, terminated by nullptr.
-Bexpression *mkCallExpr(Backend *be, Bfunction *fun, ...)
-{
-  Location loc;
-  va_list ap;
-
-  va_start(ap, fun);
-  Bexpression *fn = be->function_code_expression(fun, loc);
-  std::vector<Bexpression *> args;
-  Bexpression *e = va_arg(ap, Bexpression *);
-  while (e) {
-    args.push_back(e);
-    e = va_arg(ap, Bexpression *);
-  }
-  Bexpression *call = be->call_expression(fn, args, nullptr, loc);
-  return call;
-}
-
 Bblock *mkBlockFromStmt(Backend *be, Bfunction *func, Bstatement *st) {
   const std::vector<Bvariable *> empty;
   Bblock *b = be->block(func, nullptr, empty, Location(), Location());
@@ -490,6 +472,10 @@ FcnTestHarness::FcnTestHarness(const char *fcnName)
     , finished_(false)
     , returnAdded_(false)
 {
+  // establish initial file so as to make verifier happy
+  be_->linemap()->start_file("unit_testing.go", 1);
+  loc_ = be_->linemap()->get_location(1);
+
   // Eager function creation if name not specified
   if (fcnName) {
     func_ = mkFunci32o64(be(), fcnName);
@@ -497,9 +483,6 @@ FcnTestHarness::FcnTestHarness(const char *fcnName)
     curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
   }
 
-  // establish initial file so as to make verifier happy
-  be_->linemap()->start_file("unit_testing.go", 1);
-  be_->linemap()->get_location(1);
 }
 
 FcnTestHarness::~FcnTestHarness()
@@ -545,6 +528,22 @@ Bstatement *FcnTestHarness::mkExprStmt(Bexpression *expr, AppendDisp disp)
   if (disp == YesAppend)
     addStmtToBlock(be(), curBlock_, es);
   return es;
+}
+
+Bexpression *FcnTestHarness::mkCallExpr(Backend *be, Bfunction *fun, ...)
+{
+  va_list ap;
+
+  va_start(ap, fun);
+  Bexpression *fn = be->function_code_expression(fun, loc_);
+  std::vector<Bexpression *> args;
+  Bexpression *e = va_arg(ap, Bexpression *);
+  while (e) {
+    args.push_back(e);
+    e = va_arg(ap, Bexpression *);
+  }
+  Bexpression *call = be->call_expression(fn, args, nullptr, loc_);
+  return call;
 }
 
 Bstatement *FcnTestHarness::mkReturn(Bexpression *expr, AppendDisp disp)
@@ -664,7 +663,7 @@ bool FcnTestHarness::expectBlock(const std::string &expected)
   return equal;
 }
 
-bool FcnTestHarness::finish()
+bool FcnTestHarness::finish(DebugDisposition whatToDoWithDebugInfo)
 {
   // Emit a label def for the pending block if needed
   Bstatement *bst = be()->block_statement(curBlock_);
@@ -678,6 +677,14 @@ bool FcnTestHarness::finish()
 
   // Set function body
   be()->function_set_body(func_, entryBlock_);
+
+  // Finalize export data. This has the side effect of finalizing
+  // debug meta-data, which we need to do before invoking the verifier.
+  be()->finalizeExportData();
+
+  // Strip debug info now if requested
+  if (whatToDoWithDebugInfo == StripDebugInfo)
+    llvm::StripDebugInfo(be()->module());
 
   // Verify module
   bool broken = llvm::verifyModule(be()->module(), &llvm::dbgs());

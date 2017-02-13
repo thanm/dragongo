@@ -276,7 +276,7 @@ TEST(BackendVarTests, MakeImmutableStructReference) {
       be->immutable_struct_reference("name", "asmname", be->error_type(), loc);
   EXPECT_TRUE(ierr == be->error_variable());
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -317,7 +317,7 @@ TEST(BackendVarTests, ImmutableStructSetInit) {
   be->immutable_struct_set_init(ims, "", false, false,
                                 desct, loc, be->error_expression());
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -376,7 +376,7 @@ TEST(BackendVarTests, ImplicitVariableSetInit) {
                                  isHidden, isConst, isCommon,
                                  be->error_expression());
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 

@@ -45,7 +45,16 @@ void Bvariable::osdump(llvm::raw_ostream &os, unsigned ilevel,
     }
   }
   indent(os, ilevel);
-  os << "var '" << name_ << "' type: ";
+  const char *whtag = nullptr;
+  switch(which_) {
+    case ParamVar: whtag = "param"; break;
+    case GlobalVar: whtag = "global"; break;
+    case LocalVar: whtag = "local"; break;
+    case BlockVar: whtag = "block"; break;
+    case ErrorVar: whtag = "error"; break;
+    default: whtag = "<unknownwhichval>"; break;
+  }
+  os << whtag << " var '" << name_ << "' type: ";
   type_->osdump(os, 0);
   os << "\n";
 }

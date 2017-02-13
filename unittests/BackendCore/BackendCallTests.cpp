@@ -32,7 +32,7 @@ TEST(BackendCallTests, TestSimpleCall) {
   args.push_back(mkInt32Const(be, int64_t(3)));
   args.push_back(mkInt32Const(be, int64_t(6)));
   args.push_back(be->zero_expression(bpi64t));
-  Bexpression *call = be->call_expression(fn, args, nullptr, loc);
+  Bexpression *call = be->call_expression(fn, args, nullptr, h.loc());
   Bvariable *x = h.mkLocal("x", bi64t, call);
   h.mkReturn(be->var_expression(x, VE_rvalue, loc));
 
@@ -46,7 +46,7 @@ TEST(BackendCallTests, TestSimpleCall) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -77,7 +77,7 @@ TEST(BackendCallTests, CallToVoid) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -156,7 +156,7 @@ TEST(BackendCallTests, MultiReturnCall) {
   Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, ve2, npe, loc);
   h.mkIf(cmp, s1, s2);
 
-  bool broken = h.finish();
+  bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 

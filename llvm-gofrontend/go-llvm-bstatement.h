@@ -137,6 +137,10 @@ class Bblock : public Bstatement {
   // Local variables for this block
   const std::vector<Bvariable *> &vars() const { return vars_; }
 
+  // Temporary vars can be tacked into an existing block via a
+  // the backend temporary_variable() method-- allow for this here.
+  void addTemporaryVariable(Bvariable *var);
+
   // Exposed for unit testing the tree integrity checker. Not for general use.
   void clearStatements();
 

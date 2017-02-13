@@ -82,7 +82,11 @@ public:
   // Return Nth argument as llvm value. Exposed for unit testing.
   llvm::Value *getNthArgValue(unsigned argIdx);
 
-private:
+  // Return a vector of the local variables for the function. This will
+  // not include block-scoped variables, only function-scoped locals.
+  std::vector<Bvariable*> getFunctionLocalVars();
+
+ private:
 
   // Record an alloca() instruction, to be added to entry block
   void addAlloca(llvm::Instruction *inst) { allocas_.push_back(inst); }

@@ -27,9 +27,13 @@ class DILocation;
 class DebugLoc;
 class DIType;
 class Type;
+class Instruction;
 }
 
+class Bexpression;
+class Bfunction;
 class Btype;
+class Bblock;
 class Llvm_linemap;
 class TypeManager;
 
@@ -44,9 +48,15 @@ class DIBuildHelper {
                 llvm::DIBuilder &builder,
                 llvm::DIScope *moduleScope);
 
+  void beginFunction(llvm::DIScope *scope, Bfunction *function);
+  void endFunction(Bfunction *function);
+
+  void beginLexicalBlock(Bblock *block);
+  void endLexicalBlock(Bblock *block);
+
   llvm::DIFile *diFileFromLocation(Location location);
 
-  llvm::DebugLoc debugLocFromLocation(Location location);
+  void processExprInst(Bexpression *expr, llvm::Instruction *inst);
 
   // Return module scope
   llvm::DIScope *moduleScope() const { return moduleScope_; }
@@ -79,6 +89,10 @@ class DIBuildHelper {
   std::vector<llvm::DIScope*> diScopeStack_;
   std::unordered_map<Btype *, llvm::DIType*> typeCache_;
   std::unordered_map<llvm::DIType *, llvm::DIType*> typeReplacements_;
+  unsigned known_locations_;
+
+ private:
+  llvm::DebugLoc debugLocFromLocation(Location location);
 };
 
 #endif // !defined(GO_LLVM_DIBUILDHELPER_H)

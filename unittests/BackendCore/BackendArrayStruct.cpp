@@ -86,7 +86,7 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -143,7 +143,7 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -197,7 +197,7 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -240,7 +240,7 @@ TEST(BackendExprTests, CreateStructConstructionExprs2) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -298,7 +298,7 @@ TEST(BackendExprTests, CreateArrayIndexingExprs) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -398,7 +398,7 @@ TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
 
   }
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 

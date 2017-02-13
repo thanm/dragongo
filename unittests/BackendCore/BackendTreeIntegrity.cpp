@@ -54,7 +54,7 @@ TEST(BackendTreeIntegrity, CheckTreeIntegrity1) {
   // Undo the mangling to avoid asserts later on
   b4->clear();
 
-  h.finish();
+  h.finish(PreserveDebugInfo);
 }
 
 TEST(BackendTreeIntegrity, CheckTreeIntegrity2) {

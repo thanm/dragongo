@@ -74,7 +74,7 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -133,7 +133,7 @@ TEST(BackendExprTests, CreateFunctionCodeExpression) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -191,7 +191,7 @@ TEST(BackendExprTests, CreateNilPointerExpression) {
   bool isOK2 = h.expectBlock(exp2);
   EXPECT_TRUE(isOK2 && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -314,7 +314,7 @@ store %CPT.0* null, %CPT.0** %cpv1
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -394,7 +394,7 @@ TEST(BackendExprTests, CircularPointerExpressions2) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
@@ -444,7 +444,7 @@ TEST(BackendExprTests, CreatePointerOffsetExprs) {
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
-  bool broken = h.finish();
+  bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 

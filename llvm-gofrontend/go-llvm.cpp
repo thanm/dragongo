@@ -2477,21 +2477,7 @@ GenBlocks::GenBlocks(llvm::LLVMContext &context,
                      be->dibuilder(), be->getDICompUnit()),
       emitOrphanedCode_(false)
 {
-  // Debug info setup for function
-  llvm::DIType *dit = be_->buildDIType(function->fcnType(), dibuildhelper_);
-  llvm::DISubroutineType *dst =
-      llvm::cast<llvm::DISubroutineType>(dit);
-  unsigned fcnLine = linemap()->location_line(function->location());
-  bool isLocalToUnit = false; // FIXME -- look at exported/non-exported
-  bool isDefinition = true;
-  unsigned scopeLine = fcnLine; // FIXME -- determine correct value here
-  llvm::DIFile *difile =
-      dibuildhelper_.diFileFromLocation(function->location());
-  auto difunc =
-      dibuilder().createFunction(scope, function->name(), function->asmName(),
-                                 difile, fcnLine, dst, isLocalToUnit,
-                                 isDefinition, scopeLine);
-  dibuildhelper_.pushDIScope(difunc);
+  dibuildhelper_.beginFunction(scope, function);
 }
 
 llvm::BasicBlock *GenBlocks::mkLLVMBlock(const std::string &name,
@@ -2521,10 +2507,7 @@ llvm::BasicBlock *GenBlocks::walkExpr(llvm::BasicBlock *curblock,
 
   // Now visit instructions for this expr
   for (auto inst : expr->instructions()) {
-    Location eloc = expr->location();
-    if (!linemap()->is_unknown(eloc) && !linemap()->is_predeclared(eloc))
-      inst->setDebugLoc(dibuildhelper().debugLocFromLocation(eloc));
-
+    dibuildhelper_.processExprInst(expr, inst);
     if (curblock)
       curblock->getInstList().push_back(inst);
     else
@@ -2650,8 +2633,11 @@ llvm::BasicBlock *GenBlocks::walk(Bnode *node,
       break;
     }
     case N_BlockStmt: {
+      Bblock *bblock = stmt->castToBblock();
+      dibuildhelper().beginLexicalBlock(bblock);
       for (auto &st : stmt->getChildStmts())
         curblock = walk(st, curblock);
+      dibuildhelper().endLexicalBlock(bblock);
       break;
     }
     case N_IfStmt: {
@@ -2768,8 +2754,6 @@ void Llvm_backend::write_global_definitions(
     const std::vector<Bvariable *> &variable_decls) {
 
   finalizeExportData();
-  if (dibuilder_.get())
-    dibuilder_->finalize();
 
   // At the moment there isn't anything to do here with the
   // inputs we're being passed.
@@ -2801,6 +2785,10 @@ static void postProcessExportDataChunk(const char *bytes,
 
 void Llvm_backend::finalizeExportData()
 {
+  // Calling this here, for lack of a better spot
+  if (dibuilder_.get())
+    dibuilder_->finalize();
+
   assert(! exportDataFinalized_);
   exportDataFinalized_ = true;
   module().appendModuleInlineAsm("\t.text\n");

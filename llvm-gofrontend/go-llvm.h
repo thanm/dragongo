@@ -334,6 +334,9 @@ public:
   // Return top-level debug meta data object for module
   llvm::DICompileUnit *getDICompUnit();
 
+  // Finalize export data for the module. Exposed for unit testing.
+  void finalizeExportData();
+
   // Run the module verifier.
   void verifyModule();
 
@@ -540,9 +543,6 @@ public:
   // values will be returned.
   std::pair<llvm::Value *, llvm::Value *>
   convertForBinary(Bexpression *left, Bexpression *right);
-
-  // Finalize export data for the module.
-  void finalizeExportData();
 
 private:
   template <typename T1, typename T2> class pairvalmap_hash {

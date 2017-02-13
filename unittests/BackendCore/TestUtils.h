@@ -33,6 +33,7 @@
 
 namespace goBackendUnitTests {
 
+
 // Return string representation of LLVM value (handling null ptr)
 std::string repr(llvm::Value *val);
 
@@ -107,10 +108,6 @@ llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...);
 // Returns func:  fname(i1, i2 int32) int64 { }
 Bfunction *mkFunci32o64(Backend *be, const char *fname, bool mkParams = true);
 
-// Produce a call expression targeting the specified function. Variable
-// args are parameter values, terminated by nullptr.
-Bexpression *mkCallExpr(Backend *be, Bfunction *fun, ...);
-
 // Returns function created from type
 Bfunction *mkFuncFromType(Backend *be, const char *fname, BFunctionType *befty);
 
@@ -142,6 +139,12 @@ Bstatement *addStmtToBlock(Backend *be, Bblock *block, Bstatement *st);
 Bstatement *addExprToBlock(Backend *be, Bfunction *f,
                            Bblock *bl, Bexpression *e);
 
+// What to do with debug meta-data when verifying the module
+enum DebugDisposition {
+  StripDebugInfo,
+  PreserveDebugInfo
+};
+
 class FcnTestHarness {
  public:
   // Create test harness. If name specified, then create a
@@ -155,6 +158,11 @@ class FcnTestHarness {
   // Return pointer to backend
   Llvm_backend *be() { return be_.get(); }
 
+  // Harness creates a single dummy location to assign to all
+  // expressions it creates -- this helper returns that location.
+  Location loc() const { return loc_; }
+
+
   // Return current function
   Bfunction *func() const { return func_; }
 
@@ -166,6 +174,10 @@ class FcnTestHarness {
 
   // Whether to append created stmt to current block
   enum AppendDisp { YesAppend, NoAppend };
+
+  // Produce a call expression targeting the specified function. Variable
+  // args are parameter values, terminated by nullptr.
+  Bexpression *mkCallExpr(Backend *be, Bfunction *fun, ...);
 
   // Create an assignment LHS = RHS and append to block
   void mkAssign(Bexpression *lhs, Bexpression *rhs, AppendDisp d = YesAppend);
@@ -208,10 +220,18 @@ class FcnTestHarness {
   // and emit diagnostics if not.
   bool expectValue(llvm::Value *val, const std::string &expected);
 
+  //
   // Finish function:
   // - attach current block to function
   // - verify module, returning TRUE if module fails to verify
-  bool finish();
+  //
+  // In some cases having debug meta-data around can create useless
+  // noise (for example, if the goal of a test is to verify the control
+  // flow generated for an "if" statement, we don't really care about
+  // checking that things have proper meta-data). In such cases clients
+  // can pass in StripDebugInfo when invoking this routine.
+  //
+  bool finish(DebugDisposition disp);
 
  private:
   llvm::LLVMContext context_;
