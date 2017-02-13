@@ -115,6 +115,7 @@ public:
   unsigned labelCount_;
   Location location_;
   SplitStackDisposition splitStack_;
+  bool prologGenerated_;
 };
 
 #endif // LLVMGOFRONTEND_GO_LLVM_BFUNCTION_H

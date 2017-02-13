@@ -64,7 +64,8 @@ void DIBuildHelper::beginFunction(llvm::DIScope *scope, Bfunction *function)
     llvm::DIType *vdit =
         typemanager()->buildDIType(v->btype(), *this);
     unsigned vline = linemap()->location_line(v->location());
-    dibuilder().createAutoVariable(difunc, v->name(), vfile, vline, vdit);
+    auto *av = dibuilder().createAutoVariable(difunc, v->name(), vfile,
+                                              vline, vdit);
   }
 }
 

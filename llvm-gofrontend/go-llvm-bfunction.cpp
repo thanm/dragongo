@@ -30,16 +30,19 @@ Bfunction::Bfunction(llvm::Function *f,
                      const std::string &asmName,
                      Location location)
     : function_(f), fcnType_(fcnType), name_(name), asmName_(asmName),
-      labelCount_(0), location_(location), splitStack_(YesSplit)
+      labelCount_(0), location_(location), splitStack_(YesSplit),
+      prologGenerated_(false)
 {
 }
 
 Bfunction::~Bfunction()
 {
-  for (auto ais : allocas_)
-    delete ais;
-  for (auto &kv : argToVal_)
-    delete kv.second;
+  if (! prologGenerated_) {
+    for (auto ais : allocas_)
+      delete ais;
+    for (auto &kv : argToVal_)
+      delete kv.second;
+  }
   for (auto &lab : labels_)
     delete lab;
   for (auto &kv : valueVarMap_)
@@ -149,11 +152,12 @@ void Bfunction::genProlog(llvm::BasicBlock *entry) {
   // Append allocas for local variables
   for (auto aa : allocas_)
     entry->getInstList().push_back(aa);
-  allocas_.clear();
 
   // Param spills
   for (auto sp : spills)
     entry->getInstList().push_back(sp);
+
+  prologGenerated_ = true;
 }
 
 Blabel *Bfunction::newLabel(Location loc) {
