@@ -142,32 +142,29 @@ TEST(BackendVarTests, MakeGlobalVar) {
 }
 
 TEST(BackendVarTests, MakeTemporaryVar) {
-  LLVMContext C;
-
-  std::unique_ptr<Backend> be(go_get_backend(C));
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
 
   // var b bool = true
   Location loc;
   Btype *boolt = be->bool_type();
-  Bvariable *bv = be->local_variable(func, "b", boolt, true, loc);
-  Bexpression *trueval = be->boolean_constant_expression(true);
-  Bstatement *is1 = be->init_statement(func, bv, trueval);
-  Bblock *block = mkBlockFromStmt(be.get(), func, is1);
+  h.mkLocal("b", boolt, be->boolean_constant_expression(true));
 
   // temporary var [uint64] = 99
   Btype *bu64t = be->integer_type(true, 64);
   Bstatement *inits = nullptr;
-  Bexpression *con64 = mkUint64Const(be.get(), 64);
-  Bvariable *tvar = be->temporary_variable(func, block, bu64t, con64,
+  Bexpression *con64 = mkUint64Const(be, 64);
+  Bvariable *tvar = be->temporary_variable(func, h.block(), bu64t, con64,
                                            false, loc, &inits);
   ASSERT_TRUE(tvar != nullptr);
   ASSERT_TRUE(inits != nullptr);
   EXPECT_EQ(repr(inits), "store i64 64, i64* %tmpv.0");
 
-  addStmtToBlock(be.get(), block, inits);
+  h.addStmt(inits);
 
-  be->function_set_body(func, block);
+  bool broken = h.finish(PreserveDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendVarTests, MakeImmutableStruct) {
