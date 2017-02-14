@@ -128,8 +128,7 @@ class TypeManager {
   // LLVM type creation helpers
   llvm::Type *makeLLVMFloatType(int bits);
   llvm::Type *makeLLVMStructType(const std::vector<Btyped_identifier> &fields);
-  llvm::Type *makeLLVMFunctionType(Btype *receiverType,
-                                   const std::vector<Btype *> &paramTypes,
+  llvm::Type *makeLLVMFunctionType(const std::vector<Btype *> &paramTypes,
                                    const std::vector<Btype *> &resultTypes,
                                    Btype *rbtype);
 

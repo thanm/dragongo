@@ -327,10 +327,15 @@ class BFunctionType : public Btype {
                 Location location)
       : Btype(FunctionT, type, location), receiverType_(receiverType),
         paramTypes_(paramTypes), resultTypes_(resultTypes),
-        rtype_(rtype) { }
+        rtype_(rtype) {
+    assert(!receiverType || paramTypes[0] == receiverType);
+  }
 
   Btype *resultType() const { return rtype_; }
   Btype *receiverType() const { return receiverType_; }
+
+  // Note that if the receiver type is non-null, it will
+  // occupy the first slot in paramTypes.
   const std::vector<Btype *> &paramTypes() const { return paramTypes_; }
 
   // Create a shallow copy of this type

@@ -84,6 +84,21 @@ Bvariable *Bfunction::local_variable(const std::string &name,
   return bv;
 }
 
+std::vector<Bvariable*> Bfunction::getParameterVars()
+{
+  std::vector<Bvariable*> res;
+  for (auto &arg : arguments_) {
+    auto ait = argToVal_.find(arg);
+    assert(ait != argToVal_.end());
+    llvm::Value *argval = ait->second;
+    auto it = valueVarMap_.find(argval);
+    assert(it != valueVarMap_.end());
+    Bvariable *v = it->second;
+    res.push_back(v);
+  }
+  return res;
+}
+
 std::vector<Bvariable*> Bfunction::getFunctionLocalVars()
 {
   std::vector<Bvariable*> res;
@@ -135,6 +150,11 @@ llvm::Instruction *Bfunction::argValue(llvm::Argument *arg) {
   return inst;
 }
 
+Bvariable *Bfunction::getNthParamVar(unsigned argIdx)
+{
+  return getBvarForValue(argValue(getNthArg(argIdx)));
+}
+
 void Bfunction::genProlog(llvm::BasicBlock *entry) {
   llvm::Function *func = function();
 
@@ -144,10 +164,12 @@ void Bfunction::genProlog(llvm::BasicBlock *entry) {
     llvm::Argument *arg = getNthArg(idx);
     llvm::Instruction *inst = argValue(arg);
     entry->getInstList().push_back(inst);
+    // FIXME: handle too-big-to-store composite value
     llvm::Instruction *si = new llvm::StoreInst(arg, inst);
     spills.push_back(si);
+    Bvariable *v = getNthParamVar(idx);
+    v->setInitializer(si);
   }
-  argToVal_.clear();
 
   // Append allocas for local variables
   for (auto aa : allocas_)

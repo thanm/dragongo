@@ -502,16 +502,13 @@ Btype *TypeManager::placeholderPointerType(const std::string &name,
 }
 
 llvm::Type *
-TypeManager::makeLLVMFunctionType(Btype *receiverType,
-                                   const std::vector<Btype *> &paramTypes,
-                                   const std::vector<Btype *> &resultTypes,
-                                   Btype *rbtype)
+TypeManager::makeLLVMFunctionType(const std::vector<Btype *> &paramTypes,
+                                  const std::vector<Btype *> &resultTypes,
+                                  Btype *rbtype)
 {
-  llvm::SmallVector<llvm::Type *, 4> elems(0);
+  // NB: receiver type already incorporated into paramTypes
 
-  // Receiver type if applicable
-  if (receiverType != nullptr)
-    elems.push_back(receiverType->type());
+  llvm::SmallVector<llvm::Type *, 4> elems(0);
 
   // Argument types
   for (auto pt : paramTypes)
@@ -541,12 +538,18 @@ TypeManager::makeLLVMFunctionType(Btype *receiverType,
 
 Btype *
 TypeManager::functionType(const Btyped_identifier &receiver,
-                           const std::vector<Btyped_identifier> &parameters,
-                            const std::vector<Btyped_identifier> &results,
-                            Btype *result_struct, Location location) {
+                          const std::vector<Btyped_identifier> &parameters,
+                          const std::vector<Btyped_identifier> &results,
+                          Btype *result_struct, Location location) {
+
+  std::vector<Btype *> paramTypes;
+  if (receiver.btype) {
+    if (receiver.btype == errorType_)
+      return errorType_;
+    paramTypes.push_back(receiver.btype);
+  }
 
   // Vett the parameters and results
-  std::vector<Btype *> paramTypes;
   for (auto p : parameters) {
     if (p.btype == errorType_)
       return errorType_;
@@ -559,8 +562,6 @@ TypeManager::functionType(const Btyped_identifier &receiver,
     resultTypes.push_back(r.btype);
   }
   if (result_struct && result_struct == errorType_)
-    return errorType_;
-  if (receiver.btype && receiver.btype == errorType_)
     return errorType_;
 
   // Determine result Btype
@@ -575,8 +576,7 @@ TypeManager::functionType(const Btyped_identifier &receiver,
   }
   assert(rbtype != nullptr);
 
-  llvm::Type *llft = makeLLVMFunctionType(receiver.btype, paramTypes,
-                                          resultTypes, rbtype);
+  llvm::Type *llft = makeLLVMFunctionType(paramTypes, resultTypes, rbtype);
 
   // Consult cache
   BFunctionType cand(receiver.btype, paramTypes, resultTypes, rbtype,

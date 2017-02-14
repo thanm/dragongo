@@ -21,19 +21,21 @@
 
 namespace llvm {
 class DIBuilder;
-class DIScope;
 class DIFile;
+class DILocalVariable;
 class DILocation;
-class DebugLoc;
+class DIScope;
 class DIType;
-class Type;
+class DebugLoc;
 class Instruction;
+class Type;
 }
 
+class Bblock;
 class Bexpression;
 class Bfunction;
 class Btype;
-class Bblock;
+class Bvariable;
 class Llvm_linemap;
 class TypeManager;
 
@@ -93,6 +95,7 @@ class DIBuildHelper {
 
  private:
   llvm::DebugLoc debugLocFromLocation(Location location);
+  void insertVarDecl(Bvariable *var, llvm::DILocalVariable *dilv);
 };
 
 #endif // !defined(GO_LLVM_DIBUILDHELPER_H)

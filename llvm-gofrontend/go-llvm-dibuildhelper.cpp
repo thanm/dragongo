@@ -59,9 +59,33 @@ void DIBuildHelper::beginFunction(llvm::DIScope *scope, Bfunction *function)
 
 }
 
+void DIBuildHelper::insertVarDecl(Bvariable *var,
+                                  llvm::DILocalVariable *dilv)
+{
+  llvm::DIExpression *expr = dibuilder().createExpression();
+  llvm::DILocation *vloc = debugLocFromLocation(var->location());
+  llvm::Instruction *insertionPoint = nullptr;
+  llvm::Instruction *decl =
+      dibuilder().insertDeclare(var->value(), dilv, expr, vloc, insertionPoint);
+  decl->insertAfter(var->initializerInstruction());
+}
+
 void DIBuildHelper::endFunction(Bfunction *function)
 {
   llvm::DISubprogram *fscope = llvm::cast<llvm::DISubprogram>(currentDIScope());
+
+  // Create debug meta-data for parameter variables.
+  unsigned argIdx = 0;
+  for (auto &v : function->getParameterVars()) {
+    llvm::DIFile *vfile = diFileFromLocation(v->location());
+    llvm::DIType *vdit =
+        typemanager()->buildDIType(v->btype(), *this);
+    unsigned vline = linemap()->location_line(v->location());
+    llvm::DILocalVariable *dilv =
+        dibuilder().createParameterVariable(fscope, v->name(), ++argIdx,
+                                            vfile, vline, vdit);
+    insertVarDecl(v, dilv);
+  }
 
   // Create debug meta-data for local variables. We wait to do this
   // here so as to insure that the initializer instructions for the
@@ -77,16 +101,10 @@ void DIBuildHelper::endFunction(Bfunction *function)
     llvm::DIType *vdit =
         typemanager()->buildDIType(v->btype(), *this);
     unsigned vline = linemap()->location_line(v->location());
-    auto *av = dibuilder().createAutoVariable(fscope, v->name(), vfile,
-                                              vline, vdit);
-
-    // Then debug declaration intrinsic
-    llvm::DIExpression *expr = dibuilder().createExpression();
-    llvm::DILocation *vloc = debugLocFromLocation(v->location());
-    llvm::Instruction *insertionPoint = nullptr;
-    llvm::Instruction *decl =
-        dibuilder().insertDeclare(v->value(), av, expr, vloc, insertionPoint);
-    decl->insertAfter(v->initializerInstruction());
+    llvm::DILocalVariable *dilv =
+        dibuilder().createAutoVariable(fscope, v->name(), vfile,
+                                       vline, vdit);
+    insertVarDecl(v, dilv);
   }
 
   // If a given function has no debug locations at all, then don't

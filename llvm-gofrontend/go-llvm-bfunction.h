@@ -86,6 +86,9 @@ public:
   // not include block-scoped variables, only function-scoped locals.
   std::vector<Bvariable*> getFunctionLocalVars();
 
+  // Return a vector of the parameter variables for the function.
+  std::vector<Bvariable*> getParameterVars();
+
  private:
 
   // Record an alloca() instruction, to be added to entry block
@@ -96,6 +99,9 @@ public:
 
   // Return alloca inst holding argument value (create if needed)
   llvm::Instruction *argValue(llvm::Argument *arg);
+
+  // Return Bvariable for Nth argument to function
+  Bvariable *getNthParamVar(unsigned argIdx);
 
   // Number of parameter vars registered so far
   unsigned paramsCreated() { return argToVal_.size(); }
