@@ -223,36 +223,34 @@ TEST(BackendExprTests, TestMoreConversionExpressions) {
 }
 
 TEST(BackendExprTests, MakeVarExpressions) {
-  llvm::LLVMContext C;
-
-  std::unique_ptr<Backend> be(go_get_backend(C));
-
-  Bfunction *func = mkFunci32o64(be.get(), "foo");
-  Btype *bi64t = be->integer_type(false, 64);
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
   Location loc;
-  Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
+
+  Btype *bi64t = be->integer_type(false, 64);
+  Bvariable *loc1 = h.mkLocal("loc1", bi64t, mkInt64Const(be, 10));
 
   // We should get a distinct Bexpression each time we create a new
   // var expression.
   Bexpression *ve1 = be->var_expression(loc1, VE_rvalue, loc);
   EXPECT_EQ(repr(ve1->value()), "%loc1 = alloca i64");
-  Bstatement *es = be->expression_statement(func, ve1);
-  Bblock *block = mkBlockFromStmt(be.get(), func, es);
+  h.mkExprStmt(ve1);
   Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, loc);
+  h.mkExprStmt(ve2);
   EXPECT_EQ(repr(ve2->value()), "%loc1 = alloca i64");
   EXPECT_NE(ve1, ve2);
-  addExprToBlock(be.get(), func, block, ve2);
 
   // Same here.
   Bexpression *ve3 = be->var_expression(loc1, VE_lvalue, loc);
   EXPECT_EQ(repr(ve3->value()), "%loc1 = alloca i64");
-  addExprToBlock(be.get(), func, block, ve3);
+  h.mkExprStmt(ve3);
   Bexpression *ve4 = be->var_expression(loc1, VE_lvalue, loc);
   EXPECT_EQ(repr(ve4->value()), "%loc1 = alloca i64");
   EXPECT_NE(ve3, ve4);
-  addExprToBlock(be.get(), func, block, ve4);
+  h.mkExprStmt(ve4);
 
-  be->function_set_body(func, block);
+  bool broken = h.finish(PreserveDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendExprTests, TestCompareOps) {

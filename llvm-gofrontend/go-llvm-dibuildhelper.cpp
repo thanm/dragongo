@@ -57,28 +57,46 @@ void DIBuildHelper::beginFunction(llvm::DIScope *scope, Bfunction *function)
                                  isDefinition, scopeLine);
   pushDIScope(difunc);
 
-  // Then the local variables. Note that block-scoped vars will be
-  // registered later on when we visit their containing block.
-  for (auto &v : function->getFunctionLocalVars()) {
-    llvm::DIFile *vfile = diFileFromLocation(v->location());
-    llvm::DIType *vdit =
-        typemanager()->buildDIType(v->btype(), *this);
-    unsigned vline = linemap()->location_line(v->location());
-    auto *av = dibuilder().createAutoVariable(difunc, v->name(), vfile,
-                                              vline, vdit);
-  }
 }
 
 void DIBuildHelper::endFunction(Bfunction *function)
 {
-  llvm::DISubprogram *fscope =
-      llvm::cast<llvm::DISubprogram>(popDIScope());
+  llvm::DISubprogram *fscope = llvm::cast<llvm::DISubprogram>(currentDIScope());
 
-  // This is hacky but needed for the time being.
-  // TODO: figure out a better strategy (more FDO-friendly)
-  // for compiler-generated functions.
+  // Create debug meta-data for local variables. We wait to do this
+  // here so as to insure that the initializer instructions for the
+  // variables have been assigned to a basic block. Note that
+  // block-scoped locals (as opposed to function-scoped locals) will
+  // already have been processed at this point.
+  for (auto &v : function->getFunctionLocalVars()) {
+    if (v->isTemporary())
+      continue;
+
+    // First create meta-data node
+    llvm::DIFile *vfile = diFileFromLocation(v->location());
+    llvm::DIType *vdit =
+        typemanager()->buildDIType(v->btype(), *this);
+    unsigned vline = linemap()->location_line(v->location());
+    auto *av = dibuilder().createAutoVariable(fscope, v->name(), vfile,
+                                              vline, vdit);
+
+    // Then debug declaration intrinsic
+    llvm::DIExpression *expr = dibuilder().createExpression();
+    llvm::DILocation *vloc = debugLocFromLocation(v->location());
+    llvm::Instruction *insertionPoint = nullptr;
+    llvm::Instruction *decl =
+        dibuilder().insertDeclare(v->value(), av, expr, vloc, insertionPoint);
+    decl->insertAfter(v->initializerInstruction());
+  }
+
+  // If a given function has no debug locations at all, then don't
+  // try to mark it as having debug info (without doing this we can
+  // wind up having functions flagged as problematic by the verifier).
   if (known_locations_)
     function->function()->setSubprogram(fscope);
+
+  // Done with this scope
+  popDIScope();
 }
 
 void DIBuildHelper::beginLexicalBlock(Bblock *block)

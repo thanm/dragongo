@@ -14,16 +14,14 @@
 #ifndef LLVMGOFRONTEND_GO_LLVM_BVARIABLE_H
 #define LLVMGOFRONTEND_GO_LLVM_BVARIABLE_H
 
-// Currently these need to be included before backend.h
 #include "go-linemap.h"
 #include "go-location.h"
 
 #include "go-llvm-btype.h"
 
-//#include "backend.h"
-
 namespace llvm {
 class Value;
+class Instruction;
 }
 
 // Back end variable class
@@ -32,11 +30,12 @@ enum WhichVar { ParamVar, GlobalVar, LocalVar, BlockVar, ErrorVar };
 
 class Bvariable {
 public:
-  explicit Bvariable(Btype *type, Location location,
-                     const std::string &name, WhichVar which,
-                     bool address_taken, llvm::Value *value)
-      : name_(name), location_(location), value_(value), type_(type),
-        which_(which), addrtaken_(address_taken) {}
+  Bvariable(Btype *type, Location location,
+            const std::string &name, WhichVar which,
+            bool address_taken, llvm::Value *value)
+      : name_(name), location_(location), value_(value),
+        initializer_(nullptr), type_(type), which_(which),
+        addrtaken_(address_taken), temporary_(false) {}
 
   // Common to all varieties of variables
   Location location() { return location_; }
@@ -45,6 +44,14 @@ public:
   llvm::Value *value() { return value_; }
   bool addrtaken() { return addrtaken_; }
   WhichVar flavor() const { return which_; }
+  bool isTemporary() const { return temporary_; }
+  void markAsTemporary() { temporary_ = true; }
+
+  // Set/get variable initializer.
+  void setInitializer(llvm::Value *init);
+  void setInitializerExpr(Bexpression *expr);
+  llvm::Value *initializer() const { return initializer_; }
+  llvm::Instruction *initializerInstruction() const;
 
   // debugging
   void dump();
@@ -61,9 +68,11 @@ private:
   const std::string name_;
   Location location_;
   llvm::Value *value_;
+  llvm::Value *initializer_;
   Btype *type_;
   WhichVar which_;
   bool addrtaken_;
+  bool temporary_;
 
   friend class Llvm_backend;
 };

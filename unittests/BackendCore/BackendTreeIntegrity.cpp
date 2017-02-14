@@ -85,6 +85,8 @@ TEST(BackendTreeIntegrity, CheckTreeIntegrity2) {
   Bstatement *es3 = be->expression_statement(func, ve3);
   Bblock *block2 = mkBlockFromStmt(be.get(), func, es3);
 
+  be->disableDebugMetaDataGeneration();
+
   be->function_set_body(func, block2);
 }
 
@@ -111,6 +113,8 @@ TEST(BackendTreeIntegrity, CheckTreeIntegrity3) {
   Bexpression *b3 = mkInt64Const(be.get(), 3);
   Bstatement *es2 = be->expression_statement(func, b3);
   Bblock *block2 = mkBlockFromStmt(be.get(), func, es2);
+
+  be->disableDebugMetaDataGeneration();
 
   be->function_set_body(func, block2);
 }

@@ -84,6 +84,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , addressSpace_(0)
     , traceLevel_(0)
     , checkIntegrity_(true)
+    , createDebugMetaData_(true)
     , exportDataStarted_(false)
     , exportDataFinalized_(false)
     , TLI_(nullptr)
@@ -147,7 +148,10 @@ Llvm_backend::~Llvm_backend() {
 
 llvm::DICompileUnit *Llvm_backend::getDICompUnit()
 {
-  if (diCompileUnit_)
+  if (!createDebugMetaData_)
+    return nullptr;
+
+  if (diCompileUnit_ || !createDebugMetaData_)
     return diCompileUnit_;
 
   // Create debug info builder
@@ -722,11 +726,13 @@ Bexpression *Llvm_backend::resolveCompositeInit(Bexpression *expr,
   if (expr == errorExpression() || func == errorFunction_.get())
     return errorExpression();
   bool setPending = false;
+  Bvariable *tvar = nullptr;
   if (!storage) {
     assert(func);
     std::string tname(namegen("tmp"));
-    Bvariable *tvar = local_variable(func, tname, expr->btype(), true,
-                                     Location());
+    tvar = local_variable(func, tname, expr->btype(), true, Location());
+    assert(tvar != errorVariable_.get());
+    tvar->markAsTemporary();
     storage = tvar->value();
     setPending = true;
   }
@@ -742,8 +748,10 @@ Bexpression *Llvm_backend::resolveCompositeInit(Bexpression *expr,
     llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(llt);
     rval = genArrayInit(llat, expr, storage, func);
   }
-  if (setPending)
+  if (setPending) {
     rval->setVarExprPending(false, 0);
+    tvar->setInitializerExpr(rval);
+  }
   return rval;
 }
 
@@ -1730,6 +1738,7 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
       init = resolveCompositeInit(init, bfunction, var->value());
       Bstatement *es = nbuilder_.mkExprStmt(bfunction, init,
                                             init->location());
+      var->setInitializer(es->getExprStmtExpr()->value());
       CHKTREE(es);
       return es;
     }
@@ -1740,6 +1749,7 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
   Bexpression *varexp = nbuilder_.mkVar(var, var->location());
   Bstatement *st = makeAssignment(bfunction, var->value(),
                                   varexp, init, Location());
+  var->setInitializer(st->getExprStmtExpr()->value());
   CHKTREE(st);
   return st;
 }
@@ -2183,6 +2193,7 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function,
                                    is_address_taken, location);
   if (tvar == errorVariable_.get())
     return tvar;
+  tvar->markAsTemporary();
   Bstatement *is = init_statement(function, tvar, binit);
   *pstatement = is;
   return tvar;
@@ -2440,7 +2451,8 @@ bool Llvm_backend::function_set_parameters(
 class GenBlocks {
 public:
   GenBlocks(llvm::LLVMContext &context, Llvm_backend *be,
-            Bfunction *function, llvm::DIScope *scope);
+            Bfunction *function, llvm::DIScope *scope,
+            bool createDebugMetadata);
 
   llvm::BasicBlock *walk(Bnode *node, llvm::BasicBlock *curblock);
   void finishFunction();
@@ -2458,33 +2470,41 @@ public:
   llvm::BasicBlock *walkExpr(llvm::BasicBlock *curblock, Bexpression *expr);
 
   llvm::DIBuilder &dibuilder() { return be_->dibuilder(); }
-  DIBuildHelper &dibuildhelper() { return dibuildhelper_; }
+  DIBuildHelper &dibuildhelper() { return *dibuildhelper_.get(); }
   Llvm_linemap *linemap() { return be_->linemap(); }
 
  private:
   llvm::LLVMContext &context_;
   Llvm_backend *be_;
   Bfunction *function_;
-  DIBuildHelper dibuildhelper_;
+  std::unique_ptr<DIBuildHelper> dibuildhelper_;
   std::map<LabelId, llvm::BasicBlock *> labelmap_;
   bool emitOrphanedCode_;
+  bool createDebugMetaData_;
 };
 
 GenBlocks::GenBlocks(llvm::LLVMContext &context,
                      Llvm_backend *be,
                      Bfunction *function,
-                     llvm::DIScope *scope)
+                     llvm::DIScope *scope,
+                     bool createDebugMetadata)
     : context_(context), be_(be), function_(function),
-      dibuildhelper_(be->typeManager(), be->linemap(),
-                     be->dibuilder(), be->getDICompUnit()),
-      emitOrphanedCode_(false)
+      dibuildhelper_(nullptr), emitOrphanedCode_(false),
+      createDebugMetaData_(createDebugMetadata)
 {
-  dibuildhelper_.beginFunction(scope, function);
+  if (createDebugMetaData_) {
+    dibuildhelper_.reset(new DIBuildHelper(be->typeManager(),
+                                           be->linemap(),
+                                           be->dibuilder(),
+                                           be->getDICompUnit()));
+    dibuildhelper().beginFunction(scope, function);
+  }
 }
 
 void GenBlocks::finishFunction()
 {
-  dibuildhelper_.endFunction(function_);
+  if (createDebugMetaData_)
+    dibuildhelper().endFunction(function_);
 }
 
 llvm::BasicBlock *GenBlocks::mkLLVMBlock(const std::string &name,
@@ -2514,7 +2534,8 @@ llvm::BasicBlock *GenBlocks::walkExpr(llvm::BasicBlock *curblock,
 
   // Now visit instructions for this expr
   for (auto inst : expr->instructions()) {
-    dibuildhelper_.processExprInst(expr, inst);
+    if (createDebugMetaData_)
+      dibuildhelper().processExprInst(expr, inst);
     if (curblock)
       curblock->getInstList().push_back(inst);
     else
@@ -2641,10 +2662,12 @@ llvm::BasicBlock *GenBlocks::walk(Bnode *node,
     }
     case N_BlockStmt: {
       Bblock *bblock = stmt->castToBblock();
-      dibuildhelper().beginLexicalBlock(bblock);
+      if (createDebugMetaData_)
+        dibuildhelper().beginLexicalBlock(bblock);
       for (auto &st : stmt->getChildStmts())
         curblock = walk(st, curblock);
-      dibuildhelper().endLexicalBlock(bblock);
+      if (createDebugMetaData_)
+        dibuildhelper().endLexicalBlock(bblock);
       break;
     }
     case N_IfStmt: {
@@ -2732,7 +2755,7 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   llvm::BasicBlock *entryBlock = genEntryBlock(function);
 
   // Walk the code statements
-  GenBlocks gb(context_, this, function, getDICompUnit());
+  GenBlocks gb(context_, this, function, getDICompUnit(), createDebugMetaData_);
   llvm::BasicBlock *block = gb.walk(code_stmt, entryBlock);
   gb.finishFunction();
 

@@ -33,10 +33,12 @@ TEST(BackendStmtTests, TestInitStmt) {
   EXPECT_EQ(repr(is), "store i64 10, i64* %loc1");
 
   // error handling
-  Bvariable *loc2 = be->local_variable(func, "loc1", bi64t, true, loc);
+  Bvariable *loc2 = be->local_variable(func, "loc2", bi64t, true, loc);
   Bstatement *bad = be->init_statement(func, loc2, be->error_expression());
   ASSERT_TRUE(bad != nullptr);
   EXPECT_EQ(bad, be->error_statement());
+  Bstatement *notsobad = be->init_statement(func, loc2, nullptr);
+  h.addStmt(notsobad);
 
   bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
@@ -51,7 +53,7 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
   Location loc;
 
   // assign a constant to a variable
-  Bvariable *loc1 = be->local_variable(func, "loc1", bi64t, true, loc);
+  Bvariable *loc1 = h.mkLocal("loc1", bi64t);
   Bexpression *ve1 = be->var_expression(loc1, VE_lvalue, loc);
   Bstatement *as =
       be->assignment_statement(func, ve1, mkInt64Const(be, 123), loc);
@@ -59,7 +61,7 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
   h.addStmt(as);
 
   // assign a variable to a variable
-  Bvariable *loc2 = be->local_variable(func, "loc2", bi64t, true, loc);
+  Bvariable *loc2 = h.mkLocal("loc2", bi64t);
   Bexpression *ve2 = be->var_expression(loc2, VE_lvalue, loc);
   Bexpression *ve3 = be->var_expression(loc1, VE_rvalue, loc);
   Bstatement *as2 = be->assignment_statement(func, ve2, ve3, loc);
@@ -67,15 +69,17 @@ TEST(BackendStmtTests, TestAssignmentStmt) {
   h.addStmt(as2);
 
   const char *exp = R"RAW_RESULT(
-            store i64 123, i64* %loc1
-            %loc1.ld.0 = load i64, i64* %loc1
-            store i64 %loc1.ld.0, i64* %loc2
+    store i64 0, i64* %loc1
+      store i64 123, i64* %loc1
+      store i64 0, i64* %loc2
+      %loc1.ld.0 = load i64, i64* %loc1
+      store i64 %loc1.ld.0, i64* %loc2
    )RAW_RESULT";
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
 
   // error handling
-  Bvariable *loc3 = be->local_variable(func, "loc3", bi64t, true, loc);
+  Bvariable *loc3 = h.mkLocal("loc3", bi64t);
   Bexpression *ve4 = be->var_expression(loc3, VE_lvalue, loc);
   Bstatement *badas =
       be->assignment_statement(func, ve4, be->error_expression(), loc);

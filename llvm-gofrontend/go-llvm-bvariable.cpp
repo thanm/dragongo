@@ -12,8 +12,51 @@
 //===----------------------------------------------------------------------===//
 
 #include "go-llvm-bvariable.h"
+#include "go-llvm-bexpression.h"
 
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/IR/Instruction.h"
+
+void Bvariable::setInitializer(llvm::Value *init)
+{
+  assert(initializer_ == nullptr);
+  assert(init);
+  assert(flavor() == GlobalVar || llvm::isa<llvm::Instruction>(init));
+  initializer_ = init;
+}
+
+class CollectLastInstVisitor {
+ public:
+  CollectLastInstVisitor() : inst_(nullptr) { }
+  llvm::Instruction *instruction() const { return inst_; }
+  void visitNodePre(Bnode *node) { }
+  void visitNodePost(Bnode *node) {
+    Bexpression *expr = node->castToBexpression();
+    if (!expr)
+      return;
+    if (! expr->instructions().size())
+      return;
+    inst_ = expr->instructions().back();
+  }
+ private:
+  llvm::Instruction *inst_;
+};
+
+void Bvariable::setInitializerExpr(Bexpression *expr)
+{
+  assert(expr);
+
+  CollectLastInstVisitor vis;
+  simple_walk_nodes(expr, vis);
+  assert(vis.instruction());
+  setInitializer(vis.instruction());
+}
+
+llvm::Instruction *Bvariable::initializerInstruction() const
+{
+  assert(initializer_);
+  return llvm::cast<llvm::Instruction>(initializer_);
+}
 
 static void indent(llvm::raw_ostream &os, unsigned ilevel) {
   for (unsigned i = 0; i < ilevel; ++i)

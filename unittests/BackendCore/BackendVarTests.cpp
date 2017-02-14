@@ -22,20 +22,19 @@ using namespace goBackendUnitTests;
 namespace {
 
 TEST(BackendVarTests, MakeLocalVar) {
-  LLVMContext C;
-
-  std::unique_ptr<Backend> be(go_get_backend(C));
-  Bfunction *func1 = mkFunci32o64(be.get(), "foo");
-  Bfunction *func2 = mkFunci32o64(be.get(), "bar");
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func1 = h.func();
+  Bfunction *func2 = mkFunci32o64(be, "bar");
 
   // Manufacture some locals
   Location loc;
   Btype *bi64t = be->integer_type(false, 64);
-  Btype *bst = mkBackendThreeFieldStruct(be.get());
-  Bvariable *loc1 = be->local_variable(func1, "loc1", bi64t, true, loc);
+  Btype *bst = mkBackendThreeFieldStruct(be);
+  Bvariable *loc1 = h.mkLocal("loc1", bi64t);
   ASSERT_TRUE(loc1 != nullptr);
   EXPECT_TRUE(loc1 != be->error_variable());
-  Bvariable *loc2 = be->local_variable(func1, "loc2", bst, false, loc);
+  Bvariable *loc2 = h.mkLocal("loc2", bst);
   ASSERT_TRUE(loc2 != nullptr);
   EXPECT_TRUE(loc2 != be->error_variable());
   Bvariable *loc3 = be->local_variable(func2, "loc3", bst, false, loc);
@@ -55,8 +54,7 @@ TEST(BackendVarTests, MakeLocalVar) {
   // Test var_expression created from local variable
   Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, Location());
   ASSERT_TRUE(ve2 != nullptr);
-  Bstatement *es = be->expression_statement(func1, ve2);
-  Bblock *block = mkBlockFromStmt(be.get(), func1, es);
+  Bstatement *es = h.mkExprStmt(ve2);
   EXPECT_EQ(repr(ve2->value()), "%loc1 = alloca i64");
   EXPECT_EQ(repr(es), "%loc1.ld.0 = load i64, i64* %loc1");
 
@@ -64,7 +62,8 @@ TEST(BackendVarTests, MakeLocalVar) {
   Bvariable *loce = be->local_variable(func1, "", be->error_type(), true, loc);
   EXPECT_TRUE(loce == be->error_variable());
 
-  be->function_set_body(func1, block);
+  bool broken = h.finish(PreserveDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 TEST(BackendVarTests, MakeParamVar) {

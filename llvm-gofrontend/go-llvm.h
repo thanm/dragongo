@@ -371,6 +371,11 @@ public:
   // so that we can unit test the integrity checker.
   void disableIntegrityChecks() { checkIntegrity_ = false; }
 
+  // Disable debug meta-data generation. Should be used only during
+  // unit testing, where we're manufacturing IR that might not verify
+  // if meta-data is created.
+  void disableDebugMetaDataGeneration() { createDebugMetaData_ = false; }
+
   // Return true if this is a module-scope value such as a constant
   bool moduleScopeValue(llvm::Value *val, Btype *btype) const;
 
@@ -614,6 +619,10 @@ private:
   // Whether to check for unexpected node sharing (e.g. same Bexpression
   // or statement pointed to by multiple parents).
   bool checkIntegrity_;
+
+  // Whether to create debug meta data. On by default, can be
+  // disabled for unit testing.
+  bool createDebugMetaData_;
 
   // Whether we've started / finalized export data for the module.
   bool exportDataStarted_;
