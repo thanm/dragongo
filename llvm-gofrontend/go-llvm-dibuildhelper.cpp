@@ -24,13 +24,14 @@
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Function.h"
 
-DIBuildHelper::DIBuildHelper(TypeManager *typemanager,
+DIBuildHelper::DIBuildHelper(Bnode *topnode,
+                             TypeManager *typemanager,
                              Llvm_linemap *linemap,
                              llvm::DIBuilder &builder,
                              llvm::DIScope *moduleScope)
     : typemanager_(typemanager), linemap_(linemap),
       dibuilder_(builder), moduleScope_(moduleScope),
-      known_locations_(0)
+      topblock_(topnode->castToBblock()), known_locations_(0)
 {
   pushDIScope(moduleScope);
 }
@@ -124,13 +125,18 @@ void DIBuildHelper::endFunction(Bfunction *function)
   popDIScope();
 }
 
-// Front end tends to declare more blocks than strictly required
-// for debug generation purposes, so here we examine the block
-// to see if it contains a non-temp variable. Return TRUE if there
-// is an interesting var, FALSE otherwise.
+// Front end tends to declare more blocks than strictly required for
+// debug generation purposes, so here we examine each block to see
+// whether it makes sense to generate a DWARF lexical scope record for
+// it. In particular, we look for blocks containing no user-visible
+// variables (these can be omitted).
+//
+// Return TRUE if this is an interesting block (needs DWARF scope) or
+// FALSE otherwise.
 
-static bool interestingBlock(Bblock *block)
+bool DIBuildHelper::interestingBlock(Bblock *block)
 {
+  assert(block);
   bool foundInteresting = false;
   for (auto &v : block->vars()) {
     if (! v->isTemporary()) {
@@ -141,13 +147,9 @@ static bool interestingBlock(Bblock *block)
   return foundInteresting;
 }
 
-// Note: still to fix -- if the function body contains only a single
-// lexical block at the top level, that block should be merged with the
-// function scope itself.
-
 void DIBuildHelper::beginLexicalBlock(Bblock *block)
 {
-  if (! interestingBlock(block))
+  if (! interestingBlock(block) || block == topblock_)
     return;
 
   // Register block with DIBuilder
@@ -165,10 +167,14 @@ void DIBuildHelper::endLexicalBlock(Bblock *block)
   if (! interestingBlock(block))
     return;
 
-  llvm::DIScope *scope = currentDIScope();
-  processVarsInBLock(block->vars(), scope);
+  // In the case of the top block, we still want to process any local
+  // variables it contains, but we'll want to insure that they are
+  // parented by the function itself.
+  //
+  llvm::DIScope *scope =
+      (block == topblock_ ? currentDIScope() : popDIScope());
 
-  popDIScope();
+  processVarsInBLock(block->vars(), scope);
 }
 
 void DIBuildHelper::processExprInst(Bexpression *expr, llvm::Instruction *inst)

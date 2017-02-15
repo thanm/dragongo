@@ -31,6 +31,7 @@ class Instruction;
 class Type;
 }
 
+class Bnode;
 class Bblock;
 class Bexpression;
 class Bfunction;
@@ -45,7 +46,8 @@ class TypeManager;
 
 class DIBuildHelper {
  public:
-  DIBuildHelper(TypeManager *typemanager,
+  DIBuildHelper(Bnode *topNode,
+                TypeManager *typemanager,
                 Llvm_linemap *linemap,
                 llvm::DIBuilder &builder,
                 llvm::DIScope *moduleScope);
@@ -88,6 +90,7 @@ class DIBuildHelper {
   Llvm_linemap *linemap_;
   llvm::DIBuilder &dibuilder_;
   llvm::DIScope *moduleScope_;
+  Bblock *topblock_;
   std::vector<llvm::DIScope*> diScopeStack_;
   std::unordered_map<Btype *, llvm::DIType*> typeCache_;
   std::unordered_map<llvm::DIType *, llvm::DIType*> typeReplacements_;
@@ -97,8 +100,10 @@ class DIBuildHelper {
  private:
   llvm::DebugLoc debugLocFromLocation(Location location);
   void insertVarDecl(Bvariable *var, llvm::DILocalVariable *dilv);
+  bool interestingBlock(Bblock *block);
   void processVarsInBLock(const std::vector<Bvariable*> &vars,
                           llvm::DIScope *scope);
+  void markBlocks(Bnode *node);
 };
 
 #endif // !defined(GO_LLVM_DIBUILDHELPER_H)

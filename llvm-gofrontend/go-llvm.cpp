@@ -2451,7 +2451,7 @@ bool Llvm_backend::function_set_parameters(
 class GenBlocks {
 public:
   GenBlocks(llvm::LLVMContext &context, Llvm_backend *be,
-            Bfunction *function, llvm::DIScope *scope,
+            Bfunction *function, Bnode *topNode, llvm::DIScope *scope,
             bool createDebugMetadata);
 
   llvm::BasicBlock *walk(Bnode *node, llvm::BasicBlock *curblock);
@@ -2486,6 +2486,7 @@ public:
 GenBlocks::GenBlocks(llvm::LLVMContext &context,
                      Llvm_backend *be,
                      Bfunction *function,
+                     Bnode *topNode,
                      llvm::DIScope *scope,
                      bool createDebugMetadata)
     : context_(context), be_(be), function_(function),
@@ -2493,7 +2494,8 @@ GenBlocks::GenBlocks(llvm::LLVMContext &context,
       createDebugMetaData_(createDebugMetadata)
 {
   if (createDebugMetaData_) {
-    dibuildhelper_.reset(new DIBuildHelper(be->typeManager(),
+    dibuildhelper_.reset(new DIBuildHelper(topNode,
+                                           be->typeManager(),
                                            be->linemap(),
                                            be->dibuilder(),
                                            be->getDICompUnit()));
@@ -2755,7 +2757,8 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   llvm::BasicBlock *entryBlock = genEntryBlock(function);
 
   // Walk the code statements
-  GenBlocks gb(context_, this, function, getDICompUnit(), createDebugMetaData_);
+  GenBlocks gb(context_, this, function, code_stmt,
+               getDICompUnit(), createDebugMetaData_);
   llvm::BasicBlock *block = gb.walk(code_stmt, entryBlock);
   gb.finishFunction();
 
