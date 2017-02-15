@@ -59,6 +59,23 @@ void DIBuildHelper::beginFunction(llvm::DIScope *scope, Bfunction *function)
 
 }
 
+void DIBuildHelper::processVarsInBLock(const std::vector<Bvariable*> &vars,
+                                       llvm::DIScope *scope)
+{
+  for (auto &v : vars) {
+    if (v->isTemporary())
+      continue;
+
+    llvm::DIFile *vfile = diFileFromLocation(v->location());
+    llvm::DIType *vdit =
+        typemanager()->buildDIType(v->btype(), *this);
+    unsigned vline = linemap()->location_line(v->location());
+    llvm::DILocalVariable *dilv =
+        dibuilder().createAutoVariable(scope, v->name(), vfile, vline, vdit);
+    insertVarDecl(v, dilv);
+  }
+}
+
 void DIBuildHelper::insertVarDecl(Bvariable *var,
                                   llvm::DILocalVariable *dilv)
 {
@@ -92,20 +109,7 @@ void DIBuildHelper::endFunction(Bfunction *function)
   // variables have been assigned to a basic block. Note that
   // block-scoped locals (as opposed to function-scoped locals) will
   // already have been processed at this point.
-  for (auto &v : function->getFunctionLocalVars()) {
-    if (v->isTemporary())
-      continue;
-
-    // First create meta-data node
-    llvm::DIFile *vfile = diFileFromLocation(v->location());
-    llvm::DIType *vdit =
-        typemanager()->buildDIType(v->btype(), *this);
-    unsigned vline = linemap()->location_line(v->location());
-    llvm::DILocalVariable *dilv =
-        dibuilder().createAutoVariable(fscope, v->name(), vfile,
-                                       vline, vdit);
-    insertVarDecl(v, dilv);
-  }
+  processVarsInBLock(function->getFunctionLocalVars(), fscope);
 
   // If a given function has no debug locations at all, then don't
   // try to mark it as having debug info (without doing this we can
@@ -117,8 +121,28 @@ void DIBuildHelper::endFunction(Bfunction *function)
   popDIScope();
 }
 
+// Front end tends to declare more blocks than strictly required
+// for debug generation purposes, so here we examine the block
+// to see if it contains a non-temp variable. Return TRUE if there
+// is an interesting var, FALSE otherwise.
+
+static bool interestingBlock(Bblock *block)
+{
+  bool foundInteresting = false;
+  for (auto &v : block->vars()) {
+    if (! v->isTemporary()) {
+      foundInteresting = true;
+      break;
+    }
+  }
+  return foundInteresting;
+}
+
 void DIBuildHelper::beginLexicalBlock(Bblock *block)
 {
+  if (! interestingBlock(block))
+    return;
+
   // Register block with DIBuilder
   Location bloc = block->location();
   llvm::DIFile *file = diFileFromLocation(block->location());
@@ -127,19 +151,16 @@ void DIBuildHelper::beginLexicalBlock(Bblock *block)
                                      linemap()->location_line(bloc),
                                      linemap()->location_column(bloc));
   pushDIScope(dilb);
-
-  // Declare local variables
-  for (auto &v : block->vars()) {
-    llvm::DIFile *vfile = diFileFromLocation(v->location());
-    llvm::DIType *vdit =
-        typemanager()->buildDIType(v->btype(), *this);
-    unsigned vline = linemap()->location_line(v->location());
-    dibuilder().createAutoVariable(dilb, v->name(), vfile, vline, vdit);
-  }
 }
 
 void DIBuildHelper::endLexicalBlock(Bblock *block)
 {
+  if (! interestingBlock(block))
+    return;
+
+  llvm::DIScope *scope = currentDIScope();
+  processVarsInBLock(block->vars(), scope);
+
   popDIScope();
 }
 

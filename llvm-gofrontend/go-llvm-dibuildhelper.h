@@ -96,6 +96,8 @@ class DIBuildHelper {
  private:
   llvm::DebugLoc debugLocFromLocation(Location location);
   void insertVarDecl(Bvariable *var, llvm::DILocalVariable *dilv);
+  void processVarsInBLock(const std::vector<Bvariable*> &vars,
+                          llvm::DIScope *scope);
 };
 
 #endif // !defined(GO_LLVM_DIBUILDHELPER_H)
