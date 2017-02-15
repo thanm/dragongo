@@ -18,7 +18,7 @@ using namespace goBackendUnitTests;
 
 namespace {
 
-TEST(BackendExprTests, TestAddrAndIndirection) {
+TEST(BackEndPointerExprTests, TestAddrAndIndirection) {
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
 
@@ -78,7 +78,7 @@ TEST(BackendExprTests, TestAddrAndIndirection) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CreateFunctionCodeExpression) {
+TEST(BackEndPointerExprTests, CreateFunctionCodeExpression) {
 
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
@@ -137,7 +137,7 @@ TEST(BackendExprTests, CreateFunctionCodeExpression) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CreateNilPointerExpression) {
+TEST(BackEndPointerExprTests, CreateNilPointerExpression) {
 
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
@@ -195,7 +195,7 @@ TEST(BackendExprTests, CreateNilPointerExpression) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CircularPointerExpressions1) {
+TEST(BackEndPointerExprTests, CircularPointerExpressions1) {
 
   // This testpoint is intended to verify handling of expressions
   // involving circular pointer types. Go code:
@@ -318,7 +318,7 @@ store %CPT.0* null, %CPT.0** %cpv1
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CircularPointerExpressions2) {
+TEST(BackEndPointerExprTests, CircularPointerExpressions2) {
 
   // More tests for circular pointers, this time
   // with multiple levels. Go code:
@@ -398,7 +398,7 @@ TEST(BackendExprTests, CircularPointerExpressions2) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CreatePointerOffsetExprs) {
+TEST(BackEndPointerExprTests, CreatePointerOffsetExprs) {
 
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();

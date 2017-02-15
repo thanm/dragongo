@@ -208,6 +208,24 @@ void Bnode::osdump(llvm::raw_ostream &os, unsigned ilevel,
       os << "field " << u.fieldIndex;
       break;
     }
+    case N_BlockStmt: {
+      Bblock *block = castToBblock();
+      if (block->vars().size()) {
+        os << " { ";
+        unsigned tmps = 0;
+        for (auto &v : block->vars()) {
+          if (v->isTemporary()) {
+            tmps += 1;
+            continue;
+          }
+          os << v->name() << " ";
+        }
+        os << "} ";
+        if (tmps)
+          os << tmps << " tmps";
+      }
+      break;
+    }
     case N_LabelStmt:
     case N_GotoStmt: {
       os << "label " << u.label;

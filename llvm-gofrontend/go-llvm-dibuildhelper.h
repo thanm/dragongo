@@ -91,6 +91,7 @@ class DIBuildHelper {
   std::vector<llvm::DIScope*> diScopeStack_;
   std::unordered_map<Btype *, llvm::DIType*> typeCache_;
   std::unordered_map<llvm::DIType *, llvm::DIType*> typeReplacements_;
+  std::unordered_set<Bvariable *> declared_;
   unsigned known_locations_;
 
  private:

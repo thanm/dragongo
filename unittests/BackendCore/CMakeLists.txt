@@ -23,6 +23,7 @@ set(BackendCoreSources
   BackendPointerExprTests.cpp
   BackendFcnTests.cpp
   BackendCallTests.cpp
+  BackendDebugEmit.cpp
   BackendStmtTests.cpp
   BackendVarTests.cpp
   BackendTreeIntegrity.cpp

@@ -65,6 +65,9 @@ void DIBuildHelper::processVarsInBLock(const std::vector<Bvariable*> &vars,
   for (auto &v : vars) {
     if (v->isTemporary())
       continue;
+    if (declared_.find(v) != declared_.end())
+      continue;
+    declared_.insert(v);
 
     llvm::DIFile *vfile = diFileFromLocation(v->location());
     llvm::DIType *vdit =
@@ -137,6 +140,10 @@ static bool interestingBlock(Bblock *block)
   }
   return foundInteresting;
 }
+
+// Note: still to fix -- if the function body contains only a single
+// lexical block at the top level, that block should be merged with the
+// function scope itself.
 
 void DIBuildHelper::beginLexicalBlock(Bblock *block)
 {
