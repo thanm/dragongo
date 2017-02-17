@@ -119,15 +119,16 @@ TEST(BackEndPointerExprTests, CreateFunctionCodeExpression) {
   h.mkAssign(vex3, rvex3);
 
   const char *exp = R"RAW_RESULT(
-     store { i64 } { i64 ptrtoint (i64 (i32, i32, i64*)* @foo to i64) }, { i64 }* %fdloc1
-     store { i64 }* %fdloc1, { i64 }** %fploc1
-     store { i64 (i32, i32, i64*)* }* null, { i64 (i32, i32, i64*)* }** %fploc2
-     %fploc1.ld.0 = load { i64 }*, { i64 }** %fploc1
-     %cast = bitcast { i64 }* %fploc1.ld.0 to { i64 (i32, i32, i64*)* }*
-     store { i64 (i32, i32, i64*)* }* %cast, { i64 (i32, i32, i64*)* }** %fploc2
-     %fploc2.ld.0 = load { i64 (i32, i32, i64*)* }*, { i64 (i32, i32, i64*)* }** %fploc2
-     %cast = bitcast { i64 (i32, i32, i64*)* }* %fploc2.ld.0 to { i64 }*
-     store { i64 }* %cast, { i64 }** %fploc1
+  %cast.0 = bitcast { i64 }* %fdloc1 to i8*
+  %copy.0 = call i8* @__builtin_memcpy(i8* %cast.0, i8* bitcast ({ i64 }* @const.0 to i8*), i64 8)
+  store { i64 }* %fdloc1, { i64 }** %fploc1
+  store { i64 (i32, i32, i64*)* }* null, { i64 (i32, i32, i64*)* }** %fploc2
+  %fploc1.ld.0 = load { i64 }*, { i64 }** %fploc1
+  %cast.2 = bitcast { i64 }* %fploc1.ld.0 to { i64 (i32, i32, i64*)* }*
+  store { i64 (i32, i32, i64*)* }* %cast.2, { i64 (i32, i32, i64*)* }** %fploc2
+  %fploc2.ld.0 = load { i64 (i32, i32, i64*)* }*, { i64 (i32, i32, i64*)* }** %fploc2
+  %cast.3 = bitcast { i64 (i32, i32, i64*)* }* %fploc2.ld.0 to { i64 }*
+  store { i64 }* %cast.3, { i64 }** %fploc1
   )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -277,35 +278,35 @@ TEST(BackEndPointerExprTests, CircularPointerExpressions1) {
   }
 
   const char *exp = R"RAW_RESULT(
-store %CPT.0* null, %CPT.0** %cpv1
+  store %CPT.0* null, %CPT.0** %cpv1
   store %CPT.0* null, %CPT.0** %cpv2
-  %cast = bitcast %CPT.0** %cpv2 to %CPT.0*
-  store %CPT.0* %cast, %CPT.0** %cpv1
-  %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
-  store %CPT.0* %cast, %CPT.0** %cpv2
+  %cast.0 = bitcast %CPT.0** %cpv2 to %CPT.0*
+  store %CPT.0* %cast.0, %CPT.0** %cpv1
+  %cast.1 = bitcast %CPT.0** %cpv1 to %CPT.0*
+  store %CPT.0* %cast.1, %CPT.0** %cpv2
   store i8 0, i8* %b1
   store i8 0, i8* %b2
   store i8 0, i8* %b3
   %cpv1.ld.0 = load %CPT.0*, %CPT.0** %cpv1
   %cpv2.ld.0 = load %CPT.0*, %CPT.0** %cpv2
-  %cast = bitcast %CPT.0* %cpv2.ld.0 to %CPT.0**
-  %.ld.0 = load %CPT.0*, %CPT.0** %cast
+  %cast.2 = bitcast %CPT.0* %cpv2.ld.0 to %CPT.0**
+  %.ld.0 = load %CPT.0*, %CPT.0** %cast.2
   %icmp.0 = icmp eq %CPT.0* %cpv1.ld.0, %.ld.0
   %zext.0 = zext i1 %icmp.0 to i8
   store i8 %zext.0, i8* %b1
-  %cast = bitcast %CPT.0** %cpv1 to %CPT.0*
+  %cast.3 = bitcast %CPT.0** %cpv1 to %CPT.0*
   %cpv2.ld.1 = load %CPT.0*, %CPT.0** %cpv2
-  %icmp.1 = icmp eq %CPT.0* %cast, %cpv2.ld.1
+  %icmp.1 = icmp eq %CPT.0* %cast.3, %cpv2.ld.1
   %zext.1 = zext i1 %icmp.1 to i8
   store i8 %zext.1, i8* %b2
   %cpv1.ld.1 = load %CPT.0*, %CPT.0** %cpv1
   %cpv2.ld.2 = load %CPT.0*, %CPT.0** %cpv2
-  %cast = bitcast %CPT.0* %cpv2.ld.2 to %CPT.0**
-  %deref.ld.0 = load %CPT.0*, %CPT.0** %cast
-  %cast = bitcast %CPT.0* %deref.ld.0 to %CPT.0**
-  %deref.ld.1 = load %CPT.0*, %CPT.0** %cast
-  %cast = bitcast %CPT.0* %deref.ld.1 to %CPT.0**
-  %.ld.1 = load %CPT.0*, %CPT.0** %cast
+  %cast.4 = bitcast %CPT.0* %cpv2.ld.2 to %CPT.0**
+  %deref.ld.0 = load %CPT.0*, %CPT.0** %cast.4
+  %cast.5 = bitcast %CPT.0* %deref.ld.0 to %CPT.0**
+  %deref.ld.1 = load %CPT.0*, %CPT.0** %cast.5
+  %cast.6 = bitcast %CPT.0* %deref.ld.1 to %CPT.0**
+  %.ld.1 = load %CPT.0*, %CPT.0** %cast.6
   %icmp.2 = icmp eq %CPT.0* %cpv1.ld.1, %.ld.1
   %zext.2 = zext i1 %icmp.2 to i8
   store i8 %zext.2, i8* %b3
@@ -375,20 +376,20 @@ TEST(BackEndPointerExprTests, CircularPointerExpressions2) {
   }
 
   const char *exp = R"RAW_RESULT(
-      store %CPT.0* null, %CPT.0** %x
-      store %CPT.0** null, %CPT.0*** %y
-      %cast = bitcast %CPT.0*** %y to %CPT.0*
-      store %CPT.0* %cast, %CPT.0** %x
-      store %CPT.0** %x, %CPT.0*** %y
-      store i8 0, i8* %b1
-      %cast = bitcast %CPT.0** %x to %CPT.0****
-      %x.ld.0 = load %CPT.0***, %CPT.0**** %cast
-      %y.ld.0 = load %CPT.0**, %CPT.0*** %y
-      %cast = bitcast %CPT.0** %y.ld.0 to %CPT.0****
-      %.ld.0 = load %CPT.0***, %CPT.0**** %cast
-      %icmp.0 = icmp eq %CPT.0*** %x.ld.0, %.ld.0
-      %zext.0 = zext i1 %icmp.0 to i8
-      store i8 %zext.0, i8* %b1
+  store %CPT.0* null, %CPT.0** %x
+  store %CPT.0** null, %CPT.0*** %y
+  %cast.0 = bitcast %CPT.0*** %y to %CPT.0*
+  store %CPT.0* %cast.0, %CPT.0** %x
+  store %CPT.0** %x, %CPT.0*** %y
+  store i8 0, i8* %b1
+  %cast.1 = bitcast %CPT.0** %x to %CPT.0****
+  %x.ld.0 = load %CPT.0***, %CPT.0**** %cast.1
+  %y.ld.0 = load %CPT.0**, %CPT.0*** %y
+  %cast.2 = bitcast %CPT.0** %y.ld.0 to %CPT.0****
+  %.ld.0 = load %CPT.0***, %CPT.0**** %cast.2
+  %icmp.0 = icmp eq %CPT.0*** %x.ld.0, %.ld.0
+  %zext.0 = zext i1 %icmp.0 to i8
+  store i8 %zext.0, i8* %b1
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);
@@ -434,8 +435,8 @@ TEST(BackEndPointerExprTests, CreatePointerOffsetExprs) {
       %param3.ld.0 = load i64*, i64** %param3.addr
       %ptroff.0 = getelementptr i64, i64* %param3.ld.0, i32 5
       store i64 9, i64* %ptroff.0
-      %cast = bitcast i64** %param3.addr to i32**
-      %.ld.0 = load i32*, i32** %cast
+      %cast.0 = bitcast i64** %param3.addr to i32**
+      %.ld.0 = load i32*, i32** %cast.0
       %ptroff.1 = getelementptr i32, i32* %.ld.0, i32 7
       %.ptroff.ld.0 = load i32, i32* %ptroff.1
       store i32 %.ptroff.ld.0, i32* %param1.addr

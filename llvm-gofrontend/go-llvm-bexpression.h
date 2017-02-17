@@ -36,7 +36,7 @@ class BnodeBuilder;
 class Binstructions {
 public:
   Binstructions() {}
-  explicit Binstructions(const std::vector<llvm::Instruction *> instructions)
+  explicit Binstructions(const std::vector<llvm::Instruction *> &instructions)
       : instructions_(instructions) {}
 
   const std::vector<llvm::Instruction *> &instructions() const {
@@ -174,6 +174,7 @@ class Bexpression : public Bnode, public Binstructions {
   void resetVarExprContext();
   bool compositeInitPending() const;
   const std::vector<Bexpression *> getChildExprs() const;
+  void setStoreValue(llvm::Value *val);
 
   // debugging
   void dumpInstructions(llvm::raw_ostream &os, unsigned ilevel,

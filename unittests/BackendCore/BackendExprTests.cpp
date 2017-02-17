@@ -177,8 +177,9 @@ TEST(BackendExprTests, TestConversionExpressions) {
 
   const char *exp = R"RAW_RESULT(
       store i64 0, i64* %x
-      %cast = bitcast i64* %x to { i32, i32 }*
-      %field.0 = getelementptr inbounds { i32, i32 }, { i32, i32 }* %cast, i32 0, i32 1
+      %cast.0 = bitcast i64* %x to { i32, i32 }*
+      %field.0 = getelementptr inbounds { i32, i32 },
+          { i32, i32 }* %cast.0, i32 0, i32 1
       store i32 22, i32* %field.0
     )RAW_RESULT";
 
@@ -210,8 +211,8 @@ TEST(BackendExprTests, TestMoreConversionExpressions) {
   h.mkAssign(dex, mkInt32Const(be, 5));
 
   const char *exp = R"RAW_RESULT(
-      %cast = bitcast i64** %param3.addr to i32**
-      %deref.ld.0 = load i32*, i32** %cast
+      %cast.0 = bitcast i64** %param3.addr to i32**
+      %deref.ld.0 = load i32*, i32** %cast.0
       store i32 5, i32* %deref.ld.0
     )RAW_RESULT";
 
@@ -736,9 +737,8 @@ TEST(BackendExprTests, TestLhsConditionalExpression) {
         store i32* %p1.ld.0, i32** %tmpv.0
         br label %fallthrough.0
 
-      fallthrough.0:                                    ; preds = %else.0, %then.0
+      fallthrough.0:                                ; preds = %else.0, %then.0
         %tmpv.0.ld.0 = load i32*, i32** %tmpv.0
-        %.ld.0 = load i32, i32* %tmpv.0.ld.0
         store i32 7, i32* %tmpv.0.ld.0
         ret void
 

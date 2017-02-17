@@ -471,6 +471,7 @@ FcnTestHarness::FcnTestHarness(const char *fcnName)
     , nextLabel_(nullptr)
     , finished_(false)
     , returnAdded_(false)
+    , emitDumpFilesOnDiff_(false)
 {
   // establish initial file so as to make verifier happy
   be_->linemap()->start_file("unit_testing.go", 1);
@@ -483,6 +484,9 @@ FcnTestHarness::FcnTestHarness(const char *fcnName)
     curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
   }
 
+  // debugging
+  if (getenv("DRAGONGO_UNITTESTS_BACKENDCORE_EMITDUMPFILES"))
+    emitDumpFilesOnDiff_ = true;
 }
 
 FcnTestHarness::~FcnTestHarness()
@@ -627,39 +631,63 @@ void FcnTestHarness::newBlock()
   curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
 }
 
+static void emitStringToDumpFile(const char *tag,
+                                 unsigned version,
+                                 const std::string &payload)
+{
+  std::stringstream ss;
+  ss << "/tmp/" << tag << ".dump." << version << ".txt";
+  FILE *fp = fopen(ss.str().c_str(), "w");
+  if (fp) {
+    fprintf(fp, "%s\n", payload.c_str());
+    fclose(fp);
+    std::cerr << "emitted dump file " << ss.str() << "\n";
+  }
+}
+
+static void complainOnNequal(const std::string &reason,
+                             const std::string &expected,
+                             const std::string &actual,
+                             bool emitDump)
+{
+  std::cerr << reason << "\n";
+  std::cerr << "expected dump:\n" << expected << "\n";
+  std::cerr << "statement dump:\n" << actual << "\n";
+  if (emitDump) {
+    static unsigned filecount;
+    emitStringToDumpFile("expected", filecount, expected);
+    emitStringToDumpFile("actual", filecount, actual);
+    filecount++;
+  }
+}
+
 bool FcnTestHarness::expectStmt(Bstatement *st, const std::string &expected)
 {
  std::string reason;
-  bool equal = difftokens(expected, repr(st), reason);
-  if (! equal) {
-    std::cerr << reason << "\n";
-    std::cerr << "expected dump:\n" << expected << "\n";
-    std::cerr << "statement dump:\n" << repr(st) << "\n";
-  }
+ std::string actual(repr(st));
+  bool equal = difftokens(expected, actual, reason);
+  if (! equal)
+    complainOnNequal(reason, expected, actual, emitDumpFilesOnDiff_);
   return equal;
 }
 
 bool FcnTestHarness::expectValue(llvm::Value *val, const std::string &expected)
 {
   std::string reason;
-  bool equal = difftokens(expected, repr(val), reason);
-  if (! equal) {
-    std::cerr << reason << "\n";
-    std::cerr << "expected dump:\n" << expected << "\n";
-    std::cerr << "value dump:\n" << repr(val) << "\n";
-  }
+  std::string actual(repr(val));
+  bool equal = difftokens(expected, actual, reason);
+  if (! equal)
+    complainOnNequal(reason, expected, actual, emitDumpFilesOnDiff_);
   return equal;
 }
 
 bool FcnTestHarness::expectBlock(const std::string &expected)
 {
   std::string reason;
-  bool equal = difftokens(expected, repr(curBlock_), reason);
-  if (! equal) {
-    std::cerr << reason << "\n";
-    std::cerr << "expected dump:\n" << expected << "\n";
-    std::cerr << "block dump:\n" << repr(curBlock_) << "\n";
-  }
+  std::string actual(repr(curBlock_));
+  bool equal = difftokens(expected, actual, reason);
+  if (! equal)
+    complainOnNequal(reason, expected, actual, emitDumpFilesOnDiff_);
   return equal;
 }
 

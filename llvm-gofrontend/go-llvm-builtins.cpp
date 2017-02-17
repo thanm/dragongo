@@ -94,6 +94,16 @@ void BuiltinTable::defineIntrinsicBuiltins() {
                        llvmInt32Type, llvmPtrType, llvmPtrType,
                        llvmSizeType, nullptr);
 
+  defineLibcallBuiltin("__builtin_memcpy", "memcpy",
+                       llvm::LibFunc::LibFunc_memcpy,
+                       llvmPtrType, llvmPtrType, llvmPtrType,
+                       llvmSizeType, nullptr);
+
+  defineLibcallBuiltin("__builtin_memmove", "memmove",
+                       llvm::LibFunc::LibFunc_memmove,
+                       llvmPtrType, llvmPtrType, llvmPtrType,
+                       llvmSizeType, nullptr);
+
   // go runtime refers to this intrinsic as "ctz", however the LLVM
   // equivalent is named "cttz".
   defineIntrinsicBuiltin("__builtin_ctz", "ctz", llvm::Intrinsic::cttz,

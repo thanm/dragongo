@@ -162,7 +162,6 @@ class FcnTestHarness {
   // expressions it creates -- this helper returns that location.
   Location loc() const { return loc_; }
 
-
   // Return current function
   Bfunction *func() const { return func_; }
 
@@ -244,6 +243,7 @@ class FcnTestHarness {
   Blabel *nextLabel_;
   bool finished_;
   bool returnAdded_;
+  bool emitDumpFilesOnDiff_;
 };
 
 } // end namespace goBackendUnitTests

@@ -95,6 +95,13 @@ const std::vector<Bexpression *> Bexpression::getChildExprs() const
   return rval;
 }
 
+void Bexpression::setStoreValue(llvm::Value *val)
+{
+  assert(value_ == nullptr);
+  assert(val);
+  value_ = val;
+}
+
 void Bexpression::srcDump(Llvm_linemap *linemap)
 {
   std::string s;

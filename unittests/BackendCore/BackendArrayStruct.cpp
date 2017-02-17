@@ -18,7 +18,7 @@ using namespace goBackendUnitTests;
 
 namespace {
 
-TEST(BackendExprTests, TestStructFieldExprs) {
+TEST(BackendArrayStructTests, TestStructFieldExprs) {
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
 
@@ -69,7 +69,8 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   h.mkAssign(bfex2, bc2);
 
   const char *exp = R"RAW_RESULT(
-      store { i8*, i32 } zeroinitializer, { i8*, i32 }* %loc1
+      %cast.0 = bitcast { i8*, i32 }* %loc1 to i8*
+      %copy.0 = call i8* @__builtin_memcpy(i8* %cast.0, i8* bitcast ({ i8*, i32 }* @const.0 to i8*), i64 8)
       store { i8*, i32 }* %loc1, { i8*, i32 }** %loc2
       store i32 0, i32* %x
       %field.0 = getelementptr inbounds { i8*, i32 }, { i8*, i32 }* %loc1, i32 0, i32 1
@@ -90,7 +91,7 @@ TEST(BackendExprTests, TestStructFieldExprs) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CreateArrayConstructionExprs) {
+TEST(BackendArrayStructTests, CreateArrayConstructionExprs) {
 
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
@@ -126,8 +127,10 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
   h.mkLocal("ac", at4, arcon3);
 
   const char *exp = R"RAW_RESULT(
-    store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
-    store [4 x i64] [i64 0, i64 0, i64 3, i64 0], [4 x i64]* %ab
+    %cast.0 = bitcast [4 x i64]* %aa to i8*
+    %copy.0 = call i8* @__builtin_memcpy(i8* %cast.0, i8* bitcast ([4 x i64]* @const.0 to i8*), i64 8)
+    %cast.2 = bitcast [4 x i64]* %ab to i8*
+    %copy.1 = call i8* @__builtin_memcpy(i8* %cast.2, i8* bitcast ([4 x i64]* @const.1 to i8*), i64 8)
     store i64 0, i64* %z
     %z.ld.0 = load i64, i64* %z
     %index.0 = getelementptr [4 x i64], [4 x i64]* %ac, i32 0, i32 0
@@ -147,7 +150,7 @@ TEST(BackendExprTests, CreateArrayConstructionExprs) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CreateStructConstructionExprs) {
+TEST(BackendArrayStructTests, CreateStructConstructionExprs) {
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
   Bfunction *func = h.func();
@@ -185,7 +188,8 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   h.mkLocal("loc2", s2t, scon2);
 
   const char *exp = R"RAW_RESULT(
-    store { i32*, i32 } { i32* null, i32 101 }, { i32*, i32 }* %loc1
+      %cast.0 = bitcast { i32*, i32 }* %loc1 to i8*
+      %copy.0 = call i8* @__builtin_memcpy(i8* %cast.0, i8* bitcast ({ i32*, i32 }* @const.0 to i8*), i64 8)
       %field.0 = getelementptr inbounds { i32*, i32 }, { i32*, i32 }* %loc1, i32 0, i32 1
       %loc1.field.ld.0 = load i32, i32* %field.0
       %field.1 = getelementptr inbounds { i32*, i32 }, { i32*, i32 }* %loc2, i32 0, i32 0
@@ -201,7 +205,7 @@ TEST(BackendExprTests, CreateStructConstructionExprs) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CreateStructConstructionExprs2) {
+TEST(BackendArrayStructTests, CreateStructConstructionExprs2) {
   FcnTestHarness h;
   Llvm_backend *be = h.be();
 
@@ -244,7 +248,7 @@ TEST(BackendExprTests, CreateStructConstructionExprs2) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CreateArrayIndexingExprs) {
+TEST(BackendArrayStructTests, CreateArrayIndexingExprs) {
 
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
@@ -284,7 +288,8 @@ TEST(BackendExprTests, CreateArrayIndexingExprs) {
   h.mkAssign(aa4, aa3);
 
   const char *exp = R"RAW_RESULT(
-      store [4 x i64] [i64 4, i64 3, i64 2, i64 1], [4 x i64]* %aa
+      %cast.0 = bitcast [4 x i64]* %aa to i8*
+      %copy.0 = call i8* @__builtin_memcpy(i8* %cast.0, i8* bitcast ([4 x i64]* @const.0 to i8*), i64 8)
       %index.0 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i32 1
       %aa.index.ld.1 = load i64, i64* %index.0
       %index.3 = getelementptr [4 x i64], [4 x i64]* %aa, i32 0, i64 %aa.index.ld.1
@@ -302,7 +307,7 @@ TEST(BackendExprTests, CreateArrayIndexingExprs) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
-TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
+TEST(BackendArrayStructTests, CreateComplexIndexingAndFieldExprs) {
 
   FcnTestHarness h("foo");
 
@@ -352,7 +357,8 @@ TEST(BackendExprTests, CreateComplexIndexingAndFieldExprs) {
     h.mkAssign(fx, bi64five);
 
   const char *exp = R"RAW_RESULT(
-      store [10 x { i8, [4 x { i64, i64 }*], i8 }*] zeroinitializer, [10 x { i8, [4 x { i64, i64 }*], i8 }*]* %t1
+      %cast.0 = bitcast [10 x { i8, [4 x { i64, i64 }*], i8 }*]* %t1 to i8*
+      %copy.0 = call i8* @__builtin_memcpy(i8* %cast.0, i8* bitcast ([10 x { i8, [4 x { i64, i64 }*], i8 }*]* @const.0 to i8*), i64 8)
       %index.0 = getelementptr [10 x { i8, [4 x { i64, i64 }*], i8 }*], [10 x { i8, [4 x { i64, i64 }*], i8 }*]* %t1, i32 0, i32 7
       %t1.index.ld.0 = load { i8, [4 x { i64, i64 }*], i8 }*, { i8, [4 x { i64, i64 }*], i8 }** %index.0
       %field.0 = getelementptr inbounds { i8, [4 x { i64, i64 }*], i8 }, { i8, [4 x { i64, i64 }*], i8 }* %t1.index.ld.0, i32 0, i32 1

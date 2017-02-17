@@ -30,6 +30,8 @@ class raw_ostream;
 // Opaque labelID handle for goto/label nodes.
 typedef unsigned LabelId;
 
+class Bexpression;
+class Binstructions;
 class SwitchDescriptor;
 
 // Use when deleting a Bnode subtree. Controls whether to delete just
@@ -201,6 +203,9 @@ class BnodeBuilder {
                          Bexpression *src, Location loc);
   Bexpression *mkBinaryOp(Operator op, Btype *typ, llvm::Value *val,
                           Bexpression *left, Bexpression *right, Location loc);
+  Bexpression *mkBinaryOp(Operator op, Btype *typ, llvm::Value *val,
+                          Bexpression *left, Bexpression *right,
+                          Binstructions &instructions, Location loc);
   Bexpression *mkCompound(Bstatement *st, Bexpression *expr,
                           Location loc);
   Bexpression *mkStructField(Btype *type, llvm::Value *value,

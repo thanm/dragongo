@@ -55,6 +55,7 @@ class raw_ostream;
 }
 
 class BuiltinTable;
+class BexprLIRBuilder;
 
 #include "llvm/IR/GlobalValue.h"
 
@@ -461,13 +462,23 @@ public:
   void fixupEpilogBlog(Bfunction *bfunction, llvm::BasicBlock *epilog);
 
   // Var expr management
-  Bexpression *resolveVarContext(Bexpression *expr);
+  Bexpression *resolveVarContext(Bexpression *expr,
+                                 Varexpr_context ctx=VE_rvalue);
 
   // Load-generation helper
   Bexpression *loadFromExpr(Bexpression *space,
                             Btype *resultTyp,
                             Location loc,
                             const std::string &tag);
+
+  // Store generation helper. Creates store or memcpy call.
+  Bexpression *genStore(Bfunction *func,
+                        Bexpression *srcExpr,
+                        Bexpression *dstExpr,
+                        Location location);
+
+  // Materialize a composite constant into a variable
+  Bvariable *genVarForConstant(llvm::Constant *conval, Btype *type);
 
   // Examine vector of values to test whether they are constants.
   // Checks for and handles pending composite inits.

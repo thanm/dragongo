@@ -53,12 +53,12 @@ TypeManager::TypeManager(llvm::LLVMContext &context)
 
   // For builtin creation
   llvmPtrType_ =
-      llvm::PointerType::get(llvm::StructType::create(context), addressSpace_);
+      llvm::PointerType::get(llvm::IntegerType::get(context_, 8),
+                             addressSpace_);
 
   // Assorted pre-computer types for use in builtin function creation
   llvmVoidType_ = llvm::Type::getVoidTy(context_);
   llvmBoolType_ = llvm::IntegerType::get(context_, 1);
-  llvmSizeType_ = llvmIntegerType_;
   llvmInt8Type_ = llvm::IntegerType::get(context_, 8);
   llvmInt32Type_ = llvm::IntegerType::get(context_, 32);
   llvmInt64Type_ = llvm::IntegerType::get(context_, 64);
@@ -97,6 +97,7 @@ void TypeManager::initializeTypeManager(Bexpression *errorExpression,
 
   llvmIntegerType_ =
       llvm::IntegerType::get(context_, datalayout_->getPointerSizeInBits());
+  llvmSizeType_ = llvmIntegerType_;
 }
 
 

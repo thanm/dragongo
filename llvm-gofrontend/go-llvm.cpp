@@ -44,7 +44,7 @@ typedef llvm::IRBuilder<> LIRBuilder;
 class BexprInserter {
  public:
   BexprInserter() : expr_(nullptr) { }
-  void setDestExpr(Bexpression *expr) { assert(!expr_); expr_ = expr; }
+  void setDest(Bexpression *expr) { assert(!expr_); expr_ = expr; }
 
   void InsertHelper(llvm::Instruction *I, const llvm::Twine &Name,
                     llvm::BasicBlock *BB,
@@ -65,7 +65,37 @@ class BexprLIRBuilder :
  public:
   BexprLIRBuilder(llvm::LLVMContext &context, Bexpression *expr) :
       IRBuilderBase(context, llvm::ConstantFolder()) {
-    setDestExpr(expr);
+    setDest(expr);
+  }
+};
+
+class BinstructionsInserter {
+ public:
+  BinstructionsInserter() : insns_(nullptr) { }
+  void setDest(Binstructions *insns) { assert(!insns_); insns_ = insns; }
+
+  void InsertHelper(llvm::Instruction *I, const llvm::Twine &Name,
+                    llvm::BasicBlock *BB,
+                    llvm::BasicBlock::iterator InsertPt) const {
+    assert(insns_);
+    insns_->appendInstruction(I);
+    I->setName(Name);
+  }
+
+ private:
+    mutable Binstructions *insns_;
+};
+
+// Builder that appends to a specified Binstructions object
+
+class BinstructionsLIRBuilder :
+    public llvm::IRBuilder<llvm::ConstantFolder, BinstructionsInserter> {
+  typedef llvm::IRBuilder<llvm::ConstantFolder,
+                          BinstructionsInserter> IRBuilderBase;
+ public:
+  BinstructionsLIRBuilder(llvm::LLVMContext &context, Binstructions *insns) :
+      IRBuilderBase(context, llvm::ConstantFolder()) {
+    setDest(insns);
   }
 };
 
@@ -631,12 +661,14 @@ Bexpression *Llvm_backend::resolve(Bexpression *expr, Bfunction *func)
   return expr;
 }
 
-Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
+Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr,
+                                             Varexpr_context ctx)
+
 {
   if (expr->varExprPending()) {
     const VarContext &vc = expr->varContext();
     assert(vc.addrLevel() == 0 || vc.addrLevel() == 1);
-    if (vc.addrLevel() == 1 || vc.lvalue()) {
+    if (vc.addrLevel() == 1 || vc.lvalue() || ctx == VE_lvalue) {
       assert(vc.addrLevel() == 0 || expr->btype()->type()->isPointerTy());
       return nbuilder_.mkAddress(expr->btype(), expr->value(),
                                  expr, expr->location());
@@ -647,6 +679,106 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr)
     return rval;
   }
   return expr;
+}
+
+Bvariable *Llvm_backend::genVarForConstant(llvm::Constant *conval,
+                                           Btype *type)
+{
+  auto it = valueVarMap_.find(conval);
+  if (it != valueVarMap_.end())
+    return it->second;
+
+  bool isHidden = true;
+  bool isConstant = true;
+  bool isCommon = false;
+  std::string ctag(namegen("const"));
+  return implicit_variable(ctag, "", type, isHidden, isConstant, isCommon, 0);
+}
+
+Bexpression *Llvm_backend::genStore(Bfunction *func,
+                                    Bexpression *srcExpr,
+                                    Bexpression *dstExpr,
+                                    Location location)
+{
+  Binstructions insns;
+  BinstructionsLIRBuilder builder(context_, &insns);
+
+  // If the value we're storing has non-composite type,
+  // then issue a simple store instruction.
+  if (!srcExpr->btype()->type()->isAggregateType()) {
+
+    Bexpression *valexp = resolve(srcExpr, func);
+    llvm::Value *val = valexp->value();
+    llvm::Value *dst = dstExpr->value();
+    if (val->getType()->isPointerTy()) {
+      llvm::PointerType *dstpt =
+          llvm::cast<llvm::PointerType>(dst->getType());
+      val = convertForAssignment(valexp, dstpt->getElementType());
+    }
+
+    // At this point the types should agree
+    llvm::PointerType *dpt = llvm::cast<llvm::PointerType>(dst->getType());
+    assert(val->getType() == dpt->getElementType());
+
+    // Create and return store
+    llvm::Instruction *si = builder.CreateStore(val, dst);
+
+    // Return result
+    Bexpression *rval =
+        nbuilder_.mkBinaryOp(OPERATOR_EQ, valexp->btype(), si,
+                             dstExpr, valexp, insns, location);
+    return rval;
+  }
+
+  // Composite type case
+
+  if (srcExpr->compositeInitPending())
+    srcExpr = resolveCompositeInit(srcExpr, func, nullptr);
+
+  llvm::SmallVector<llvm::Value *, 3> llargs;
+  Btype *memargt = makeAuxType(llvmPtrType());
+
+  // memcpy destination
+  assert(dstExpr->value()->getType()->isPointerTy());
+  dstExpr = convert_expression(memargt, dstExpr, location);
+  llargs.push_back(dstExpr->value());
+
+  // memcpy src: handle constant input
+  llvm::Value *val = srcExpr->value();
+  if (llvm::isa<llvm::Constant>(val)) {
+    llvm::Constant *cval = llvm::cast<llvm::Constant>(val);
+    Bvariable *cvar = genVarForConstant(cval, srcExpr->btype());
+    srcExpr = var_expression(cvar, VE_rvalue, location);
+    srcExpr = address_expression(srcExpr, location);
+  }
+
+  // memcpy src: cast
+  assert(srcExpr->value()->getType()->isPointerTy());
+  llvm::Value *bitcast = nullptr;
+  { LIRBuilder builder(context_, llvm::ConstantFolder());
+    std::string tag(namegen("cast"));
+    bitcast = builder.CreateBitCast(srcExpr->value(),
+                                               memargt->type(), tag);
+  }
+  srcExpr = nbuilder_.mkConversion(memargt, bitcast, srcExpr, location);
+  llargs.push_back(srcExpr->value());
+
+  // number of bytes to copy
+  uint64_t sz = typeSize(srcExpr->btype());
+  llvm::Constant *szval = llvm::ConstantInt::get(llvmSizeType(), sz);
+  llargs.push_back(szval);
+
+  // Q: should we be using memmove here instead?
+  Bfunction *memcpy = lookup_builtin("__builtin_memcpy");
+  assert(memcpy);
+  std::string ctag(namegen("copy"));
+  llvm::CallInst *call = builder.CreateCall(memcpy->function(), llargs, ctag);
+
+  // Return result
+  Bexpression *rval =
+      nbuilder_.mkBinaryOp(OPERATOR_EQ, srcExpr->btype(), call,
+                           dstExpr, srcExpr, insns, location);
+  return rval;
 }
 
 // This version repurposes/reuses the input Bexpression as the
@@ -1000,7 +1132,7 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   // For pointer conversions (ex: *int32 => *int64) create an
   // appropriate bitcast.
   if (val->getType()->isPointerTy() && toType->isPointerTy()) {
-    std::string tag("cast");
+    std::string tag(namegen("cast"));
     llvm::Value *bitcast = builder.CreateBitCast(val, toType, tag);
     return nbuilder_.mkConversion(type, bitcast, expr, location);
   }
@@ -1319,7 +1451,7 @@ Llvm_backend::convertForBinary(Bexpression *left, Bexpression *right)
   if (llvm::isa<llvm::ConstantPointerNull>(leftVal) &&
       rightType->isPointerTy()) {
     BexprLIRBuilder builder(context_, left);
-    std::string tag("cast");
+    std::string tag(namegen("cast"));
     llvm::Value *bitcast = builder.CreateBitCast(leftVal, rightType, tag);
     rval.first = bitcast;
     return rval;
@@ -1329,7 +1461,7 @@ Llvm_backend::convertForBinary(Bexpression *left, Bexpression *right)
   if (llvm::isa<llvm::ConstantPointerNull>(rightVal) &&
       leftType->isPointerTy()) {
     BexprLIRBuilder builder(context_, right);
-    std::string tag("cast");
+    std::string tag(namegen("cast"));
     llvm::Value *bitcast = builder.CreateBitCast(rightVal, leftType, tag);
     rval.second = bitcast;
     return rval;
@@ -1742,7 +1874,7 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
       CHKTREE(es);
       return es;
     }
-    init = resolveVarContext(init);
+    //init = resolveVarContext(init);
   } else {
     init = zero_expression(var->btype());
   }
@@ -1770,7 +1902,7 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
   bool dstPtrToFD = isPtrToFuncDescriptorType(dstToType);
   if (srcPtrToFD && dstPtrToFD) {
     BexprLIRBuilder builder(context_, src);
-    std::string tag("cast");
+    std::string tag(namegen("cast"));
     llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
     return bitcast;
   }
@@ -1779,7 +1911,7 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
   bool dstCircPtr = isCircularPointerType(dstToType);
   if (srcPtrToFD && dstCircPtr) {
     BexprLIRBuilder builder(context_, src);
-    std::string tag("cast");
+    std::string tag(namegen("cast"));
     llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
     return bitcast;
   }
@@ -1791,7 +1923,7 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
   bool srcFuncPtr = isPtrToFuncType(srcType);
   if (dstPtrToVoid && srcFuncPtr) {
     BexprLIRBuilder builder(context_, src);
-    std::string tag("cast");
+    std::string tag(namegen("cast"));
     llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
     return bitcast;
   }
@@ -1801,7 +1933,7 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
   // to the appropriate type if they appear in an assignment context.
   if (src->value() == nil_pointer_expression()->value()) {
     BexprLIRBuilder builder(context_, src);
-    std::string tag("cast");
+    std::string tag(namegen("cast"));
     llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
     return bitcast;
   }
@@ -1813,26 +1945,12 @@ Bstatement *Llvm_backend::makeAssignment(Bfunction *function,
                                          llvm::Value *lval, Bexpression *lhs,
                                          Bexpression *rhs, Location location) {
   assert(lval->getType()->isPointerTy());
-  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(lval->getType());
-  llvm::Value *rval = rhs->value();
 
-  // These cases should have been handled in the caller
-  assert(!rhs->varExprPending() && !rhs->compositeInitPending());
+  // This cases should have been handled in the caller
+  assert(!rhs->compositeInitPending());
 
-  // Work around type inconsistencies in gofrontend.
-  llvm::Type *dstToType = pt->getElementType();
-  rval = convertForAssignment(rhs, dstToType);
-
-  // At this point the types should agree
-  assert(rval->getType() == pt->getElementType());
-
-  // FIXME: alignment?
-  // FIXME: memcpy instead of store?
-  llvm::Instruction *si = new llvm::StoreInst(rval, lval);
-
-  // Create 'lhs = rhs' expression
-  Bexpression *stexp =
-      nbuilder_.mkBinaryOp(OPERATOR_EQ, voidType(), si, lhs, rhs, location);
+  // Invoke helper to create store or memcpy
+  Bexpression *stexp = genStore(function, rhs, lhs, location);
 
   // Return wrapped in statement
   return nbuilder_.mkExprStmt(function, stexp, location);
@@ -1847,7 +1965,7 @@ Bstatement *Llvm_backend::assignment_statement(Bfunction *bfunction,
   if (lhs == errorExpression() || rhs == errorExpression() ||
       bfunction == errorFunction_.get())
     return errorStatement();
-  Bexpression *lhs2 = resolveVarContext(lhs);
+  Bexpression *lhs2 = resolveVarContext(lhs, VE_lvalue);
   Bexpression *rhs2 = rhs;
   if (rhs->compositeInitPending()) {
     rhs2 = resolveCompositeInit(rhs, bfunction, lhs2->value());
@@ -1858,9 +1976,9 @@ Bstatement *Llvm_backend::assignment_statement(Bfunction *bfunction,
     CHKTREE(es);
     return es;
   }
-  Bexpression *rhs3 = resolveVarContext(rhs2);
+
   Bstatement *st = makeAssignment(bfunction, lhs->value(),
-                                  lhs2, rhs3, location);
+                                  lhs2, rhs2, location);
   CHKTREE(st);
   return st;
 }

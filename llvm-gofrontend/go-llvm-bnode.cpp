@@ -373,14 +373,14 @@ Bexpression *BnodeBuilder::mkVar(Bvariable *var, Location loc)
   return archive(rval);
 }
 
-// This is somewhat unpleasant but necessary due to the way
-// LLVM's IRBuilder works. If you do something like
+// This is somewhat unpleasant but necessary due to the way LLVM's
+// IRBuilder works. If you do something like
 //
 //    newinst = builder.CreateOr(left, right)
 //
-// and it turns out that 'right' is the constant zero, then
-// the builder will just return left (meaning that we don't
-// want the instruction to be appended to the new Bexpression).
+// and it turns out that 'right' is the constant zero, then the
+// builder will just return left (meaning that we don't want the
+// instruction to be appended to the new Bexpression).
 
 void BnodeBuilder::appendInstIfNeeded(Bexpression *rval,
                                       llvm::Value *val)
@@ -405,7 +405,23 @@ Bexpression *BnodeBuilder::mkBinaryOp(Operator op, Btype *typ, llvm::Value *val,
   std::vector<Bnode *> kids = { left, right };
   Bexpression *rval =
       new Bexpression(N_BinaryOp, kids, val, typ, loc);
-  appendInstIfNeeded(rval, val);
+  if (val)
+    appendInstIfNeeded(rval, val);
+  rval->u.op = op;
+  return archive(rval);
+}
+
+Bexpression *BnodeBuilder::mkBinaryOp(Operator op, Btype *typ, llvm::Value *val,
+                                      Bexpression *left, Bexpression *right,
+                                      Binstructions &instructions, Location loc)
+{
+  assert(left);
+  assert(right);
+  std::vector<Bnode *> kids = { left, right };
+  Bexpression *rval =
+      new Bexpression(N_BinaryOp, kids, val, typ, loc);
+  for (auto &i : instructions.instructions())
+    rval->appendInstruction(i);
   rval->u.op = op;
   return archive(rval);
 }
