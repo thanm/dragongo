@@ -18,7 +18,7 @@
 
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
-typedef llvm::SmallVector<llvm::Type *, 16> BuiltinEntryTypeVec;
+typedef llvm::SmallVector<llvm::Type *, 8> BuiltinEntryTypeVec;
 
 class Bfunction;
 class TypeManager;

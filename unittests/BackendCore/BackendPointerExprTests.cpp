@@ -120,7 +120,7 @@ TEST(BackEndPointerExprTests, CreateFunctionCodeExpression) {
 
   const char *exp = R"RAW_RESULT(
   %cast.0 = bitcast { i64 }* %fdloc1 to i8*
-  %copy.0 = call i8* @__builtin_memcpy(i8* %cast.0, i8* bitcast ({ i64 }* @const.0 to i8*), i64 8)
+  %copy.0 = call i8* @__builtin_memcpy(i8* %cast.0, i8* bitcast ({ i64 }* @const.0 to i8*), i64 8, i32 8, i1 false)
   store { i64 }* %fdloc1, { i64 }** %fploc1
   store { i64 (i32, i32, i64*)* }* null, { i64 (i32, i32, i64*)* }** %fploc2
   %fploc1.ld.0 = load { i64 }*, { i64 }** %fploc1

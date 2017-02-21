@@ -30,14 +30,15 @@ go-llvm-bfunction.cpp
 go-llvm-bnode.cpp
 go-llvm-bstatement.cpp
 go-llvm-btype.cpp
+go-llvm-builtins.cpp
 go-llvm-bvariable.cpp
+go-llvm-cabi-oracle.cpp
 go-llvm-diagnostics.cpp
 go-llvm-dibuildhelper.cpp
 go-llvm-genblocks.cpp
 go-llvm-linemap.cpp
 go-llvm-tree-integrity.cpp
 go-llvm-typemanager.cpp
-go-llvm-builtins.cpp
 go-llvm.cpp
 go-sha1.cpp
 )

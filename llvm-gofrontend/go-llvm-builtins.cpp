@@ -70,6 +70,7 @@ void BuiltinTable::defineAllBuiltins() {
 }
 
 void BuiltinTable::defineIntrinsicBuiltins() {
+  llvm::Type *llvmBoolType = tman_->llvmBoolType();
   llvm::Type *llvmPtrType = tman_->llvmPtrType();
   llvm::Type *llvmInt32Type = tman_->llvmInt32Type();
   llvm::Type *llvmIntegerType = tman_->llvmIntegerType();
@@ -97,7 +98,7 @@ void BuiltinTable::defineIntrinsicBuiltins() {
   defineLibcallBuiltin("__builtin_memcpy", "memcpy",
                        llvm::LibFunc::LibFunc_memcpy,
                        llvmPtrType, llvmPtrType, llvmPtrType,
-                       llvmSizeType, nullptr);
+                       llvmSizeType, llvmInt32Type, llvmBoolType, nullptr);
 
   defineLibcallBuiltin("__builtin_memmove", "memmove",
                        llvm::LibFunc::LibFunc_memmove,

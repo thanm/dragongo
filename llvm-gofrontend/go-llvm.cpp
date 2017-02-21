@@ -453,7 +453,6 @@ Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
     llvm::Function *fcn =
         llvm::Intrinsic::getDeclaration(module_, be->intrinsicId(),
                                         be->types());
-
     assert(fcn != nullptr);
     bf = defineBuiltinFcn(be->name(), fcn);
   } else {
@@ -740,7 +739,8 @@ Bexpression *Llvm_backend::genStore(Bfunction *func,
 
   // memcpy destination
   assert(dstExpr->value()->getType()->isPointerTy());
-  dstExpr = convert_expression(memargt, dstExpr, location);
+  if (memargt->type() != dstExpr->value()->getType())
+    dstExpr = convert_expression(memargt, dstExpr, location);
   llargs.push_back(dstExpr->value());
 
   // memcpy src: handle constant input
@@ -754,19 +754,28 @@ Bexpression *Llvm_backend::genStore(Bfunction *func,
 
   // memcpy src: cast
   assert(srcExpr->value()->getType()->isPointerTy());
-  llvm::Value *bitcast = nullptr;
-  { LIRBuilder builder(context_, llvm::ConstantFolder());
+  if (memargt->type() != srcExpr->value()->getType()) {
+    LIRBuilder builder(context_, llvm::ConstantFolder());
     std::string tag(namegen("cast"));
-    bitcast = builder.CreateBitCast(srcExpr->value(),
-                                               memargt->type(), tag);
+    llvm::Value *bitcast = builder.CreateBitCast(srcExpr->value(),
+                                                 memargt->type(), tag);
+    srcExpr = nbuilder_.mkConversion(memargt, bitcast, srcExpr, location);
   }
-  srcExpr = nbuilder_.mkConversion(memargt, bitcast, srcExpr, location);
   llargs.push_back(srcExpr->value());
 
   // number of bytes to copy
   uint64_t sz = typeSize(srcExpr->btype());
   llvm::Constant *szval = llvm::ConstantInt::get(llvmSizeType(), sz);
   llargs.push_back(szval);
+
+  // alignment of src expr
+  unsigned algn = typeAlignment(srcExpr->btype());
+  llvm::Constant *alval = llvm::ConstantInt::get(llvmInt32Type(), algn);
+  llargs.push_back(alval);
+
+  // volatile bit
+  llvm::Constant *volval = llvm::ConstantInt::get(llvmBoolType(), 0);
+  llargs.push_back(volval);
 
   // Q: should we be using memmove here instead?
   Bfunction *memcpy = lookup_builtin("__builtin_memcpy");
