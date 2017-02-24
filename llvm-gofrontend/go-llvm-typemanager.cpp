@@ -1212,10 +1212,8 @@ int64_t TypeManager::typeSize(Btype *btype) {
     assert(toget);
   }
 
-  uint64_t uval = datalayout_->getTypeSizeInBits(toget);
-  assert((uval & 0x7) == 0);
-  uval /= 8;
-  return static_cast<int64_t>(uval);
+  uint64_t uvalbytes = datalayout_->getTypeAllocSize(toget);
+  return static_cast<int64_t>(uvalbytes);
 }
 
 // Return the alignment of a type.
@@ -1428,8 +1426,8 @@ llvm::DIType *TypeManager::buildCircularPointerDIType(Btype *typ,
   Btype *toType = circularTypeLoadConversion(typ);
   llvm::DIType *toDIType = buildDIType(toType, helper);
 
-  // Now create final pointer type
-  uint64_t bits = datalayout_->getTypeSizeInBits(typ->type());
+  // Now create final pointer type.
+  uint64_t bits = datalayout_->getPointerSizeInBits();
   llvm::DIType *result = dibuilder.createPointerType(toDIType, bits);
 
   // Replace the temp
@@ -1481,7 +1479,8 @@ llvm::DIType *TypeManager::buildStructDIType(BStructType *bst,
   }
   auto memberArray = dibuilder.getOrCreateArray(members);
 
-  // Now create struct type itself.
+  // Now create struct type itself.  Q: should this be
+  // getTypeAllocSize here instead of getTypeSizeInBits?
   uint64_t sizeInBits = datalayout_->getTypeSizeInBits(bst->type());
   uint32_t alignInBits = datalayout_->getPrefTypeAlignment(bst->type());
   llvm::DIType *derivedFrom = nullptr;
@@ -1552,14 +1551,15 @@ llvm::DIType *TypeManager::buildDIType(Btype *typ, DIBuildHelper &helper)
     case Btype::PointerT: {
       const BPointerType *bpt = typ->castToBPointerType();
       llvm::DIType *toDI = buildDIType(bpt->toType(), helper);
-      uint64_t bits = datalayout_->getTypeSizeInBits(typ->type());
+      uint64_t bits = datalayout_->getPointerSizeInBits();
       return dibuilder.createPointerType(toDI, bits);
     }
     case Btype::ArrayT: {
       const BArrayType *bat = typ->castToBArrayType();
       llvm::DIType *elemDI = buildDIType(bat->elemType(), helper);
       uint64_t arSize = bat->nelSize();
-      uint64_t arAlign = datalayout_->getTypeSizeInBits(typ->type());
+      uint64_t arAlign =
+          datalayout_->getPrefTypeAlignment(bat->elemType()->type());
       llvm::SmallVector<llvm::Metadata *, 1> subscripts;
       subscripts.push_back(dibuilder.getOrCreateSubrange(0, arSize));
       llvm::DINodeArray subsAr = dibuilder.getOrCreateArray(subscripts);
