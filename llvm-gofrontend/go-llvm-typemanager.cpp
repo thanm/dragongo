@@ -44,6 +44,7 @@ TypeManager::TypeManager(llvm::LLVMContext &context)
     , llvmFloatType_(nullptr)
     , llvmDoubleType_(nullptr)
     , llvmLongDoubleType_(nullptr)
+    , llvmTwoFloatVecType_(nullptr)
 {
   // LLVM doesn't have anything that corresponds directly to the
   // gofrontend notion of an error type. For now we create a so-called
@@ -65,6 +66,7 @@ TypeManager::TypeManager(llvm::LLVMContext &context)
   llvmFloatType_ = llvm::Type::getFloatTy(context_);
   llvmDoubleType_ = llvm::Type::getDoubleTy(context_);
   llvmLongDoubleType_ = llvm::Type::getFP128Ty(context_);
+  llvmTwoFloatVecType_ = llvm::VectorType::get(llvmFloatType_, 2);
 
   // Predefined C string type
   stringType_ = pointerType(integerType(true, 8));
@@ -100,7 +102,14 @@ void TypeManager::initializeTypeManager(Bexpression *errorExpression,
   llvmSizeType_ = llvmIntegerType_;
 }
 
+// Used for creation of intermediate ABI types, not used by FE
 
+llvm::Type *TypeManager::llvmArbitraryIntegerType(unsigned bytes)
+{
+  assert(bytes);
+  assert(bytes <= 8);
+  return llvm::IntegerType::get(context_, bytes*8);
+}
 
 bool TypeManager::removeAnonType(Btype *typ)
 {
@@ -286,6 +295,20 @@ Btype *TypeManager::integerType(bool is_unsigned, int bits)
   return rval;
 }
 
+llvm::Type *TypeManager::makeLLVMPointerType(llvm::Type *toTy)
+{
+  return llvm::PointerType::get(toTy, addressSpace_);
+}
+
+llvm::Type *
+TypeManager::makeLLVMTwoElementStructType(llvm::Type *f1, llvm::Type *f2)
+{
+  llvm::SmallVector<llvm::Type *, 2> elems(2);
+  elems[0] = f1;
+  elems[1] = f2;
+  return llvm::StructType::get(context_, elems);
+}
+
 llvm::Type *
 TypeManager::makeLLVMStructType(const std::vector<Btyped_identifier> &fields) {
   llvm::SmallVector<llvm::Type *, 64> elems(fields.size());
@@ -429,10 +452,8 @@ Btype *TypeManager::complexType(int bits) {
   assert(bits == 64 || bits == 128);
   llvm::Type *elemTy = (bits == 64 ? llvm::Type::getFloatTy(context_)
                                    : llvm::Type::getDoubleTy(context_));
-  llvm::SmallVector<llvm::Type *, 2> elems(2);
-  elems[0] = elemTy;
-  elems[1] = elemTy;
-  Btype *rval = makeAuxType(llvm::StructType::get(context_, elems));
+  llvm::Type *cType = makeLLVMTwoElementStructType(elemTy, elemTy);
+  Btype *rval = makeAuxType(cType);
   if (bits == 64)
     complexFloatType_ = rval;
   else

@@ -117,6 +117,8 @@ class TypeManager {
   llvm::Type *llvmFloatType() const { return llvmFloatType_; }
   llvm::Type *llvmDoubleType() const { return llvmDoubleType_; }
   llvm::Type *llvmLongDoubleType() const { return llvmLongDoubleType_; }
+  llvm::Type *llvmTwoFloatVecType() const { return llvmTwoFloatVecType_; }
+  llvm::Type *llvmArbitraryIntegerType(unsigned bytes);
 
   // Context + address space.
   llvm::LLVMContext &context() const { return context_; }
@@ -127,6 +129,8 @@ class TypeManager {
 
   // LLVM type creation helpers
   llvm::Type *makeLLVMFloatType(int bits);
+  llvm::Type *makeLLVMTwoElementStructType(llvm::Type *f1, llvm::Type *f2);
+  llvm::Type *makeLLVMPointerType(llvm::Type *toTy);
   llvm::Type *makeLLVMStructType(const std::vector<Btyped_identifier> &fields);
   llvm::Type *makeLLVMFunctionType(const std::vector<Btype *> &paramTypes,
                                    const std::vector<Btype *> &resultTypes,
@@ -182,6 +186,9 @@ class TypeManager {
   void initializeTypeManager(Bexpression *errorExpression,
                              const llvm::DataLayout *datalayout,
                              NameGen *nt);
+
+  // May be NULL prior to init call above
+  const llvm::DataLayout *datalayout() const { return datalayout_; }
 
   // For named types, this returns the declared type name. If a type
   // is unnamed, then it returns a stringified representation of the
@@ -327,6 +334,7 @@ class TypeManager {
   llvm::Type *llvmFloatType_;
   llvm::Type *llvmDoubleType_;
   llvm::Type *llvmLongDoubleType_;
+  llvm::Type *llvmTwoFloatVecType_;
 };
 
 #endif // LLVMGOFRONTEND_GO_LLVM_TYPEMANAGER_H
