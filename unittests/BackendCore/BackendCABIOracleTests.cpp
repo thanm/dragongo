@@ -96,6 +96,9 @@ TEST(BackendCABIOracleTests, Extended) {
 
     FcnItem({ st3 }, { st3, st0, bu8t },
             "{ { double, double }, i8 }* ({ { double, double }, i8 }*, i8)"),
+
+    FcnItem({ st3 }, { st3, st0, bu8t },
+            "{ { double, double }, i8 }* ({ { double, double }, i8 }*, i8)"),
   };
 
   for (auto &item : items) {
