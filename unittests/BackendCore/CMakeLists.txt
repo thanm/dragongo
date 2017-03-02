@@ -19,6 +19,7 @@ set(LLVM_LINK_COMPONENTS
 set(BackendCoreSources
   BackendCoreTests.cpp
   BackendArrayStruct.cpp
+  BackendCABIOracleTests.cpp
   BackendExprTests.cpp
   BackendPointerExprTests.cpp
   BackendFcnTests.cpp

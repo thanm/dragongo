@@ -33,7 +33,6 @@
 
 namespace goBackendUnitTests {
 
-
 // Return string representation of LLVM value (handling null ptr)
 std::string repr(llvm::Value *val);
 

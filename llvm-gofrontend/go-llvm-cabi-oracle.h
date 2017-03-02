@@ -32,6 +32,7 @@ class ABIState;
 namespace llvm {
 class DataLayout;
 class FunctionType;
+class raw_ostream;
 }
 
 // Disposition of a specific function argument or function return value.
@@ -92,9 +93,10 @@ class ABIParamInfo {
  public:
   ABIParamInfo(const std::vector<llvm::Type *> &abiTypes,
                ABIParamDisp disp,
+               ABIParamAttr attr,
                int sigOffset)
       : abiTypes_(abiTypes), disp_(disp),
-        attr_(AttrNone), sigOffset_(sigOffset) {
+        attr_(attr), sigOffset_(sigOffset) {
     assert(disp == ParmDirect);
     assert(sigOffset >= 0);
   }
@@ -116,6 +118,9 @@ class ABIParamInfo {
   ABIParamDisp disp() const { return disp_; }
   ABIParamAttr attr() const { return attr_; }
   int sigOffset() const { return sigOffset_; }
+
+  void dump();
+  void osdump(llvm::raw_ostream &os);
 
  private:
   std::vector<llvm::Type *> abiTypes_;
@@ -150,32 +155,17 @@ class CABIOracle {
   // Return info on transmission of return value.
   const ABIParamInfo &returnInfo();
 
+  // Various dump methods.
+  void dump();
+  std::string toString();
+  void osdump(llvm::raw_ostream &os);
+
  private:
   BFunctionType *bFcnType_;
   llvm::FunctionType *fcnTypeForABI_;
   TypeManager *typeManager_;
   llvm::CallingConv::ID conv_;
   std::vector<ABIParamInfo> infov_;
-
-  struct ABIState {
-    ABIState() : availIntRegs(6), availSSERegs(8), argCount(0) { }
-    void addDirectIntArg() {
-      if (availIntRegs)
-        availIntRegs -= 1;
-      argCount += 1;
-    }
-    void addDirectSSEArg() {
-      if (availSSERegs)
-        availSSERegs -= 1;
-      argCount += 1;
-    }
-    void addIndirectArg() {
-      argCount += 1;
-    }
-    unsigned availIntRegs;
-    unsigned availSSERegs;
-    unsigned argCount;
-  };
 
   void compute();
   ABIParamInfo computeABIReturn(Btype *resultType, ABIState &state);

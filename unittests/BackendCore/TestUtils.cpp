@@ -122,7 +122,6 @@ Btype *mkBackendStruct(Backend *be, ...)
 
   std::vector<Backend::Btyped_identifier> fields;
   Btype *ct = va_arg(ap, Btype *);
-  assert(ct);
   while (ct != nullptr) {
     Location loc;
     const char *fieldName = va_arg(ap, const char *);
