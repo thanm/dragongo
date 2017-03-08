@@ -652,8 +652,7 @@ Bexpression *Llvm_backend::genStore(Bfunction *func,
                                     Bexpression *dstExpr,
                                     Location location)
 {
-  Binstructions insns;
-  BinstructionsLIRBuilder builder(context_, &insns);
+  BlockLIRBuilder builder(func->function());
 
   // If the value we're storing has non-composite type,
   // then issue a simple store instruction.
@@ -676,27 +675,22 @@ Bexpression *Llvm_backend::genStore(Bfunction *func,
     llvm::Instruction *si = builder.CreateStore(val, dst);
 
     // Return result
+    Binstructions insns(builder.instructions());
     Bexpression *rval =
         nbuilder_.mkBinaryOp(OPERATOR_EQ, valexp->btype(), si,
                              dstExpr, valexp, insns, location);
     return rval;
   }
 
-  // Composite type case
-
+  // Resolve composites here if any still pending
   if (srcExpr->compositeInitPending())
     srcExpr = resolveCompositeInit(srcExpr, func, nullptr);
 
-  llvm::SmallVector<llvm::Value *, 3> llargs;
-  Btype *memargt = makeAuxType(llvmPtrType());
-
-  // memcpy destination
+  // memcpy destination should be pointer
   assert(dstExpr->value()->getType()->isPointerTy());
-  if (memargt->type() != dstExpr->value()->getType())
-    dstExpr = convert_expression(memargt, dstExpr, location);
-  llargs.push_back(dstExpr->value());
 
-  // memcpy src: handle constant input
+  // memcpy src: handle constant input (we need something addressable
+  // in order to do a memcpy, not a raw constant value)
   llvm::Value *val = srcExpr->value();
   if (llvm::isa<llvm::Constant>(val)) {
     llvm::Constant *cval = llvm::cast<llvm::Constant>(val);
@@ -704,37 +698,26 @@ Bexpression *Llvm_backend::genStore(Bfunction *func,
     srcExpr = var_expression(cvar, VE_rvalue, location);
     srcExpr = address_expression(srcExpr, location);
   }
-
-  // memcpy src: cast
   assert(srcExpr->value()->getType()->isPointerTy());
-  if (memargt->type() != srcExpr->value()->getType()) {
-    LIRBuilder builder(context_, llvm::ConstantFolder());
-    std::string tag(namegen("cast"));
-    llvm::Value *bitcast = builder.CreateBitCast(srcExpr->value(),
-                                                 memargt->type(), tag);
-    srcExpr = nbuilder_.mkConversion(memargt, bitcast, srcExpr, location);
-  }
-  llargs.push_back(srcExpr->value());
 
   // number of bytes to copy
   uint64_t sz = typeSize(srcExpr->btype());
-  llvm::Constant *szval = llvm::ConstantInt::get(llvmSizeType(), sz);
-  llargs.push_back(szval);
 
   // alignment of src expr
   unsigned algn = typeAlignment(srcExpr->btype());
-  llvm::Constant *alval = llvm::ConstantInt::get(llvmInt32Type(), algn);
-  llargs.push_back(alval);
-
-  // volatile bit
-  llvm::Constant *volval = llvm::ConstantInt::get(llvmBoolType(), 0);
-  llargs.push_back(volval);
 
   // Q: should we be using memmove here instead?
-  Bfunction *memcpy = lookup_builtin("__builtin_memcpy");
-  assert(memcpy);
-  std::string ctag(namegen("copy"));
-  llvm::CallInst *call = builder.CreateCall(memcpy->function(), llargs, ctag);
+  llvm::CallInst *call =
+      builder.CreateMemCpy(dstExpr->value(), srcExpr->value(), sz, algn);
+
+  // Unpack results
+  Binstructions insns;
+  for (auto i : builder.instructions()) {
+    // hack: irbuilder likes to create unnamed bitcasts
+    if (i->isCast())
+      i->setName(namegen("cast"));
+    insns.appendInstruction(i);
+  }
 
   // Return result
   Bexpression *rval =
@@ -1753,7 +1736,7 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
     return errorExpression();
 
   // FIXME: call chain not yet handled
-  assert(chain_expr == nullptr);
+  // assert(chain_expr == nullptr);
 
   // Resolve fcn
   fn_expr = resolveVarContext(fn_expr);
