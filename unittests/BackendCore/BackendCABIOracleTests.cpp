@@ -74,27 +74,50 @@ TEST(BackendCABIOracleTests, Extended) {
   struct FcnItem {
     FcnItem(const std::vector<Btype*> &r,
             const std::vector<Btype*> &p,
-            const char *t) : results(r), parms(p), exp(t) { }
+            const char *d, const char *t)
+        : results(r), parms(p), expDump(d), expTyp(t) { }
     std::vector<Btype*> results;
     std::vector<Btype*> parms;
-    const char *exp;
+    const char *expDump;
+    const char *expTyp;
   };
 
   Btype *nt = nullptr;
   std::vector<FcnItem> items = {
 
-    FcnItem( {  }, {  }, "void ()"),
+    FcnItem( {  }, {  },
+             "Return: Ignore { void } sigOffset: -1",
+             "void ()"),
 
-    FcnItem( { bi8t }, { }, "i8 ()"),
+    FcnItem( { bi8t }, { },
+             "Return: Direct AttrSext { i8 } sigOffset: -1",
+             "i8 ()"),
 
-    FcnItem( {  }, { bi8t }, "void (i8)"),
+    FcnItem( {  }, { bi8t },
+             "Return: Ignore { void } sigOffset: -1 "
+             "Param 1: Direct AttrSext { i8 } sigOffset: 0",
+             "void (i8)"),
 
-    FcnItem({ bi8t, bf64t }, { bi8t, bu8t, st0 }, "{ i8, double } (i8, i8)"),
+    FcnItem({ bi8t, bf64t }, { bi8t, bu8t, st0 },
+            "Return: Direct { { i8, double } } sigOffset: -1 "
+            "Param 1: Direct AttrSext { i8 } sigOffset: 0 "
+            "Param 2: Direct AttrZext { i8 } sigOffset: 1 "
+            "Param 3: Ignore { void } sigOffset: -1",
+            "{ i8, double } (i8, i8)"),
 
     FcnItem({ st2 }, { st2, st0, st4, st1 },
+            "Return: Direct { { double, double } } sigOffset: -1 "
+            "Param 1: Direct { double, double } sigOffset: 0 "
+            "Param 2: Ignore { void } sigOffset: -1 "
+            "Param 3: Direct { <2 x float> } sigOffset: 2 "
+            "Param 4: Direct { i64 } sigOffset: 3 ",
             "{ double, double } (double, double, <2 x float>, i64)"),
 
     FcnItem({ st3 }, { st3, st0, bu8t },
+            "Return: Indirect AttrStructReturn { { { double, double }, i8 }* } sigOffset: 0 "
+            "Param 1: Indirect AttrByVal { { { double, double }, i8 }* } sigOffset: 1 "
+            "Param 2: Ignore { void } sigOffset: -1 "
+            "Param 3: Direct AttrZext { i8 } sigOffset: 2 ",
             "void ({ { double, double }, i8 }*, "
             "{ { double, double }, i8 }*, i8)"),
 
@@ -114,7 +137,16 @@ TEST(BackendCABIOracleTests, Extended) {
     BFunctionType *bft = t->castToBFunctionType();
     CABIOracle cab(bft, be->typeManager());
     cab.dump();
-    EXPECT_EQ(repr(cab.getFunctionTypeForABI()), item.exp);
+
+    { std::string reason;
+      bool equal = difftokens(item.expDump, cab.toString(), reason);
+      EXPECT_EQ("pass", equal ? "pass" : reason);
+    }
+    { std::string reason;
+      std::string result(repr(cab.getFunctionTypeForABI()));
+      bool equal = difftokens(item.expTyp, result, reason);
+      EXPECT_EQ("pass", equal ? "pass" : reason);
+    }
   }
 }
 
