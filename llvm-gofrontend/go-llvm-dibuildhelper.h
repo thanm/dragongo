@@ -20,6 +20,7 @@
 #include "go-location.h"
 
 namespace llvm {
+class BasicBlock;
 class DIBuilder;
 class DIFile;
 class DILocalVariable;
@@ -50,7 +51,8 @@ class DIBuildHelper {
                 TypeManager *typemanager,
                 Llvm_linemap *linemap,
                 llvm::DIBuilder &builder,
-                llvm::DIScope *moduleScope);
+                llvm::DIScope *moduleScope,
+                llvm::BasicBlock *entryBlock);
 
   void beginFunction(llvm::DIScope *scope, Bfunction *function);
   void endFunction(Bfunction *function);
@@ -95,7 +97,9 @@ class DIBuildHelper {
   std::unordered_map<Btype *, llvm::DIType*> typeCache_;
   std::unordered_map<llvm::DIType *, llvm::DIType*> typeReplacements_;
   std::unordered_set<Bvariable *> declared_;
+  llvm::BasicBlock *entryBlock_;
   unsigned known_locations_;
+
 
  private:
   llvm::DebugLoc debugLocFromLocation(Location location);

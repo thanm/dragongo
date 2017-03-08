@@ -280,6 +280,7 @@ int main(int argc, char **argv)
   std::unique_ptr<llvm::Module> module(new llvm::Module("gomodule", Context));
 
   // Add the target data from the target machine, if it exists
+  module->setTargetTriple(TheTriple.getTriple());
   module->setDataLayout(Target->createDataLayout());
 
   // Now construct Llvm_backend helper.

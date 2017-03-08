@@ -18,10 +18,11 @@
 
 #include "llvm/Analysis/TargetLibraryInfo.h"
 
-typedef llvm::SmallVector<llvm::Type *, 8> BuiltinEntryTypeVec;
-
 class Bfunction;
+class Btype;
 class TypeManager;
+
+typedef std::vector<Btype*> BuiltinEntryTypeVec;
 
 // An entry in a table of interesting builtin functions. A given entry
 // is either an intrinsic or a libcall builtin.
@@ -46,7 +47,7 @@ class BuiltinEntry {
   llvm::Intrinsic::ID intrinsicId() const { return intrinsicId_; }
   llvm::LibFunc libfunc() const { return libfunc_; }
   const BuiltinEntryTypeVec &types() const { return types_; }
-  Bfunction *bfunction() const { return bfunction_.get(); }
+  Bfunction *bfunction() const { return bfunction_; }
   void setBfunction(Bfunction *bfunc);
 
   BuiltinEntry(llvm::Intrinsic::ID intrinsicId,
@@ -63,6 +64,7 @@ class BuiltinEntry {
       : name_(name), libname_(libname), flavor_(LibcallBuiltin),
         intrinsicId_(), libfunc_(libfunc), bfunction_(nullptr),
         types_(paramtypes) { }
+  ~BuiltinEntry();
 
  private:
   std::string name_;
@@ -70,7 +72,7 @@ class BuiltinEntry {
   BuiltinFlavor flavor_;
   llvm::Intrinsic::ID intrinsicId_;
   llvm::LibFunc libfunc_;
-  std::unique_ptr<Bfunction> bfunction_;
+  Bfunction *bfunction_;
   BuiltinEntryTypeVec types_;
 };
 
@@ -79,10 +81,15 @@ class BuiltinEntry {
 // info about the functions at the point where this object is created,
 // then create the actual LLVM function lazily at the point where
 // there is a need to call the function.
+//
+// Note: there is support in the table for creating "long double"
+// versions of things like the trig builtins, but the CABI machinery
+// does not yet handle "long double" (nor does this type exist in Go),
+// so it is currently stubbed out (via the "addLongDouble" param below).
 
 class BuiltinTable {
  public:
-  BuiltinTable(TypeManager *tman) : tman_(tman) { }
+  BuiltinTable(TypeManager *tman, bool addLongDouble);
   ~BuiltinTable() { }
 
   void defineAllBuiltins();
@@ -116,6 +123,7 @@ class BuiltinTable {
   TypeManager *tman_;
   std::unordered_map<std::string, unsigned> tab_;
   std::vector<BuiltinEntry> entries_;
+  bool addLongDouble_;
 };
 
 #endif // LLVMGOFRONTEND_GO_LLVM_BUILTINTABLE_H

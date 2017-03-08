@@ -19,6 +19,8 @@
 #include "go-system.h"
 #include "go-llvm-linemap.h"
 #include "go-llvm-dibuildhelper.h"
+#include "go-llvm-cabi-oracle.h"
+#include "go-llvm-irbuilders.h"
 #include "gogo.h"
 
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -38,74 +40,13 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
 
-// Generic "no insert" builder
-typedef llvm::IRBuilder<> LIRBuilder;
-
-class BexprInserter {
- public:
-  BexprInserter() : expr_(nullptr) { }
-  void setDest(Bexpression *expr) { assert(!expr_); expr_ = expr; }
-
-  void InsertHelper(llvm::Instruction *I, const llvm::Twine &Name,
-                    llvm::BasicBlock *BB,
-                    llvm::BasicBlock::iterator InsertPt) const {
-    assert(expr_);
-    expr_->appendInstruction(I);
-    I->setName(Name);
-  }
-
- private:
-    mutable Bexpression *expr_;
-};
-
-// Builder that appends to a specified Bexpression
-class BexprLIRBuilder :
-    public llvm::IRBuilder<llvm::ConstantFolder, BexprInserter> {
-  typedef llvm::IRBuilder<llvm::ConstantFolder, BexprInserter> IRBuilderBase;
- public:
-  BexprLIRBuilder(llvm::LLVMContext &context, Bexpression *expr) :
-      IRBuilderBase(context, llvm::ConstantFolder()) {
-    setDest(expr);
-  }
-};
-
-class BinstructionsInserter {
- public:
-  BinstructionsInserter() : insns_(nullptr) { }
-  void setDest(Binstructions *insns) { assert(!insns_); insns_ = insns; }
-
-  void InsertHelper(llvm::Instruction *I, const llvm::Twine &Name,
-                    llvm::BasicBlock *BB,
-                    llvm::BasicBlock::iterator InsertPt) const {
-    assert(insns_);
-    insns_->appendInstruction(I);
-    I->setName(Name);
-  }
-
- private:
-    mutable Binstructions *insns_;
-};
-
-// Builder that appends to a specified Binstructions object
-
-class BinstructionsLIRBuilder :
-    public llvm::IRBuilder<llvm::ConstantFolder, BinstructionsInserter> {
-  typedef llvm::IRBuilder<llvm::ConstantFolder,
-                          BinstructionsInserter> IRBuilderBase;
- public:
-  BinstructionsLIRBuilder(llvm::LLVMContext &context, Binstructions *insns) :
-      IRBuilderBase(context, llvm::ConstantFolder()) {
-    setDest(insns);
-  }
-};
-
 #define CHKTREE(x) if (checkIntegrity_ && traceLevel()) \
       enforceTreeIntegrity(x)
 
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
                            llvm::Module *module,
                            Llvm_linemap *linemap)
-    : TypeManager(context)
+    : TypeManager(context, llvm::CallingConv::X86_64_SysV)
     , context_(context)
     , module_(module)
     , datalayout_(module ? &module->getDataLayout() : nullptr)
@@ -118,35 +59,24 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , exportDataStarted_(false)
     , exportDataFinalized_(false)
     , TLI_(nullptr)
-    , builtinTable_(new BuiltinTable(typeManager()))
+    , builtinTable_(new BuiltinTable(typeManager(), false))
     , errorFunction_(nullptr)
 {
-  // If nobody passed in a linemap, create one for internal use.
+  // If nobody passed in a linemap, create one for internal use (unit testing)
   if (!linemap_) {
     ownLinemap_.reset(new Llvm_linemap());
     linemap_ = ownLinemap_.get();
   }
 
-  // Similarly for the LLVM module
+  // Similarly for the LLVM module (unit testing)
   if (!module_) {
     ownModule_.reset(new llvm::Module("gomodule", context));
+    ownModule_->setTargetTriple("x86_64-unknown-linux-gnu");
+    ownModule_->setDataLayout("e-m:e-i64:64-f80:128-n8:16:32:64-S128");
     module_ = ownModule_.get();
   }
 
   datalayout_ = &module_->getDataLayout();
-
-  // Create and record an error function. By marking it as varargs this will
-  // avoid any collisions with things that the front end might create, since
-  // Go varargs is handled/lowered entirely by the front end.
-  llvm::SmallVector<llvm::Type *, 1> elems(0);
-  elems.push_back(errorType()->type());
-  const bool isVarargs = true;
-  llvm::FunctionType *eft = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(context_), elems, isVarargs);
-  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
-  llvm::Function *ef = llvm::Function::Create(eft, plinkage, "", module_);
-  errorFunction_.reset(new Bfunction(ef, makeAuxFcnType(eft), "", "",
-                                     Location()));
 
   // Reuse the error function as the value for error_expression
   errorExpression_ = nbuilder_.mkError(errorType());
@@ -156,6 +86,19 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
   initializeTypeManager(errorExpression(),
                         datalayout_,
                         nameTags());
+
+  // Create and record an error function. By marking it as varargs this will
+  // avoid any collisions with things that the front end might create, since
+  // Go varargs is handled/lowered entirely by the front end.
+  llvm::SmallVector<llvm::Type *, 1> elems(0);
+  elems.push_back(llvmBoolType());
+  const bool isVarargs = true;
+  llvm::FunctionType *eft = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(context_), elems, isVarargs);
+  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
+  llvm::Function *ef = llvm::Function::Create(eft, plinkage, "", module_);
+  errorFunction_.reset(new Bfunction(ef, makeAuxFcnType(eft), "", "",
+                                     Location(), typeManager()));
 
   // Error statement.
   errorStatement_ = nbuilder_.mkErrorStmt();
@@ -429,7 +372,8 @@ Bfunction *Llvm_backend::defineBuiltinFcn(const std::string &name,
       llvm::cast<llvm::FunctionType>(llpft->getElementType());
   BFunctionType *fcnType = makeAuxFcnType(llft);
   Location pdcl = linemap()->get_predeclared_location();
-  Bfunction *bfunc = new Bfunction(fcn, fcnType, name, name, pdcl);
+  Bfunction *bfunc = new Bfunction(fcn, fcnType, name, name, pdcl,
+                                   typeManager());
   return bfunc;
 }
 
@@ -450,27 +394,31 @@ Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
 
   // Materialize a Bfunction for the builtin
   if (be->flavor() == BuiltinEntry::IntrinsicBuiltin) {
+    llvm::SmallVector<llvm::Type *, 8> ltypes;
+    for (auto &t : be->types())
+      ltypes.push_back(t->type());
     llvm::Function *fcn =
-        llvm::Intrinsic::getDeclaration(module_, be->intrinsicId(),
-                                        be->types());
+        llvm::Intrinsic::getDeclaration(module_, be->intrinsicId(), ltypes);
     assert(fcn != nullptr);
     bf = defineBuiltinFcn(be->name(), fcn);
   } else {
     assert(be->flavor() == BuiltinEntry::LibcallBuiltin);
 
+    // Create function type.
+    Btyped_identifier receiver;
+    std::vector<Btyped_identifier> params;
+    std::vector<Btyped_identifier> results;
+    Location bloc(linemap_->get_predeclared_location());
     const BuiltinEntryTypeVec &types = be->types();
-    llvm::Type *resultType = types[0];
-    BuiltinEntryTypeVec ptypes(0);
+    Btyped_identifier result("ret", types[0], bloc);
+    results.push_back(result);
     for (unsigned idx = 1; idx < types.size(); ++idx)
-      ptypes.push_back(types[idx]);
-    const bool isVarargs = false;
-    llvm::FunctionType *ft =
-        llvm::FunctionType::get(resultType, ptypes, isVarargs);
-    llvm::LibFunc lf = be->libfunc();
-    llvm::GlobalValue::LinkageTypes plinkage =
-        llvm::GlobalValue::ExternalLinkage;
-    llvm::Function *fcn =
-        llvm::Function::Create(ft, plinkage, be->name(), module_);
+      params.push_back(Btyped_identifier("", types[idx], bloc));
+    Btype *fcnType = functionType(receiver, params, results, nullptr, bloc);
+
+    // Create function
+    bf = function(fcnType, be->name(), be->name(),
+                  true, false, false, false, false, bloc);
 
     // FIXME: add attributes this function? Such as maybe
     // llvm::Attribute::ArgMemOnly, llvm::Attribute::ReadOnly?
@@ -479,6 +427,8 @@ Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
     // want to turn on this code, since it will be helpful to catch
     // errors/mistakes. For the time being it can't be turned on (not
     // pass manager is set up).
+
+    llvm::LibFunc lf = be->libfunc();
     if (TLI_ && lf != llvm::LibFunc::NumLibFuncs) {
 
       // Verify that the function is available on this target.
@@ -488,10 +438,8 @@ Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
       // with how LLVM views the routine. For example, if we are trying
       // to create a version of memcmp() that takes a single boolean as
       // an argument, that's going to be a show-stopper type problem.
-      assert(TLI_->getLibFunc(*fcn, lf));
+      assert(TLI_->getLibFunc(*bf->function(), lf));
     }
-
-    bf = defineBuiltinFcn(be->name(), fcn);
   }
   be->setBfunction(bf);
 
@@ -691,7 +639,12 @@ Bvariable *Llvm_backend::genVarForConstant(llvm::Constant *conval,
   bool isConstant = true;
   bool isCommon = false;
   std::string ctag(namegen("const"));
-  return implicit_variable(ctag, "", type, isHidden, isConstant, isCommon, 0);
+  Bvariable *rv = implicit_variable(ctag, "", type, isHidden,
+                                    isConstant, isCommon, 0);
+  assert(llvm::isa<llvm::GlobalVariable>(rv->value()));
+  llvm::GlobalVariable *gvar = llvm::cast<llvm::GlobalVariable>(rv->value());
+  gvar->setInitializer(conval);
+  return rv;
 }
 
 Bexpression *Llvm_backend::genStore(Bfunction *func,
@@ -1799,6 +1752,9 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
       chain_expr == errorExpression())
     return errorExpression();
 
+  // FIXME: call chain not yet handled
+  assert(chain_expr == nullptr);
+
   // Resolve fcn
   fn_expr = resolveVarContext(fn_expr);
 
@@ -2016,13 +1972,24 @@ Llvm_backend::return_statement(Bfunction *bfunction,
     Btype *rtyp = bfunction->fcnType()->resultType();
     Bexpression *structVal =
         constructor_expression(rtyp, resolvedVals, location);
-    structVal = resolve(structVal, bfunction);
-    toret = structVal;
+    if (! bfunction->returnValueMem()) {
+      structVal = resolve(structVal, bfunction);
+      toret = structVal;
+    } else {
+      if (llvm::isa<llvm::Constant>(structVal->value())) {
+        llvm::Constant *cval = llvm::cast<llvm::Constant>(structVal->value());
+        Bvariable *cv = genVarForConstant(cval, structVal->btype());
+        structVal = var_expression(cv, VE_rvalue, location);
+        structVal = address_expression(structVal, location);
+      }
+    }
   }
-  llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, toret->value());
 
+  Binstructions retInsns;
+  llvm::Value *rval = bfunction->genReturnSequence(toret, &retInsns);
+  llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, rval);
   Bexpression *rexp =
-      nbuilder_.mkReturn(btype, ri, toret, location);
+      nbuilder_.mkReturn(btype, ri, toret, retInsns, location);
   return nbuilder_.mkExprStmt(bfunction, rexp, location);
 }
 
@@ -2527,7 +2494,8 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
 
   BFunctionType *fcnType = fntype->castToBFunctionType();
   assert(fcnType);
-  Bfunction *bfunc = new Bfunction(fcn, fcnType, name, asm_name, location);
+  Bfunction *bfunc = new Bfunction(fcn, fcnType, name, asm_name, location,
+                                   typeManager());
 
   // split-stack or nosplit
   if (! disable_split_stack)
@@ -2579,7 +2547,7 @@ class GenBlocks {
 public:
   GenBlocks(llvm::LLVMContext &context, Llvm_backend *be,
             Bfunction *function, Bnode *topNode, llvm::DIScope *scope,
-            bool createDebugMetadata);
+            bool createDebugMetadata, llvm::BasicBlock *entryBlock);
 
   llvm::BasicBlock *walk(Bnode *node, llvm::BasicBlock *curblock);
   void finishFunction();
@@ -2615,7 +2583,8 @@ GenBlocks::GenBlocks(llvm::LLVMContext &context,
                      Bfunction *function,
                      Bnode *topNode,
                      llvm::DIScope *scope,
-                     bool createDebugMetadata)
+                     bool createDebugMetadata,
+                     llvm::BasicBlock *entryBlock)
     : context_(context), be_(be), function_(function),
       dibuildhelper_(nullptr), emitOrphanedCode_(false),
       createDebugMetaData_(createDebugMetadata)
@@ -2625,7 +2594,8 @@ GenBlocks::GenBlocks(llvm::LLVMContext &context,
                                            be->typeManager(),
                                            be->linemap(),
                                            be->dibuilder(),
-                                           be->getDICompUnit()));
+                                           be->getDICompUnit(),
+                                           entryBlock));
     dibuildhelper().beginFunction(scope, function);
   }
 }
@@ -2885,7 +2855,7 @@ bool Llvm_backend::function_set_body(Bfunction *function,
 
   // Walk the code statements
   GenBlocks gb(context_, this, function, code_stmt,
-               getDICompUnit(), createDebugMetaData_);
+               getDICompUnit(), createDebugMetaData_, entryBlock);
   llvm::BasicBlock *block = gb.walk(code_stmt, entryBlock);
   gb.finishFunction();
 

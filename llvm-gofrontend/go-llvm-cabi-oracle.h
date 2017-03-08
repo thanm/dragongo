@@ -14,7 +14,7 @@
 // There are many possible complications, permutations, and oddities when
 // it comes to runtime calling conventions; the code here currently supports
 // only x86_64 SysV, which gets rid of many of the corner cases that can
-// be found in the corresponding code in Clang. in addition
+// be found in the corresponding code in Clang.
 //
 //===----------------------------------------------------------------------===//
 
@@ -22,8 +22,6 @@
 #define LLVMGOFRONTEND_GO_LLVM_CABI_ORACLE_H
 
 #include "go-llvm-btype.h"
-
-#include "llvm/IR/CallingConv.h"
 
 class TypeManager;
 class EightByteInfo;
@@ -37,7 +35,7 @@ class raw_ostream;
 
 // Disposition of a specific function argument or function return value.
 
-enum ABIParamDisp : uint8_t  {
+enum CABIParamDisp : uint8_t  {
 
   // Pass argument directly (not in memory).
   ParmDirect,
@@ -53,7 +51,7 @@ enum ABIParamDisp : uint8_t  {
 // Attributes on parameters. These correspond directly to the LLVM attrs
 // of the same name.
 
-enum ABIParamAttr : uint8_t  {
+enum CABIParamAttr : uint8_t  {
   AttrNone=0,
   AttrStructReturn,
   AttrByVal,
@@ -64,8 +62,8 @@ enum ABIParamAttr : uint8_t  {
 
 // Container class for storing info on how a specific parameter is
 // passed to a function. A given parameter may wind up occupying
-// multiple parameter slots in the cooked (ABI-specific) signature of
-// the LLVM function. For example:
+// multiple slots in the cooked (ABI-specific) signature of the LLVM
+// function. For example:
 //
 //       type blah struct {
 //          x float64
@@ -89,25 +87,30 @@ enum ABIParamAttr : uint8_t  {
 // in the case of a fcn return value, or in an "empty" parm (ex: type
 // of empty struct).
 
-class ABIParamInfo {
+class CABIParamInfo {
  public:
-  ABIParamInfo(const std::vector<llvm::Type *> &abiTypes,
-               ABIParamDisp disp,
-               ABIParamAttr attr,
+  CABIParamInfo(const std::vector<llvm::Type *> &abiTypes,
+               CABIParamDisp disp,
+               CABIParamAttr attr,
                int sigOffset)
       : abiTypes_(abiTypes), disp_(disp),
         attr_(attr), sigOffset_(sigOffset) {
     assert(disp == ParmDirect);
     assert(sigOffset >= 0);
   }
-  ABIParamInfo(llvm::Type *abiType,
-               ABIParamDisp disp,
-               ABIParamAttr attr,
+  CABIParamInfo(llvm::Type *abiType,
+               CABIParamDisp disp,
+               CABIParamAttr attr,
                int sigOffset)
       : disp_(disp), attr_(attr), sigOffset_(sigOffset) {
     abiTypes_.push_back(abiType);
     assert(sigOffset >= -1);
   }
+  CABIParamInfo(const CABIParamInfo &src)
+      : abiTypes_(src.abiTypes_),
+        disp_(src.disp_),
+        attr_(src.attr_),
+        sigOffset_(src.sigOffset_) { }
 
   unsigned numArgSlots() const { return abiTypes_.size(); }
   llvm::Type *abiType() const {
@@ -115,8 +118,8 @@ class ABIParamInfo {
     return abiTypes_[0];
   }
   const std::vector<llvm::Type *> &abiTypes() const { return abiTypes_; }
-  ABIParamDisp disp() const { return disp_; }
-  ABIParamAttr attr() const { return attr_; }
+  CABIParamDisp disp() const { return disp_; }
+  CABIParamAttr attr() const { return attr_; }
   int sigOffset() const { return sigOffset_; }
 
   void dump();
@@ -124,8 +127,8 @@ class ABIParamInfo {
 
  private:
   std::vector<llvm::Type *> abiTypes_;
-  ABIParamDisp disp_;
-  ABIParamAttr attr_;
+  CABIParamDisp disp_;
+  CABIParamAttr attr_;
   unsigned sigOffset_;
 };
 
@@ -137,9 +140,17 @@ class ABIParamInfo {
 
 class CABIOracle {
  public:
+
+  // Given information on the param types and result type for a
+  // function, create an oracle object that can answer C ABI
+  // queries about the function.
+  CABIOracle(const std::vector<Btype *> &fcnParamTypes,
+             Btype *fcnResultType,
+             TypeManager *typeManager);
+
+  // This constructor draws param/result info from an existing BFunctionType
   CABIOracle(BFunctionType *ft,
-             TypeManager *typeManager,
-             llvm::CallingConv::ID cc);
+             TypeManager *typeManager);
 
   // Returns TRUE if this cc supported, FALSE otherwise.
   bool supported() const;
@@ -149,11 +160,14 @@ class CABIOracle {
   llvm::FunctionType *getFunctionTypeForABI();
 
   // Given the index of a parameter in the abstract function type,
-  // return info of the param w.r.t. the ABI (how it is passed).
-  const ABIParamInfo &paramInfo(unsigned idx);
+  // return info on how the param is handled with respects to the ABI.
+  const CABIParamInfo &paramInfo(unsigned idx);
 
   // Return info on transmission of return value.
-  const ABIParamInfo &returnInfo();
+  const CABIParamInfo &returnInfo();
+
+  // Type manager used with this oracle.
+  TypeManager *tm() const { return typeManager_; }
 
   // Various dump methods.
   void dump();
@@ -161,19 +175,56 @@ class CABIOracle {
   void osdump(llvm::raw_ostream &os);
 
  private:
-  BFunctionType *bFcnType_;
+  std::vector<Btype *> fcnParamTypes_;
+  Btype *fcnResultType_;
   llvm::FunctionType *fcnTypeForABI_;
   TypeManager *typeManager_;
-  llvm::CallingConv::ID conv_;
-  std::vector<ABIParamInfo> infov_;
+  std::vector<CABIParamInfo> infov_;
 
-  void compute();
-  ABIParamInfo computeABIReturn(Btype *resultType, ABIState &state);
-  ABIParamInfo computeABIParam(Btype *pType, ABIState &state);
+  void analyze();
+  CABIParamInfo analyzeABIReturn(Btype *resultType, ABIState &state);
+  CABIParamInfo analyzeABIParam(Btype *pType, ABIState &state);
   bool canPassDirectly(unsigned regsInt, unsigned regsSSE, ABIState &state);
   const llvm::DataLayout *datalayout() const;
-  TypeManager *tm() const { return typeManager_; }
-  ABIParamDisp classifyArgType(llvm::Type *type);
+  CABIParamDisp classifyArgType(llvm::Type *type);
 };
+
+#if 0
+
+struct MarshallResults {
+  std::vector<llvm::Value *> values;
+  std::vector<llvm::Instruction *> generatedInstructions;
+  llvm::Value *returnValuePointer;
+};
+
+// This helper class takes advantage of information from CABIOracle to
+// perform marshalling of arguments for a call and unmarshalling of
+// the function return value if needed.
+
+class CABICallHelper {
+ public:
+  void CABICallHelper(Bfunction *containingFunction,
+                      TypeManager *typeManager);
+
+  MarshallResults MarshallArguments(BfunctionType *callee,
+                                    const &std::vector<llvm::Value *> args);
+  MarshallResults UnmarshallReturnVal(BfunctionType *callee,
+                                      llvm::Value *returnValuePointer);
+ private:
+  Bfunction *containingFcn_;
+  TypeManager *typeManager_;
+
+  TypeManager *tm() const { return typeManager_; }
+};
+
+// This helper class generates the necessary setup for
+// unmarshalling ABI-encoded values on function entry.
+class CABIPrologHelper {
+ public:
+  MarshallResults UnMarshallFcnArguments(BfunctionType *fcn);
+
+};
+
+#endif
 
 #endif // LLVMGOFRONTEND_GO_LLVM_CABI_ORACLE_H

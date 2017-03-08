@@ -47,7 +47,11 @@ public:
   bool isTemporary() const { return temporary_; }
   void markAsTemporary() { temporary_ = true; }
 
-  // Set/get variable initializer.
+  // Set/get variable initializer. Some variables may not have an
+  // initializer, for example module-scoped globals, or variables
+  // corresponding to by-address function params. Similarly, some
+  // variables will have an initializer instruction, and others will
+  // have just an initializer value.
   void setInitializer(llvm::Value *init);
   void setInitializerExpr(Bexpression *expr);
   llvm::Value *initializer() const { return initializer_; }

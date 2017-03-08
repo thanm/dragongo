@@ -14,6 +14,7 @@
 #include "go-llvm-typemanager.h"
 #include "go-llvm-dibuildhelper.h"
 #include "go-llvm-bexpression.h"
+#include "go-llvm-cabi-oracle.h"
 
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/IR/Constants.h"
@@ -22,9 +23,10 @@
 #include "llvm/IR/DIBuilder.h"
 #include "llvm/IR/Type.h"
 
-TypeManager::TypeManager(llvm::LLVMContext &context)
+TypeManager::TypeManager(llvm::LLVMContext &context, llvm::CallingConv::ID conv)
     : context_(context)
     , datalayout_(nullptr)
+    , cconv_(conv)
     , addressSpace_(0)
     , traceLevel_(0)
     , nametags_(nullptr)
@@ -140,7 +142,8 @@ void TypeManager::reinstallAnonType(Btype *typ)
 // category.
 
 void TypeManager::updatePlaceholderUnderlyingType(Btype *pht,
-                                                   Btype *newtyp) {
+                                                  Btype *newtyp)
+{
   assert(placeholders_.find(pht) != placeholders_.end());
   assert(anonTypes_.find(pht) == anonTypes_.end());
   assert(pht->isPlaceholder());
@@ -165,16 +168,20 @@ BFunctionType *TypeManager::makeAuxFcnType(llvm::FunctionType *ft)
     return it->second->castToBFunctionType();
 
   Btype *recvTyp = nullptr;
-  Btype *rStructTyp = nullptr;
   std::vector<Btype *> params;
   std::vector<Btype *> results;
-  if (ft->getReturnType() != llvmVoidType_)
-    results.push_back(makeAuxType(ft->getReturnType()));
+  Btype *rbtype = nullptr;
+  if (ft->getReturnType() != llvmVoidType_) {
+    rbtype = makeAuxType(ft->getReturnType());
+    results.push_back(rbtype);
+  } else {
+    rbtype = makeAuxType(llvm::Type::getVoidTy(context_));
+  }
   for (unsigned ii = 0; ii < ft->getNumParams(); ++ii)
     params.push_back(makeAuxType(ft->getParamType(ii)));
   Location loc;
   BFunctionType *rval =
-      new BFunctionType(recvTyp, params, results, rStructTyp, ft, loc);
+      new BFunctionType(recvTyp, params, results, rbtype, ft, loc);
   auxTypeMap_[ft] = rval;
   return rval;
 }
@@ -525,18 +532,12 @@ Btype *TypeManager::placeholderPointerType(const std::string &name,
 
 llvm::Type *
 TypeManager::makeLLVMFunctionType(const std::vector<Btype *> &paramTypes,
-                                  const std::vector<Btype *> &resultTypes,
                                   Btype *rbtype)
 {
-  // NB: receiver type already incorporated into paramTypes
-
-  llvm::SmallVector<llvm::Type *, 4> elems(0);
-
-  // Argument types
-  for (auto pt : paramTypes)
-    elems.push_back(pt->type());
-
-  llvm::Type *rtyp = rbtype->type();
+  // Construct an ABI oracle helper and ask the oracle for the
+  // correct ABI-adjusted type.
+  CABIOracle abiOracle(paramTypes, rbtype, this);
+  llvm::FunctionType *llvmft = abiOracle.getFunctionTypeForABI();
 
   // https://gcc.gnu.org/PR72814 handling. From the go-gcc.cc
   // equivalent, here is an explanatory comment:
@@ -545,15 +546,11 @@ TypeManager::makeLLVMFunctionType(const std::vector<Btype *> &paramTypes,
   // avoid causing confusion on 32-bit SPARC, we treat a function that
   // returns a zero-sized value as returning void.  That should do no
   // harm since there is no actual value to be returned.
-  //
-  if (rtyp->isSized() && datalayout_->getTypeSizeInBits(rtyp) == 0)
-    rtyp = llvm::Type::getVoidTy(context_);
+  llvm::Type *rtyp = rbtype->type();
+  assert(!rtyp->isSized() || datalayout_->getTypeSizeInBits(rtyp) != 0 ||
+         llvmft->getReturnType() == llvm::Type::getVoidTy(context_));
 
-  // from LLVM's perspective, no functions have varargs (all that
-  // is dealt with by the front end).
-  const bool isVarargs = false;
-  llvm::FunctionType *llft = llvm::FunctionType::get(rtyp, elems, isVarargs);
-  return llft;
+  return llvmft;
 }
 
 // Make a function type.
@@ -598,7 +595,7 @@ TypeManager::functionType(const Btyped_identifier &receiver,
   }
   assert(rbtype != nullptr);
 
-  llvm::Type *llft = makeLLVMFunctionType(paramTypes, resultTypes, rbtype);
+  llvm::Type *llft = makeLLVMFunctionType(paramTypes, rbtype);
 
   // Consult cache
   BFunctionType cand(receiver.btype, paramTypes, resultTypes, rbtype,
@@ -809,7 +806,7 @@ void TypeManager::postProcessResolvedArrayPlaceholder(BArrayType *bat,
   bat->setType(newllat);
   if (traceLevel() > 1) {
     std::cerr << "\n^ resolving placeholder array type "
-              << ((void*)bat) << " elem type; "
+              << ((void*)bat) << " elem type: "
               << "new LLVM type "
               << ((void*) newllat) << ", resolved type now:\n";
     bat->dump();
@@ -821,6 +818,36 @@ void TypeManager::postProcessResolvedArrayPlaceholder(BArrayType *bat,
     reinstallAnonType(bat);
 
   postProcessResolvedPlaceholder(bat);
+}
+
+void TypeManager::postProcessResolvedFunctionPlaceholder(BFunctionType *bft,
+                                                         Btype *btype)
+{
+  assert(bft);
+  assert(bft->isPlaceholder());
+
+  // Create a new resolved LLVM function type.
+  CABIOracle abiOracle(bft, this);
+  llvm::FunctionType *newllft = abiOracle.getFunctionTypeForABI();
+
+  // pluck out of anonTypes if stored there
+  bool wasHashed = removeAnonType(bft);
+
+  // update
+  bft->setType(newllft);
+  if (traceLevel() > 1) {
+    std::cerr << "\n^ resolving placeholder function type "
+              << ((void*)bft) << "new LLVM type "
+              << ((void*) newllft) << ", resolved type now:\n";
+    bft->dump();
+  }
+  bft->setPlaceholder(false);
+
+  // put back into anonTypes if it was there previously
+  if (wasHashed)
+    reinstallAnonType(bft);
+
+  postProcessResolvedPlaceholder(bft);
 }
 
 // When one of the "set_placeholder_*_type()" methods is called to
@@ -864,6 +891,12 @@ void TypeManager::postProcessResolvedPlaceholder(Btype *btype)
     BStructType *bst = refType->castToBStructType();
     if (bst) {
       postProcessResolvedStructPlaceholder(bst, btype);
+      continue;
+    }
+
+    BFunctionType *bft = refType->castToBFunctionType();
+    if (bft) {
+      postProcessResolvedFunctionPlaceholder(bft, btype);
       continue;
     }
 

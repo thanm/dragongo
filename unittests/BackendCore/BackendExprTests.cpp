@@ -204,7 +204,7 @@ TEST(BackendExprTests, TestMoreConversionExpressions) {
   // *(*uint32)parm3 = 5
   Btype *bi32t = be->integer_type(false, 32);
   Btype *bpi32t = be->pointer_type(bi32t);
-  Bvariable *p3 = func->getBvarForValue(func->getNthArgValue(2));
+  Bvariable *p3 = func->getNthParamVar(2);
   Bexpression *ve = be->var_expression(p3, VE_lvalue, loc);
   Bexpression *conv = be->convert_expression(bpi32t, ve, loc);
   Bexpression *dex = be->indirect_expression(bi32t, conv, false, loc);
@@ -705,8 +705,8 @@ TEST(BackendExprTests, TestLhsConditionalExpression) {
   Location loc;
 
   // *(p0 == nil ? p1 : p0) = 7
-  Bvariable *p0v = func->getBvarForValue(func->getNthArgValue(0));
-  Bvariable *p1v = func->getBvarForValue(func->getNthArgValue(1));
+  Bvariable *p0v = func->getNthParamVar(0);
+  Bvariable *p1v = func->getNthParamVar(1);
   Bexpression *vex = be->var_expression(p0v, VE_rvalue, loc);
   Bexpression *npe = be->nil_pointer_expression();
   Bexpression *cmp = be->binary_expression(OPERATOR_EQEQ, vex, npe, loc);

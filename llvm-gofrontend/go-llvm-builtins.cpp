@@ -15,10 +15,23 @@
 #include "go-llvm-bfunction.h"
 #include "go-llvm-typemanager.h"
 
+BuiltinEntry::~BuiltinEntry()
+{
+  if (flavor() == IntrinsicBuiltin)
+    delete bfunction_;
+}
+
 void BuiltinEntry::setBfunction(Bfunction *bfunc)
 {
-  assert(! bfunction_.get());
-  bfunction_.reset(bfunc);
+  assert(! bfunction_);
+  bfunction_ = bfunc;
+}
+
+//........................................................................
+
+BuiltinTable::BuiltinTable(TypeManager *tman, bool addLongDouble)
+    : tman_(tman), addLongDouble_(addLongDouble)
+{
 }
 
 void BuiltinTable::registerIntrinsicBuiltin(const char *name,
@@ -70,60 +83,63 @@ void BuiltinTable::defineAllBuiltins() {
 }
 
 void BuiltinTable::defineIntrinsicBuiltins() {
-  llvm::Type *llvmBoolType = tman_->llvmBoolType();
-  llvm::Type *llvmPtrType = tman_->llvmPtrType();
-  llvm::Type *llvmInt32Type = tman_->llvmInt32Type();
-  llvm::Type *llvmIntegerType = tman_->llvmIntegerType();
-  llvm::Type *llvmSizeType = tman_->llvmSizeType();
-  llvm::Type *llvmInt64Type = tman_->llvmInt64Type();
+  Btype *boolType = tman_->boolType();
+  Btype *ptrType = tman_->pointerType(boolType);
+  Btype *oneBitIntegerType = tman_->integerType(true, 1);
+  Btype *uint32Type = tman_->integerType(true, 32);
+  unsigned bitsInPtr = tman_->datalayout()->getPointerSizeInBits();
+  Btype *uintPtrType = tman_->integerType(true, bitsInPtr);
+  Btype *sizeType = uintPtrType;
+  Btype *uint64Type = tman_->integerType(true, 32);
+  Btype *int64Type = tman_->integerType(false, 32);
 
   defineIntrinsicBuiltin("__builtin_trap", nullptr, llvm::Intrinsic::trap,
                          nullptr);
 
   defineIntrinsicBuiltin("__builtin_return_address", nullptr,
-                         llvm::Intrinsic::returnaddress, llvmPtrType,
-                         llvmInt32Type, nullptr);
+                         llvm::Intrinsic::returnaddress, ptrType,
+                         uint32Type, nullptr);
   defineIntrinsicBuiltin("__builtin_frame_address", nullptr,
-                         llvm::Intrinsic::frameaddress, llvmPtrType,
-                         llvmInt32Type, nullptr);
+                         llvm::Intrinsic::frameaddress, ptrType,
+                         uint32Type, nullptr);
 
   defineIntrinsicBuiltin("__builtin_expect", nullptr, llvm::Intrinsic::expect,
-                         llvmIntegerType, nullptr);
+                         int64Type, int64Type, nullptr);
 
   defineLibcallBuiltin("__builtin_memcmp", "memcmp",
                        llvm::LibFunc::LibFunc_memcmp,
-                       llvmInt32Type, llvmPtrType, llvmPtrType,
-                       llvmSizeType, nullptr);
+                       uint32Type, ptrType, ptrType,
+                       sizeType, nullptr);
 
   defineLibcallBuiltin("__builtin_memcpy", "memcpy",
                        llvm::LibFunc::LibFunc_memcpy,
-                       llvmPtrType, llvmPtrType, llvmPtrType,
-                       llvmSizeType, llvmInt32Type, llvmBoolType, nullptr);
+                       ptrType, ptrType, ptrType,
+                       sizeType, uint32Type, oneBitIntegerType, nullptr);
 
   defineLibcallBuiltin("__builtin_memmove", "memmove",
                        llvm::LibFunc::LibFunc_memmove,
-                       llvmPtrType, llvmPtrType, llvmPtrType,
-                       llvmSizeType, nullptr);
+                       ptrType, ptrType, ptrType,
+                       sizeType, nullptr);
 
   // go runtime refers to this intrinsic as "ctz", however the LLVM
   // equivalent is named "cttz".
   defineIntrinsicBuiltin("__builtin_ctz", "ctz", llvm::Intrinsic::cttz,
-                         llvmIntegerType, nullptr);
+                         uint32Type, nullptr);
 
   // go runtime refers to this intrinsic as "ctzll", however the LLVM
   // equivalent is named "cttz".
   defineIntrinsicBuiltin("__builtin_ctzll", "ctzll", llvm::Intrinsic::cttz,
-                         llvmInt64Type, nullptr);
+                         uint64Type, nullptr);
 
   // go runtime refers to this intrinsic as "bswap32", however the LLVM
   // equivalent is named just "bswap"
   defineIntrinsicBuiltin("__builtin_bswap32", "bswap32", llvm::Intrinsic::bswap,
-                         llvmInt32Type, nullptr);
+                         uint32Type, nullptr);
 
   // go runtime refers to this intrinsic as "bswap64", however the LLVM
   // equivalent is named just "bswap"
   defineIntrinsicBuiltin("__builtin_bswap64", "bswap64", llvm::Intrinsic::bswap,
-                         llvmInt64Type, nullptr);
+                         uint64Type, nullptr);
 }
 
 namespace {
@@ -142,37 +158,37 @@ typedef struct {
 }
 
 void BuiltinTable::defineTrigBuiltins() {
-  llvm::Type *llvmDoubleType = tman_->llvmDoubleType();
-  llvm::Type *llvmLongDoubleType = tman_->llvmLongDoubleType();
-  llvm::Type *llvmIntegerType = tman_->llvmIntegerType();
+  Btype *doubleType = tman_->floatType(64);
+  Btype *longDoubleType = tman_->floatType(128);
+  Btype *int32Type = tman_->integerType(false, 32);
 
   BuiltinEntryTypeVec onearg_double(2);
-  onearg_double[0] = llvmDoubleType;
-  onearg_double[1] = llvmDoubleType;
+  onearg_double[0] = doubleType;
+  onearg_double[1] = doubleType;
 
   BuiltinEntryTypeVec onearg_long_double(2);
-  onearg_long_double[0] = llvmLongDoubleType;
-  onearg_long_double[1] = llvmLongDoubleType;
+  onearg_long_double[0] = longDoubleType;
+  onearg_long_double[1] = longDoubleType;
 
   BuiltinEntryTypeVec twoargs_double(3);
-  twoargs_double[0] = llvmDoubleType;
-  twoargs_double[1] = llvmDoubleType;
-  twoargs_double[2] = llvmDoubleType;
+  twoargs_double[0] = doubleType;
+  twoargs_double[1] = doubleType;
+  twoargs_double[2] = doubleType;
 
   BuiltinEntryTypeVec twoargs_long_double(3);
-  twoargs_long_double[0] = llvmLongDoubleType;
-  twoargs_long_double[1] = llvmLongDoubleType;
-  twoargs_long_double[2] = llvmLongDoubleType;
+  twoargs_long_double[0] = longDoubleType;
+  twoargs_long_double[1] = longDoubleType;
+  twoargs_long_double[2] = longDoubleType;
 
   BuiltinEntryTypeVec mixed_double(3);
-  mixed_double[0] = llvmDoubleType;
-  mixed_double[1] = llvmDoubleType;
-  mixed_double[2] = llvmIntegerType;
+  mixed_double[0] = doubleType;
+  mixed_double[1] = doubleType;
+  mixed_double[2] = int32Type;
 
   BuiltinEntryTypeVec mixed_long_double(3);
-  mixed_long_double[0] = llvmLongDoubleType;
-  mixed_long_double[1] = llvmLongDoubleType;
-  mixed_long_double[2] = llvmIntegerType;
+  mixed_long_double[0] = longDoubleType;
+  mixed_long_double[1] = longDoubleType;
+  mixed_long_double[2] = int32Type;
 
   std::vector<BuiltinEntryTypeVec *> signatures = {
       &onearg_double, &twoargs_double, &mixed_double};
@@ -211,10 +227,12 @@ void BuiltinTable::defineTrigBuiltins() {
     sprintf(bbuf, "__builtin_%s", d.name);
     BuiltinEntryTypeVec *sig = signatures[d.nargs];
     defineLibcallBuiltin(bbuf, d.name, *sig, d.lf);
-    sprintf(lbuf, "%sl", d.name);
-    sprintf(bbuf, "__builtin_%s", lbuf);
-    BuiltinEntryTypeVec *lsig = lsignatures[d.nargs];
-    defineLibcallBuiltin(bbuf, lbuf, *lsig, d.lf);
+    if (addLongDouble_) {
+      sprintf(lbuf, "%sl", d.name);
+      sprintf(bbuf, "__builtin_%s", lbuf);
+      BuiltinEntryTypeVec *lsig = lsignatures[d.nargs];
+      defineLibcallBuiltin(bbuf, lbuf, *lsig, d.lf);
+    }
   }
 }
 
@@ -223,11 +241,11 @@ void BuiltinTable::defineSyncFetchAndAddBuiltins() {
   for (auto sz : sizes) {
     char nbuf[64];
     sprintf(nbuf, "__sync_fetch_and_add_%u", sz);
-    llvm::Type *it = llvm::IntegerType::get(tman_->context(), sz << 3);
-    llvm::PointerType *pit = llvm::PointerType::get(it, tman_->addressSpace());
+    Btype *it = tman_->integerType(true,  sz << 3);
+    Btype *pit = tman_->pointerType(it);
     defineLibcallBuiltin(nbuf, nullptr,  // name, libname
                          BuiltinEntry::NotInTargetLib, // Libfunc ID
-                         tman_->llvmVoidType(),  // result type
+                         tman_->voidType(),  // result type
                          pit, it,        // param types
                          nullptr);
   }
@@ -240,12 +258,12 @@ void BuiltinTable::defineLibcallBuiltin(const char *name,
   va_list ap;
   BuiltinEntryTypeVec types(0);
   va_start(ap, libfunc);
-  llvm::Type *resultType = va_arg(ap, llvm::Type *);
+  Btype *resultType = va_arg(ap, Btype *);
   types.push_back(resultType);
-  llvm::Type *parmType = va_arg(ap, llvm::Type *);
+  Btype *parmType = va_arg(ap, Btype *);
   while (parmType) {
     types.push_back(parmType);
-    parmType = va_arg(ap, llvm::Type *);
+    parmType = va_arg(ap, Btype *);
   }
   llvm::LibFunc lf = static_cast<llvm::LibFunc>(libfunc);
   registerLibCallBuiltin(name, libname, lf, types);
@@ -265,10 +283,10 @@ void BuiltinTable::defineIntrinsicBuiltin(const char *name, const char *libname,
   va_list ap;
   BuiltinEntryTypeVec overloadTypes;
   va_start(ap, intrinsicID);
-  llvm::Type *oType = va_arg(ap, llvm::Type *);
+  Btype *oType = va_arg(ap, Btype *);
   while (oType) {
     overloadTypes.push_back(oType);
-    oType = va_arg(ap, llvm::Type *);
+    oType = va_arg(ap, Btype *);
   }
   llvm::Intrinsic::ID iid = static_cast<llvm::Intrinsic::ID>(intrinsicID);
   registerIntrinsicBuiltin(name, libname, iid, overloadTypes);

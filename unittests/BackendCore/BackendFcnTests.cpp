@@ -162,24 +162,12 @@ TEST(BackendFcnTests, BuiltinFunctionsTrig) {
     EXPECT_TRUE(results.find(bfcn) == results.end());
     results.insert(bfcn);
 
-    // long variant
-    char nbuf[128];
-    sprintf(nbuf, "%sl", fname.c_str());
-    Bfunction *lbfcn = be->lookup_builtin(nbuf);
-    EXPECT_TRUE(lbfcn != NULL);
-    EXPECT_TRUE(lbfcn != bfcn);
-
     // builtin variant
+    char nbuf[128];
     sprintf(nbuf, "__builtin_%s", fname.c_str());
     Bfunction *bifcn = be->lookup_builtin(nbuf);
     EXPECT_TRUE(bifcn != NULL);
     EXPECT_TRUE(bifcn == bfcn);
-
-    // long builtin variant
-    sprintf(nbuf, "__builtin_%sl", fname.c_str());
-    Bfunction *lbifcn = be->lookup_builtin(nbuf);
-    EXPECT_TRUE(lbifcn != NULL);
-    EXPECT_TRUE(lbifcn != bfcn);
   }
   EXPECT_TRUE(results.size() == tocheck.size());
 }
@@ -218,7 +206,7 @@ TEST(BackendFcnTests, MakeFuncWithRecursiveTypeParam) {
   Btype *bi64t = be->integer_type(false, 64);
   BFunctionType *befty1 = mkFuncTyp(be,
                                     L_RCV, php,
-                                    L_PARM, cpt,
+                                    L_PARM, cpht,
                                     L_PARM, bpst,
                                     L_PARM, be->bool_type(),
                                     L_PARM, bst,

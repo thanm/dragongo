@@ -406,8 +406,8 @@ TEST(BackEndPointerExprTests, CreatePointerOffsetExprs) {
   Bfunction *func = h.func();
   Location loc;
 
-  Bvariable *p0 = func->getBvarForValue(func->getNthArgValue(0));
-  Bvariable *p3 = func->getBvarForValue(func->getNthArgValue(2));
+  Bvariable *p0 = func->getNthParamVar(0);
+  Bvariable *p3 = func->getNthParamVar(2);
 
   {
     // ptr_offset(p3, 5) = 9

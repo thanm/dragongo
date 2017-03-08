@@ -121,7 +121,7 @@ TEST(BackendCallTests, MultiReturnCall) {
   //
   //  return p8, nil, nil, 101
   //
-  Bvariable *p1 = func->getBvarForValue(func->getNthArgValue(0));
+  Bvariable *p1 = func->getNthParamVar(0);
   Bexpression *vex = be->var_expression(p1, VE_rvalue, Location());
   std::vector<Bexpression *> rvals2 = {
     vex,

@@ -177,7 +177,7 @@ TEST(BackendArrayStructTests, CreateStructConstructionExprs) {
   Bvariable *loc1 = h.mkLocal("loc1", s2t, scon1);
 
   // var loc2 X = { &param1, loc1.f2 }
-  Bvariable *p1 = func->getBvarForValue(func->getNthArgValue(0));
+  Bvariable *p1 = func->getNthParamVar(0);
   Bexpression *ve1 = be->var_expression(p1, VE_rvalue, loc);
   Bexpression *adp = be->address_expression(ve1, loc);
   Bexpression *ve2 = be->var_expression(loc1, VE_rvalue, loc);
@@ -222,8 +222,8 @@ TEST(BackendArrayStructTests, CreateStructConstructionExprs2) {
   Location loc;
 
   // *p0 = { p1, 101 }
-  Bvariable *p0 = func->getBvarForValue(func->getNthArgValue(0));
-  Bvariable *p1 = func->getBvarForValue(func->getNthArgValue(1));
+  Bvariable *p0 = func->getNthParamVar(0);
+  Bvariable *p1 = func->getNthParamVar(1);
   Bexpression *ve = be->var_expression(p0, VE_lvalue, loc);
   Bexpression *dex = be->indirect_expression(s2t, ve, false, loc);
   std::vector<Bexpression *> vals;

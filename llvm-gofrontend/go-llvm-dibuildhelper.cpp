@@ -28,10 +28,12 @@ DIBuildHelper::DIBuildHelper(Bnode *topnode,
                              TypeManager *typemanager,
                              Llvm_linemap *linemap,
                              llvm::DIBuilder &builder,
-                             llvm::DIScope *moduleScope)
+                             llvm::DIScope *moduleScope,
+                             llvm::BasicBlock *entryBlock)
     : typemanager_(typemanager), linemap_(linemap),
       dibuilder_(builder), moduleScope_(moduleScope),
-      topblock_(topnode->castToBblock()), known_locations_(0)
+      topblock_(topnode->castToBblock()),
+      entryBlock_(entryBlock), known_locations_(0)
 {
   pushDIScope(moduleScope);
 }
@@ -88,7 +90,10 @@ void DIBuildHelper::insertVarDecl(Bvariable *var,
   llvm::Instruction *insertionPoint = nullptr;
   llvm::Instruction *decl =
       dibuilder().insertDeclare(var->value(), dilv, expr, vloc, insertionPoint);
-  decl->insertAfter(var->initializerInstruction());
+  if (var->initializer())
+    decl->insertAfter(var->initializerInstruction());
+  else
+    entryBlock_->getInstList().push_back(decl);
 }
 
 void DIBuildHelper::endFunction(Bfunction *function)

@@ -576,12 +576,15 @@ Bexpression *BnodeBuilder::mkCall(Btype *btype,
 Bexpression *BnodeBuilder::mkReturn(Btype *typ,
                                     llvm::Value *val,
                                     Bexpression *toret,
+                                    Binstructions &instructions,
                                     Location loc)
 {
   std::vector<Bnode *> kids = { toret };
   assert(val);
   Bexpression *rval =
       new Bexpression(N_Return, kids, val, typ, loc);
+  for (auto &i : instructions.instructions())
+    rval->appendInstruction(i);
   assert(llvm::isa<llvm::Instruction>(val));
   rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
   return archive(rval);

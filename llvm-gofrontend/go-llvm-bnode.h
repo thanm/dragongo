@@ -225,6 +225,7 @@ class BnodeBuilder {
   Bexpression *mkReturn(Btype *typ,
                         llvm::Value *value,
                         Bexpression *returnVal,
+                        Binstructions &instructions,
                         Location loc);
 
   // statements

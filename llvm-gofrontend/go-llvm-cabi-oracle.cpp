@@ -26,6 +26,9 @@
 static uint64_t typeSize(llvm::Type *t, TypeManager *tm)
 {
   unsigned bits = tm->datalayout()->getTypeSizeInBits(t);
+  // special case for 1-bit int
+  if (bits == 1)
+    return 1;
   assert((bits & 7) == 0);
   return bits / 8;
 }
@@ -99,7 +102,10 @@ struct EightByteRegion {
   std::vector<llvm::Type*> types;
   std::vector<uint64_t> offsets;
   llvm::Type *abiDirectType;
-  ABIParamAttr attr;
+  CABIParamAttr attr;
+
+  void dump();
+  void osdump(llvm::raw_ostream &os);
 };
 
 TypDisp EightByteRegion::getRegionTypDisp() const {
@@ -107,6 +113,28 @@ TypDisp EightByteRegion::getRegionTypDisp() const {
   for (auto &t : types)
     disp = dispMeet(getTypDisp(t), disp);
   return disp;
+}
+
+void EightByteRegion::dump()
+{
+  std::string s;
+  llvm::raw_string_ostream os(s);
+  osdump(os);
+  std::cerr << os.str();
+}
+
+void EightByteRegion::osdump(llvm::raw_ostream &os)
+{
+  os << "types:\n";
+  for (auto &t : types) {
+    os << "  ";
+    t->print(os);
+    os << "\n";
+  }
+  os << "offsets:\n";
+  for (auto &o : offsets) {
+    os << "  " << o << "\n";
+  }
 }
 
 // This class is a container for zero or more EightByteRegion objects
@@ -127,7 +155,7 @@ class EightByteInfo {
   void explodeStruct(BStructType *bst);
   void explodeArray(BArrayType *bat);
   void incorporateScalar(Btype *bt);
-  void computeABITypes();
+  void determineABITypes();
 
   TypeManager *tm() const { return typeManager_; }
 };
@@ -145,7 +173,7 @@ EightByteInfo::EightByteInfo(Btype *bt, TypeManager *tmgr)
     incorporateScalar(bt);
   }
   assert(ebrs_.size() <= 2);
-  computeABITypes();
+  determineABITypes();
 }
 
 // Given a struct type, explode it into 0, 1, or two EightByteInfo
@@ -243,7 +271,7 @@ void EightByteInfo::incorporateScalar(Btype *bt)
   ebr.offsets.push_back(0u);
   ebr.abiDirectType = bt->type();
   BIntegerType *bit = bt->castToBIntegerType();
-  if (bit && typeSize(bit->type(), tm()) < 64)
+  if (bit && typeSize(bit->type(), tm()) < 4)
     ebr.attr = (bit->isUnsigned() ? AttrZext : AttrSext);
   ebrs_.push_back(ebr);
 }
@@ -259,9 +287,9 @@ void EightByteInfo::getRegisterRequirements(unsigned *numInt, unsigned *numSSE)
       *numInt += 1;
 }
 
-// Compute abi types for each eight-byte region
+// Select the appropriate abi type for each eight-byte region
 
-void EightByteInfo::computeABITypes()
+void EightByteInfo::determineABITypes()
 {
   for (auto &ebr : ebrs_) {
     if (ebr.abiDirectType != nullptr)
@@ -288,7 +316,7 @@ void EightByteInfo::computeABITypes()
 
 //......................................................................
 
-void ABIParamInfo::dump()
+void CABIParamInfo::dump()
 {
   std::string s;
   llvm::raw_string_ostream os(s);
@@ -296,7 +324,7 @@ void ABIParamInfo::dump()
   std::cerr << os.str();
 }
 
-void ABIParamInfo::osdump(llvm::raw_ostream &os)
+void CABIParamInfo::osdump(llvm::raw_ostream &os)
 {
   os << (disp() == ParmDirect ? "Direct" :
          (disp() == ParmIgnore ? "Ignore" :
@@ -323,41 +351,58 @@ void ABIParamInfo::osdump(llvm::raw_ostream &os)
 // classification. Keeps track of arg count (args in final ABI-cooked
 // signature) along with available int/sse regs.
 
-struct ABIState {
-  ABIState() : availIntRegs(6), availSSERegs(8), argCount(0) { }
+class ABIState {
+ public:
+  ABIState() : availIntRegs_(6), availSSERegs_(8), argCount_(0) { }
   void addDirectIntArg() {
-    if (availIntRegs)
-      availIntRegs -= 1;
-    argCount += 1;
+    if (availIntRegs_)
+      availIntRegs_ -= 1;
+    argCount_ += 1;
   }
   void addDirectSSEArg() {
-    if (availSSERegs)
-      availSSERegs -= 1;
-    argCount += 1;
+    if (availSSERegs_)
+      availSSERegs_ -= 1;
+    argCount_ += 1;
     }
   void addIndirectArg() {
-    argCount += 1;
+    argCount_ += 1;
   }
-  unsigned availIntRegs;
-  unsigned availSSERegs;
-  unsigned argCount;
+  unsigned argCount() const { return argCount_; }
+  unsigned availIntRegs() const { return availIntRegs_; }
+  unsigned availSSERegs() const { return availSSERegs_; }
+
+ private:
+  unsigned availIntRegs_;
+  unsigned availSSERegs_;
+  unsigned argCount_;
 };
 
 //......................................................................
 
-CABIOracle::CABIOracle(BFunctionType *ft,
-                       TypeManager *typeManager,
-                       llvm::CallingConv::ID cc)
-    : bFcnType_(ft)
+CABIOracle::CABIOracle(const std::vector<Btype *> &fcnParamTypes,
+                       Btype *fcnResultType,
+                       TypeManager *typeManager)
+    : fcnParamTypes_(fcnParamTypes)
+    , fcnResultType_(fcnResultType)
     , fcnTypeForABI_(nullptr)
     , typeManager_(typeManager)
-    , conv_(cc)
 {
+  analyze();
+}
+
+CABIOracle::CABIOracle(BFunctionType *ft,
+                       TypeManager *typeManager)
+    : fcnParamTypes_(ft->paramTypes())
+    , fcnResultType_(ft->resultType())
+    , fcnTypeForABI_(nullptr)
+    , typeManager_(typeManager)
+{
+  analyze();
 }
 
 bool CABIOracle::supported() const
 {
-  return conv_ == llvm::CallingConv::X86_64_SysV;
+  return tm()->callingConv() == llvm::CallingConv::X86_64_SysV;
 }
 
 const llvm::DataLayout *CABIOracle::datalayout() const
@@ -368,23 +413,20 @@ const llvm::DataLayout *CABIOracle::datalayout() const
 llvm::FunctionType *CABIOracle::getFunctionTypeForABI()
 {
   assert(supported());
-  compute();
   return fcnTypeForABI_;
 }
 
-const ABIParamInfo &CABIOracle::paramInfo(unsigned idx)
+const CABIParamInfo &CABIOracle::paramInfo(unsigned idx)
 {
   assert(supported());
-  compute();
   unsigned pidx = idx + 1;
   assert(pidx < infov_.size());
   return infov_[pidx];
 }
 
-const ABIParamInfo &CABIOracle::returnInfo()
+const CABIParamInfo &CABIOracle::returnInfo()
 {
   assert(supported());
-  compute();
   unsigned ridx = 0;
   assert(ridx < infov_.size());
   return infov_[ridx];
@@ -405,7 +447,6 @@ std::string CABIOracle::toString()
 
 void CABIOracle::osdump(llvm::raw_ostream &os)
 {
-  compute();
   os << "Return: ";
   infov_[0].osdump(os);
   for (unsigned pidx = 1; pidx < infov_.size(); pidx++) {
@@ -418,30 +459,30 @@ void CABIOracle::osdump(llvm::raw_ostream &os)
 // rules here are a good deal more complicated, but for Go
 // it all boils down to the size of the type.
 
-ABIParamDisp CABIOracle::classifyArgType(llvm::Type *type)
+CABIParamDisp CABIOracle::classifyArgType(llvm::Type *type)
 {
   uint64_t sz = allocSize(type, tm());
   return (sz == 0 ? ParmIgnore : ((sz <= 16) ? ParmDirect : ParmIndirect));
 }
 
-ABIParamInfo CABIOracle::computeABIReturn(Btype *resultType, ABIState &state)
+CABIParamInfo CABIOracle::analyzeABIReturn(Btype *resultType, ABIState &state)
 {
   llvm::Type *rtyp = resultType->type();
-  ABIParamDisp rdisp = (rtyp == tm()->llvmVoidType() ?
+  CABIParamDisp rdisp = (rtyp == tm()->llvmVoidType() ?
                         ParmIgnore : classifyArgType(rtyp));
 
   if (rdisp == ParmIgnore) {
     // This corresponds to a function with no returns or
     // returning an empty composite.
     llvm::Type *voidType = tm()->llvmVoidType();
-    return ABIParamInfo(voidType, ParmIgnore, AttrNone, -1);
+    return CABIParamInfo(voidType, ParmIgnore, AttrNone, -1);
   }
 
   if (rdisp == ParmIndirect) {
     // Return value will be passed in memory, via a hidden
     // struct return param.
     llvm::Type *ptrTyp = tm()->makeLLVMPointerType(rtyp);
-    return ABIParamInfo(ptrTyp, ParmIndirect, AttrStructReturn, 0);
+    return CABIParamInfo(ptrTyp, ParmIndirect, AttrStructReturn, 0);
   }
 
   // Figure out what to do in the direct case
@@ -450,7 +491,7 @@ ABIParamInfo CABIOracle::computeABIReturn(Btype *resultType, ABIState &state)
   auto &regions = ebi.regions();
   if (regions.size() == 1) {
     // Single value
-    return ABIParamInfo(regions[0].abiDirectType,
+    return CABIParamInfo(regions[0].abiDirectType,
                         ParmDirect, regions[0].attr, -1);
   }
 
@@ -459,7 +500,7 @@ ABIParamInfo CABIOracle::computeABIReturn(Btype *resultType, ABIState &state)
   llvm::Type *abiTyp =
       tm()->makeLLVMTwoElementStructType(regions[0].abiDirectType,
                                          regions[1].abiDirectType);
-  return ABIParamInfo(abiTyp, ParmDirect, AttrNone, -1);
+  return CABIParamInfo(abiTyp, ParmDirect, AttrNone, -1);
 }
 
 bool CABIOracle::canPassDirectly(unsigned regsInt,
@@ -468,31 +509,38 @@ bool CABIOracle::canPassDirectly(unsigned regsInt,
 {
   if (regsInt + regsSSE == 1)
     return true;
-  if (regsInt <= state.availIntRegs && regsSSE <= state.availSSERegs)
+  if (regsInt <= state.availIntRegs() && regsSSE <= state.availSSERegs())
     return true;
   return false;
 }
 
-ABIParamInfo CABIOracle::computeABIParam(Btype *paramType, ABIState &state)
+CABIParamInfo CABIOracle::analyzeABIParam(Btype *paramType, ABIState &state)
 {
   llvm::Type *ptyp = paramType->type();
-  assert(paramType->flavor() != Btype::AuxT);
 
-  ABIParamDisp pdisp = classifyArgType(ptyp);
+  // The only situations in which we should be seeing AuxT types here is
+  // in cases where we're analyzing the signatures of builtin functions,
+  // meaning that there should be no structures or arrays.
+  assert(paramType->flavor() != Btype::AuxT || ptyp->isVoidTy() ||
+         !(ptyp->isStructTy() || ptyp->isArrayTy() ||
+           ptyp->isVectorTy() || ptyp->isEmptyTy() ||
+           ptyp->isIntegerTy(8) || ptyp->isIntegerTy(16)));
+
+  CABIParamDisp pdisp = classifyArgType(ptyp);
 
   if (pdisp == ParmIgnore) {
     // Empty struct or array
     llvm::Type *voidType = tm()->llvmVoidType();
-    return ABIParamInfo(voidType, ParmIgnore, AttrNone, -1);
+    return CABIParamInfo(voidType, ParmIgnore, AttrNone, -1);
   }
 
-  int sigOff = state.argCount;
+  int sigOff = state.argCount();
 
   if (pdisp == ParmIndirect) {
     // Value will be passed in memory
     llvm::Type *ptrTyp = tm()->makeLLVMPointerType(ptyp);
     state.addIndirectArg();
-    return ABIParamInfo(ptrTyp, ParmIndirect, AttrByVal, sigOff);
+    return CABIParamInfo(ptrTyp, ParmIndirect, AttrByVal, sigOff);
   }
 
   // Figure out what to do in the direct case
@@ -504,7 +552,7 @@ ABIParamInfo CABIOracle::computeABIParam(Btype *paramType, ABIState &state)
   ebi.getRegisterRequirements(&regsInt, &regsSSE);
 
   // Make direct/indirect decision
-  ABIParamAttr attr = AttrNone;
+  CABIParamAttr attr = AttrNone;
   if (canPassDirectly(regsInt, regsSSE, state)) {
     std::vector<llvm::Type *> abiTypes;
     for (auto &ebr : ebi.regions()) {
@@ -518,11 +566,11 @@ ABIParamInfo CABIOracle::computeABIParam(Btype *paramType, ABIState &state)
       else
         state.addDirectIntArg();
     }
-    return ABIParamInfo(abiTypes, ParmDirect, attr, sigOff);
+    return CABIParamInfo(abiTypes, ParmDirect, attr, sigOff);
   } else {
     state.addIndirectArg();
     llvm::Type *ptrTyp = tm()->makeLLVMPointerType(ptyp);
-    return ABIParamInfo(ptrTyp, ParmDirect, AttrByVal, sigOff);
+    return CABIParamInfo(ptrTyp, ParmDirect, AttrByVal, sigOff);
   }
 }
 
@@ -530,7 +578,7 @@ ABIParamInfo CABIOracle::computeABIParam(Btype *paramType, ABIState &state)
 // described in the AMD64 ABI Draft 0.99.8 document, section 3.2.3,
 // 4th page and thereabouts.
 
-void CABIOracle::compute()
+void CABIOracle::analyze()
 {
   if (fcnTypeForABI_)
     return;
@@ -538,13 +586,12 @@ void CABIOracle::compute()
   ABIState state;
 
   // First slot in the info vector will be for the return.
-  infov_.push_back(computeABIReturn(bFcnType_->resultType(), state));
+  infov_.push_back(analyzeABIReturn(fcnResultType_, state));
 
   // Now process the params.
-  const std::vector<Btype *> &paramTypes = bFcnType_->paramTypes();
-  for (unsigned idx = 0; idx < paramTypes.size(); ++idx) {
-    Btype *pType = paramTypes[idx];
-    auto d = computeABIParam(pType, state);
+  for (unsigned idx = 0; idx < fcnParamTypes_.size(); ++idx) {
+    Btype *pType = fcnParamTypes_[idx];
+    auto d = analyzeABIParam(pType, state);
     infov_.push_back(d);
   }
 
@@ -559,3 +606,44 @@ void CABIOracle::compute()
   const bool isVarargs = false;
   fcnTypeForABI_ = llvm::FunctionType::get(rtyp, elems, isVarargs);
 }
+
+#if 0
+
+//......................................................................
+
+void CABICallHelper::CABICallHelper(Bfunction *containingFcn,
+                                    TypeManager *typeManager)
+    : containingFcn_(containingFunction),
+      typeManager_(typeManager)
+{
+}
+
+MarshallResults
+CABICallHelper::MarshallArguments(BfunctionType *calleeTyp,
+                                  const &std::vector<llvm::Value *> args)
+{
+  MarshallResults results;
+
+  llvm::CallingConv::ID cc = containingFcn_->function()->getCallingConv();
+  CABIOracle oracle(calleeTyp, tm(), cc);
+
+  // If the ABI dictates that the return value is passed via memory,
+  // then create a temporary for this purpose.
+  const CABIParamInfo &ri = oracle.returnInfo();
+  if (ri.disp() == ParmIndirect) {
+    std::string name(tm()->tnamegen("sret.tmp"));
+    llvm::Value *sret =
+        containingFcn_->createTemporary(callee->resultType(), name);
+    result.values.push_back(sret);
+  } else {
+    // INCOMPLETE
+  }
+}
+
+MarshallResults
+CABICallHelper::UnmarshallReturnVal(BfunctionType *callee,
+                                    llvm::Value *returnValuePointer)
+{
+}
+
+#endif

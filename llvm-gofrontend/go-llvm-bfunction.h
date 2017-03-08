@@ -31,13 +31,16 @@ class Instruction;
 class Value;
 class raw_ostream;
 }
+class TypeManager;
+class CABIOracle;
+class CABIParamInfo;
 
 // Class Bfunction wraps llvm::Function
 
 class Bfunction : public NameGen {
 public:
   Bfunction(llvm::Function *f, BFunctionType *fcnType, const std::string &name,
-            const std::string &asmName, Location location);
+            const std::string &asmName, Location location, TypeManager *tm);
   ~Bfunction();
 
   llvm::Function *function() const { return function_; }
@@ -75,12 +78,8 @@ public:
   // allocas for local variables.
   void genProlog(llvm::BasicBlock *entry);
 
-  // Map back from an LLVM value (argument, alloca) to the Bvariable
-  // we created to wrap it. Exposed for unit testing.
-  Bvariable *getBvarForValue(llvm::Value *val);
-
-  // Return Nth argument as llvm value. Exposed for unit testing.
-  llvm::Value *getNthArgValue(unsigned argIdx);
+  // Create code to return a function value from this fcn, following ABI rules.
+  llvm::Value *genReturnSequence(Bexpression *toRet, Binstructions *retInstrs);
 
   // Return a vector of the local variables for the function. This will
   // not include block-scoped variables, only function-scoped locals.
@@ -89,36 +88,96 @@ public:
   // Return a vector of the parameter variables for the function.
   std::vector<Bvariable*> getParameterVars();
 
- private:
+  // Return an alloca temporary of the specified type.
+  llvm::Value *createTemporary(Btype *type, const std::string &tag);
 
-  // Record an alloca() instruction, to be added to entry block
-  void addAlloca(llvm::Instruction *inst) { allocas_.push_back(inst); }
+  // If the function return value is passing via memory instead of
+  // directly, this function returns the location into which the
+  // return has to go. Returns NULL if no return or direct return.
+  llvm::Value *returnValueMem() const { return rtnValueMem_; }
 
-  // Return Nth argument
-  llvm::Argument *getNthArg(unsigned argIdx);
-
-  // Return alloca inst holding argument value (create if needed)
-  llvm::Instruction *argValue(llvm::Argument *arg);
-
-  // Return Bvariable for Nth argument to function
-  Bvariable *getNthParamVar(unsigned argIdx);
-
-  // Number of parameter vars registered so far
-  unsigned paramsCreated() { return argToVal_.size(); }
+  // Return the Bvariable corresponding to the Kth function parameter.
+  // Exposed for unit testing.
+  Bvariable *getNthParamVar(unsigned idx);
 
  private:
-  std::vector<llvm::Instruction *> allocas_;
-  std::vector<llvm::Argument *> arguments_;
-  std::vector<Bblock *> blocks_;
-  std::unordered_map<llvm::Value *, Bvariable *> valueVarMap_;
-  std::unordered_map<llvm::Argument *, llvm::Instruction *> argToVal_;
-  std::vector<Bstatement *> labelmap_;
-  std::vector<Blabel *> labels_;
-  llvm::Function *function_;
+
+  // Perform ABI-related setup for this function. Invoked by ctor.
+  void abiSetup();
+
+  // Generate code to spill a direct-passed var to a spill slot.
+  void genArgSpill(Bvariable *paramVar,
+                   const CABIParamInfo &paramInfo,
+                   Binstructions *spillInstructions,
+                   unsigned pIdx);
+
+  // Create an alloca with the specified type. The alloca is recorded
+  // in a list so that it can be picked up during prolog generation.
+  llvm::Instruction *addAlloca(llvm::Type *vtyp, const std::string &name);
+
+  // Given an LLVM value, return the Bvariable we created to wrap it (either
+  // local var or parameter var).
+  Bvariable *getBvarForValue(llvm::Value *val);
+
+  // for tmp name generation
+  std::string namegen(const std::string &tag);
+
+ private:
+
+  // BFunctionType for this function.
   BFunctionType *fcnType_;
+
+  // LLVM function for this Bfunction
+  llvm::Function *function_;
+
+  // C ABI oracle for the function
+  std::unique_ptr<CABIOracle> abiOracle_;
+
+  // This includes all alloca's created for the function, including
+  // local variables, temp vars, and spill locations for formal params.
+  std::vector<llvm::Instruction *> allocas_;
+
+  // List of local variables created for the function.
+  std::vector<Bvariable *> localVariables_;
+
+  // Blocks created for this function.
+  std::vector<Bblock *> blocks_;
+
+  // Maps LLVM value for a variable (for example, an alloc) to the
+  // Bvariable used to represent the var.
+  std::unordered_map<llvm::Value *, Bvariable *> valueVarMap_;
+
+  // In the case where return value goes via memory,
+  // rtnValueMem_ stores where we should store the value, otherwise
+  // it will be NULL.
+  llvm::Value *rtnValueMem_;
+
+  // Parameter values. Slot K in this vector will hold the llvm value
+  // corresponding to the unpacked Kth parameter (this should be an
+  // AllocatInst or an Argument).
+  std::vector<llvm::Value *> paramValues_;
+
+  // Function arguments. These reflect the rules of the ABI, hence the
+  // length and types in this vector may not directly correspond to the
+  // values above.
+  std::vector<llvm::Argument *> arguments_;
+
+  // This counts the number of formal params the front end has
+  // registered so far via calls to parameter_variable.
+  unsigned paramsRegistered_;
+
+  // Maps label ID to defining statement
+  std::vector<Bstatement *> labelmap_;
+
+  // Stores all of the labels we've handed out.
+  std::vector<Blabel *> labels_;
+
+  // Function name and asm name
   std::string name_;
   std::string asmName_;
-  unsigned labelCount_;
+
+  // Other bits of info about this function: location, split stack flag,
+  // flag to indicate that we finished generating prolog.
   Location location_;
   SplitStackDisposition splitStack_;
   bool prologGenerated_;

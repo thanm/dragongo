@@ -40,7 +40,7 @@ TEST(BackendCABIOracleTests, Basic) {
                                       L_PARM, st1,
                                       L_RES, st2,
                                       L_END);
-    CABIOracle cab(befty1, be->typeManager(), llvm::CallingConv::X86_64_SysV);
+    CABIOracle cab(befty1, be->typeManager());
     const char *exp = R"RAW_RESULT(
       Return: Direct { { double, double } } sigOffset: -1
       Param 1: Direct AttrSext { i8 } sigOffset: 0
@@ -113,7 +113,7 @@ TEST(BackendCABIOracleTests, Extended) {
       rt = be->struct_type(results);
     Btype *t = be->function_type(mkid(nt), params, results, rt, Location());
     BFunctionType *bft = t->castToBFunctionType();
-    CABIOracle cab(bft, be->typeManager(), llvm::CallingConv::X86_64_SysV);
+    CABIOracle cab(bft, be->typeManager());
     cab.dump();
     EXPECT_EQ(repr(cab.getFunctionTypeForABI()), item.exp);
   }

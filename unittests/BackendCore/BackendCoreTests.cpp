@@ -134,9 +134,12 @@ TEST(BackendCoreTests, FunctionTypes) {
 
   {
     // func (Blah) foo() {}
+    Btype *pt = be->pointer_type(mkBackendThreeFieldStruct(be.get()));
     Btype *befn =
-        mkFuncTyp(be.get(), L_RCV, mkBackendThreeFieldStruct(be.get()), L_END);
-    Type *llfn = mkLLFuncTyp(&C, L_RCV, mkLlvmThreeFieldStruct(C), L_END);
+        mkFuncTyp(be.get(), L_RCV, pt, L_END);
+    llvm::PointerType *llpt =
+        llvm::PointerType::get(mkLlvmThreeFieldStruct(C), 0);
+    Type *llfn = mkLLFuncTyp(&C, L_RCV, llpt, L_END);
     ASSERT_TRUE(befn != nullptr && llfn != nullptr);
     EXPECT_TRUE(befn->type() == llfn);
   }
@@ -155,24 +158,6 @@ TEST(BackendCoreTests, FunctionTypes) {
     Btype *befn =
         mkFuncTyp(be.get(), L_RES, be->integer_type(false, 64), L_END);
     Type *llfn = mkLLFuncTyp(&C, L_RES, i64t, L_END);
-    ASSERT_TRUE(befn != nullptr && llfn != nullptr);
-    EXPECT_TRUE(befn->type() == llfn);
-  }
-
-  {
-    // func (Blah) foo(int32, int32, int32) (int64, int64) {}
-    Btype *bi64t = be->integer_type(false, 64);
-    Btype *bi32t = be->integer_type(false, 32);
-    Btype *befn =
-        mkFuncTyp(be.get(), L_RCV, mkBackendThreeFieldStruct(be.get()), L_PARM,
-                  bi32t, L_PARM, bi32t, L_PARM, bi32t, L_RES, bi64t, // ignored
-                  L_RES, bi64t,                                      // ignored
-                  L_RES_ST, mkTwoFieldStruct(be.get(), bi64t, bi64t), L_END);
-    Type *llfn =
-        mkLLFuncTyp(&C, L_RCV, mkLlvmThreeFieldStruct(C), L_PARM, i32t, L_PARM,
-                    i32t, L_PARM, i32t, L_RES, i64t, // ignored
-                    L_RES, i64t,                     // ignored
-                    L_RES_ST, mkTwoFieldLLvmStruct(C, i64t, i64t), L_END);
     ASSERT_TRUE(befn != nullptr && llfn != nullptr);
     EXPECT_TRUE(befn->type() == llfn);
   }

@@ -21,6 +21,8 @@
 #include "namegen.h"
 #include "backend.h"
 
+#include "llvm/IR/CallingConv.h"
+
 namespace llvm {
 class DataLayout;
 class DIType;
@@ -40,7 +42,7 @@ enum PTDisp { Concrete, Placeholder };
 
 class TypeManager {
  public:
-  TypeManager(llvm::LLVMContext &context);
+  TypeManager(llvm::LLVMContext &context, llvm::CallingConv::ID cconv);
   ~TypeManager();
 
   // These methods are intended to match up with the similarly
@@ -110,6 +112,7 @@ class TypeManager {
   llvm::Type *llvmVoidType() const { return llvmVoidType_; }
   llvm::Type *llvmBoolType() const { return llvmBoolType_; }
   llvm::Type *llvmPtrType() const { return llvmPtrType_; }
+  llvm::Type *llvmInt8Type() const { return llvmInt8Type_; }
   llvm::Type *llvmInt32Type() const { return llvmInt32Type_; }
   llvm::Type *llvmInt64Type() const { return llvmInt64Type_; }
   llvm::Type *llvmIntegerType() const { return llvmIntegerType_; }
@@ -133,7 +136,6 @@ class TypeManager {
   llvm::Type *makeLLVMPointerType(llvm::Type *toTy);
   llvm::Type *makeLLVMStructType(const std::vector<Btyped_identifier> &fields);
   llvm::Type *makeLLVMFunctionType(const std::vector<Btype *> &paramTypes,
-                                   const std::vector<Btype *> &resultTypes,
                                    Btype *rbtype);
 
   // Returns field type from composite (struct/array) type and index
@@ -160,6 +162,7 @@ class TypeManager {
   void postProcessResolvedPointerPlaceholder(BPointerType *bpt, Btype *btype);
   void postProcessResolvedStructPlaceholder(BStructType *bst, Btype *btype);
   void postProcessResolvedArrayPlaceholder(BArrayType *bat, Btype *btype);
+  void postProcessResolvedFunctionPlaceholder(BFunctionType *bft, Btype *btype);
 
   // For a newly create type, adds entries to the placeholderRefs
   // table for any contained types. Returns true if any placeholders
@@ -190,6 +193,9 @@ class TypeManager {
   // May be NULL prior to init call above
   const llvm::DataLayout *datalayout() const { return datalayout_; }
 
+  // Calling convention
+  llvm::CallingConv::ID callingConv() const { return cconv_; }
+
   // For named types, this returns the declared type name. If a type
   // is unnamed, then it returns a stringified representation of the
   // type (e.g, "[10]uint64").
@@ -201,6 +207,13 @@ class TypeManager {
   // For debugging
   unsigned traceLevel() const { return traceLevel_; }
   void setTypeManagerTraceLevel(unsigned level) { traceLevel_ = level; }
+
+  // for type name generation
+  std::string tnamegen(const std::string &tag,
+                       unsigned expl = NameGen::ChooseVer) {
+    assert(nametags_);
+    return nametags_->namegen(tag, expl);
+  }
 
  private:
 
@@ -216,13 +229,6 @@ class TypeManager {
   // For computing size-equivalent types for unresolved placeholders
   typedef std::unordered_map<Btype *, llvm::Type *> pproxymap;
   llvm::Type *placeholderProxyType(Btype *typ, pproxymap *pmap);
-
-  // for type name generation
-  std::string tnamegen(const std::string &tag,
-                       unsigned expl = NameGen::ChooseVer) {
-    assert(nametags_);
-    return nametags_->namegen(tag, expl);
-  }
 
   template <typename T1, typename T2> struct pairvalmap_hash {
     typedef std::pair<T1, T2> pairtype;
@@ -248,6 +254,7 @@ class TypeManager {
   // Context information needed for the LLVM backend.
   llvm::LLVMContext &context_;
   const llvm::DataLayout *datalayout_;
+  llvm::CallingConv::ID cconv_;
   unsigned addressSpace_;
   unsigned traceLevel_;
 
