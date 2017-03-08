@@ -106,10 +106,10 @@ public:
   void abiSetup();
 
   // Generate code to spill a direct-passed var to a spill slot.
-  void genArgSpill(Bvariable *paramVar,
-                   const CABIParamInfo &paramInfo,
-                   Binstructions *spillInstructions,
-                   unsigned pIdx);
+  unsigned genArgSpill(Bvariable *paramVar,
+                       const CABIParamInfo &paramInfo,
+                       Binstructions *spillInstructions,
+                       unsigned pIdx);
 
   // Create an alloca with the specified type. The alloca is recorded
   // in a list so that it can be picked up during prolog generation.

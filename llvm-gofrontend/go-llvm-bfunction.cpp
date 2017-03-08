@@ -223,10 +223,10 @@ Bvariable *Bfunction::getNthParamVar(unsigned argIdx)
   return getBvarForValue(pval);
 }
 
-void Bfunction::genArgSpill(Bvariable *paramVar,
-                            const CABIParamInfo &paramInfo,
-                            Binstructions *spillInstructions,
-                            unsigned pIdx)
+unsigned Bfunction::genArgSpill(Bvariable *paramVar,
+                                const CABIParamInfo &paramInfo,
+                                Binstructions *spillInstructions,
+                                unsigned pIdx)
 {
   assert(paramInfo.disp() == ParmDirect);
   BinstructionsLIRBuilder builder(function()->getContext(), spillInstructions);
@@ -237,7 +237,7 @@ void Bfunction::genArgSpill(Bvariable *paramVar,
     llvm::Argument *arg = arguments_[paramInfo.sigOffset()];
     llvm::Instruction *si = builder.CreateStore(arg, sploc);
     paramVar->setInitializer(si);
-    return;
+    return 1;
   }
   assert(paramInfo.abiTypes().size() == 2);
 
@@ -270,6 +270,7 @@ void Bfunction::genArgSpill(Bvariable *paramVar,
   builder.CreateStore(argChunk1, field1gep);
 
   // All done.
+  return 2;
 }
 
 void Bfunction::genProlog(llvm::BasicBlock *entry)
@@ -279,12 +280,13 @@ void Bfunction::genProlog(llvm::BasicBlock *entry)
   Binstructions spills;
   const std::vector<Btype *> &paramTypes = fcnType()->paramTypes();
   unsigned nParms = paramTypes.size();
-  for (unsigned idx = 0; idx < nParms; ++idx) {
-    const CABIParamInfo &paramInfo = abiOracle_->paramInfo(idx);
+  unsigned argIdx = (abiOracle_->returnInfo().disp() == ParmIndirect ? 1 : 0);
+  for (unsigned pidx = 0; pidx < nParms; ++pidx) {
+    const CABIParamInfo &paramInfo = abiOracle_->paramInfo(pidx);
     if (paramInfo.disp() != ParmDirect)
       continue;
-    Bvariable *v = getNthParamVar(idx);
-    genArgSpill(v, paramInfo, &spills, idx);
+    Bvariable *v = getNthParamVar(pidx);
+    argIdx += genArgSpill(v, paramInfo, &spills, pidx);
   }
 
   // Append allocas for local variables
@@ -306,21 +308,28 @@ llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,
   BinstructionsLIRBuilder builder(function()->getContext(), retInstrs);
 
   // If we're returning an empty struct, or if the function has void
-  // type, then return an undef of the appropriate flavor.
+  // type, then return a null ptr (return "void").
   TypeManager *tm = abiOracle_->tm();
   if (returnInfo.disp() == ParmIgnore ||
       fcnType()->resultType()->type() == tm->llvmVoidType()) {
-    llvm::Value *rval = llvm::UndefValue::get(toRet->btype()->type());
+    llvm::Value *rval = nullptr;
     return rval;
   }
 
   // Indirect return: emit memcpy into sret
   if (returnInfo.disp() == ParmIndirect) {
+    BlockLIRBuilder bbuilder(function());
     Btype *rmemt = tm->makeAuxType(rtnValueMem_->getType());
     uint64_t sz = tm->typeSize(rmemt);
     uint64_t algn = tm->typeAlignment(rmemt);
-    builder.CreateMemCpy(rtnValueMem_, toRet->value(), sz, algn);
-    llvm::Value *rval = llvm::UndefValue::get(tm->llvmVoidType());
+    bbuilder.CreateMemCpy(rtnValueMem_, toRet->value(), sz, algn);
+    for (auto i : bbuilder.instructions()) {
+      // hack: irbuilder likes to create unnamed bitcasts
+      if (i->isCast())
+        i->setName(namegen("cast"));
+      retInstrs->appendInstruction(i);
+    }
+    llvm::Value *rval = nullptr;
     return rval;
   }
 

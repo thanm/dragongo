@@ -189,42 +189,4 @@ class CABIOracle {
   CABIParamDisp classifyArgType(llvm::Type *type);
 };
 
-#if 0
-
-struct MarshallResults {
-  std::vector<llvm::Value *> values;
-  std::vector<llvm::Instruction *> generatedInstructions;
-  llvm::Value *returnValuePointer;
-};
-
-// This helper class takes advantage of information from CABIOracle to
-// perform marshalling of arguments for a call and unmarshalling of
-// the function return value if needed.
-
-class CABICallHelper {
- public:
-  void CABICallHelper(Bfunction *containingFunction,
-                      TypeManager *typeManager);
-
-  MarshallResults MarshallArguments(BfunctionType *callee,
-                                    const &std::vector<llvm::Value *> args);
-  MarshallResults UnmarshallReturnVal(BfunctionType *callee,
-                                      llvm::Value *returnValuePointer);
- private:
-  Bfunction *containingFcn_;
-  TypeManager *typeManager_;
-
-  TypeManager *tm() const { return typeManager_; }
-};
-
-// This helper class generates the necessary setup for
-// unmarshalling ABI-encoded values on function entry.
-class CABIPrologHelper {
- public:
-  MarshallResults UnMarshallFcnArguments(BfunctionType *fcn);
-
-};
-
-#endif
-
 #endif // LLVMGOFRONTEND_GO_LLVM_CABI_ORACLE_H

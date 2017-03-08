@@ -95,10 +95,9 @@ TEST(BackendCABIOracleTests, Extended) {
             "{ double, double } (double, double, <2 x float>, i64)"),
 
     FcnItem({ st3 }, { st3, st0, bu8t },
-            "{ { double, double }, i8 }* ({ { double, double }, i8 }*, i8)"),
+            "void ({ { double, double }, i8 }*, "
+            "{ { double, double }, i8 }*, i8)"),
 
-    FcnItem({ st3 }, { st3, st0, bu8t },
-            "{ { double, double }, i8 }* ({ { double, double }, i8 }*, i8)"),
   };
 
   for (auto &item : items) {

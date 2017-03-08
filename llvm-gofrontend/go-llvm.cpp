@@ -1976,12 +1976,15 @@ Llvm_backend::return_statement(Bfunction *bfunction,
       structVal = resolve(structVal, bfunction);
       toret = structVal;
     } else {
-      if (llvm::isa<llvm::Constant>(structVal->value())) {
+      if (structVal->compositeInitPending()) {
+        structVal = resolveCompositeInit(structVal, bfunction, nullptr);
+      } else if (llvm::isa<llvm::Constant>(structVal->value())) {
         llvm::Constant *cval = llvm::cast<llvm::Constant>(structVal->value());
         Bvariable *cv = genVarForConstant(cval, structVal->btype());
         structVal = var_expression(cv, VE_rvalue, location);
         structVal = address_expression(structVal, location);
       }
+        toret = structVal;
     }
   }
 

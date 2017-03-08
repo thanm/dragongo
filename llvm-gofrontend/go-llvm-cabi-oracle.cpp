@@ -482,6 +482,7 @@ CABIParamInfo CABIOracle::analyzeABIReturn(Btype *resultType, ABIState &state)
     // Return value will be passed in memory, via a hidden
     // struct return param.
     llvm::Type *ptrTyp = tm()->makeLLVMPointerType(rtyp);
+    state.addIndirectArg();
     return CABIParamInfo(ptrTyp, ParmIndirect, AttrStructReturn, 0);
   }
 
@@ -596,7 +597,13 @@ void CABIOracle::analyze()
   }
 
   llvm::SmallVector<llvm::Type *, 8> elems(0);
-  llvm::Type *rtyp = infov_[0].abiType();
+  llvm::Type *rtyp = nullptr;
+  if (infov_[0].disp() == ParmIndirect) {
+    rtyp = tm()->llvmVoidType();
+    elems.push_back(infov_[0].abiType());
+  } else {
+    rtyp = infov_[0].abiType();
+  }
   for (unsigned pidx = 1; pidx < infov_.size(); pidx++) {
     if (infov_[pidx].disp() == ParmIgnore)
       continue;
@@ -606,44 +613,3 @@ void CABIOracle::analyze()
   const bool isVarargs = false;
   fcnTypeForABI_ = llvm::FunctionType::get(rtyp, elems, isVarargs);
 }
-
-#if 0
-
-//......................................................................
-
-void CABICallHelper::CABICallHelper(Bfunction *containingFcn,
-                                    TypeManager *typeManager)
-    : containingFcn_(containingFunction),
-      typeManager_(typeManager)
-{
-}
-
-MarshallResults
-CABICallHelper::MarshallArguments(BfunctionType *calleeTyp,
-                                  const &std::vector<llvm::Value *> args)
-{
-  MarshallResults results;
-
-  llvm::CallingConv::ID cc = containingFcn_->function()->getCallingConv();
-  CABIOracle oracle(calleeTyp, tm(), cc);
-
-  // If the ABI dictates that the return value is passed via memory,
-  // then create a temporary for this purpose.
-  const CABIParamInfo &ri = oracle.returnInfo();
-  if (ri.disp() == ParmIndirect) {
-    std::string name(tm()->tnamegen("sret.tmp"));
-    llvm::Value *sret =
-        containingFcn_->createTemporary(callee->resultType(), name);
-    result.values.push_back(sret);
-  } else {
-    // INCOMPLETE
-  }
-}
-
-MarshallResults
-CABICallHelper::UnmarshallReturnVal(BfunctionType *callee,
-                                    llvm::Value *returnValuePointer)
-{
-}
-
-#endif
