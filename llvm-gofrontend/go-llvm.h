@@ -55,7 +55,9 @@ class raw_ostream;
 }
 
 class BuiltinTable;
-class BexprLIRBuilder;
+class BlockLIRBuilder;
+class BinstructionsLIRBuilder;
+
 struct GenCallState;
 
 #include "llvm/IR/GlobalValue.h"
@@ -464,10 +466,6 @@ public:
   // Helper to fix up epilog block for function (add return if needed)
   void fixupEpilogBlog(Bfunction *bfunction, llvm::BasicBlock *epilog);
 
-  // Var expr management
-  Bexpression *resolveVarContext(Bexpression *expr,
-                                 Varexpr_context ctx=VE_rvalue);
-
   // Load-generation helper
   Bexpression *loadFromExpr(Bexpression *space,
                             Btype *resultTyp,
@@ -488,11 +486,6 @@ public:
   static bool
   valuesAreConstant(const std::vector<Bexpression *> &vals);
 
-  // Composite init management
-  Bexpression *resolveCompositeInit(Bexpression *expr,
-                                    Bfunction *func,
-                                    llvm::Value *storage = nullptr);
-
   // Array init helper
   Bexpression *genArrayInit(llvm::ArrayType *llat,
                             Bexpression *expr,
@@ -505,9 +498,18 @@ public:
                              llvm::Value *storage,
                              Bfunction *bfunc);
 
+  // Composite init management
+  Bexpression *resolveCompositeInit(Bexpression *expr,
+                                    Bfunction *func,
+                                    llvm::Value *storage);
+  // Var expr management
+  Bexpression *resolveVarContext(Bexpression *expr,
+                                 Varexpr_context ctx=VE_rvalue);
+
   // General-purpose resolver, handles var expr context and
   // composite init context.
-  Bexpression *resolve(Bexpression *expr, Bfunction *func);
+  Bexpression *resolve(Bexpression *expr, Bfunction *func,
+                       Varexpr_context ctx=VE_rvalue);
 
   // Check a vector of Bexpression's to see if any are the
   // error expression, returning TRUE if so.
@@ -542,7 +544,9 @@ public:
   //
   // Return value will be a new convert Bexpression if a convert is
   // needed, NULL otherwise.
-  llvm::Value *convertForAssignment(Bexpression *src, llvm::Type *dstToType);
+  llvm::Value *convertForAssignment(Bexpression *src,
+                                    llvm::Type *dstToType,
+                                    BinstructionsLIRBuilder *builder = nullptr);
 
   // Apply type conversion for a binary operation. This helper exists
   // to resolve situations where expressions are created by the front

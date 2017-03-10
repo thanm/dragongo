@@ -600,12 +600,15 @@ bool Llvm_backend::stmtVectorHasError(const std::vector<Bstatement *> &stmts)
   return false;
 }
 
-Bexpression *Llvm_backend::resolve(Bexpression *expr, Bfunction *func)
+Bexpression *Llvm_backend::resolve(Bexpression *expr,
+                                   Bfunction *func,
+                                   Varexpr_context ctx)
+
 {
   if (expr->compositeInitPending())
     expr = resolveCompositeInit(expr, func, nullptr);
   if (expr->varExprPending())
-    expr = resolveVarContext(expr);
+    expr = resolveVarContext(expr, ctx);
   return expr;
 }
 
@@ -765,6 +768,7 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
                                          llvm::Value *storage,
                                          Bfunction *bfunc)
 {
+  //BinstructionsLIRBuilder builder(context_, expr);
   const std::vector<Bexpression *> fexprs = expr->getChildExprs();
   unsigned nFields = llst->getNumElements();
   assert(nFields == fexprs.size());
@@ -775,6 +779,13 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
     llvm::Value *gep = makeFieldGEP(llst, fidx, storage);
     if (llvm::isa<llvm::Instruction>(gep))
       expr->appendInstruction(llvm::cast<llvm::Instruction>(gep));
+#if 0
+    assert(fidx < llst->getNumElements());
+    std::string tag(namegen("field"));
+    llvm::Value *gep =
+        builder.CreateConstInBoundsGEP2_32(llst, storage,
+                                           0, fidx, tag);
+#endif
 
     // Unpack/post-process the value in question
     assert(fexprs[fidx]);
@@ -1730,18 +1741,22 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
 
 struct GenCallState {
   CABIOracle oracle;
-  BlockLIRBuilder builder;
+  Binstructions instructions;
+  BinstructionsLIRBuilder builder;
+  // BlockLIRBuilder builder;
   std::vector<Bexpression *> resolvedArgs;
   llvm::SmallVector<llvm::Value *, 16> llargs;
   llvm::Value *sretTemp;
   BFunctionType *calleeFcnType;
   Bfunction *callerFcn;
 
-  GenCallState(Bfunction *callerFunc,
+  GenCallState(llvm::LLVMContext &context,
+               Bfunction *callerFunc,
                BFunctionType *calleeFcnTyp,
                TypeManager *tm)
       : oracle(calleeFcnTyp, tm),
-        builder(callerFunc->function()),
+        instructions(),
+        builder(context, &instructions),
         sretTemp(nullptr),
         calleeFcnType(calleeFcnTyp),
         callerFcn(callerFunc) { }
@@ -1755,14 +1770,16 @@ void Llvm_backend::genCallProlog(GenCallState &state)
     assert(state.sretTemp == nullptr);
     std::string tname(namegen("sret"));
     Btype *resTyp = state.calleeFcnType->resultType();
+    assert(state.callerFcn);
     state.sretTemp = state.callerFcn->createTemporary(resTyp, tname);
     if (returnInfo.disp() == ParmIndirect)
       state.llargs.push_back(state.sretTemp);
   }
 }
 
-void Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
-                                       GenCallState &state)
+void
+Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
+                                  GenCallState &state)
 {
 
   const std::vector<Btype *> &paramTypes = state.calleeFcnType->paramTypes();
@@ -1782,7 +1799,7 @@ void Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args
     // Resolve argument
     Varexpr_context ctx = (paramInfo.abiTypes().size() == 2 ? VE_lvalue :
                            VE_rvalue);
-    Bexpression *resarg = resolveVarContext(fn_args[idx], ctx);
+    Bexpression *resarg = resolve(fn_args[idx], state.callerFcn, ctx);
     state.resolvedArgs.push_back(resarg);
 
     if (paramInfo.disp() == ParmIgnore)
@@ -1797,7 +1814,7 @@ void Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args
       val = convertForAssignment(resarg, paramTyp->type());
 
     // Apply any necessary sign-extensions or zero-extensions.
-    BlockLIRBuilder &builder = state.builder;
+    BinstructionsLIRBuilder &builder = state.builder;
     if (paramInfo.abiTypes().size() == 1) {
       if (paramInfo.attr() == AttrZext)
         val = builder.CreateZExt(val, paramInfo.abiType(), namegen("zext"));
@@ -1891,7 +1908,7 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
   BFunctionType *calleeFcnTyp = bpft->toType()->castToBFunctionType();
   assert(calleeFcnTyp);
 
-  GenCallState state(caller, calleeFcnTyp, typeManager());
+  GenCallState state(context_, caller, calleeFcnTyp, typeManager());
   state.resolvedArgs.push_back(fn_expr);
 
   // Set up for call (including creation of return tmp if needed)
@@ -1910,10 +1927,10 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
                                state.llargs, callname);
 
   llvm::Value *callValue = (state.sretTemp ? state.sretTemp : call);
-  Binstructions callInsns(state.builder.instructions());
   Bexpression *rval =
       nbuilder_.mkCall(rbtype, callValue, state.resolvedArgs,
-                       callInsns, location);
+                       state.instructions, location);
+  state.instructions.clear();
 
   // Any epilog processing here
   genCallEpilog(state, call, rval);
@@ -1965,7 +1982,6 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
       CHKTREE(es);
       return es;
     }
-    //init = resolveVarContext(init);
   } else {
     init = zero_expression(var->btype());
   }
@@ -1977,9 +1993,17 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
   return st;
 }
 
-llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
-                                                llvm::Type *dstToType)
+llvm::Value *
+Llvm_backend::convertForAssignment(Bexpression *src,
+                                   llvm::Type *dstToType,
+                                   BinstructionsLIRBuilder *builder)
 {
+  std::unique_ptr<BinstructionsLIRBuilder> myBuilder;
+  if (!builder) {
+    myBuilder.reset(new BinstructionsLIRBuilder(context_, src));
+    builder = myBuilder.get();
+  }
+
   llvm::Type *srcType = src->value()->getType();
 
   if (dstToType == srcType)
@@ -1992,18 +2016,16 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
   bool srcPtrToFD = isPtrToFuncDescriptorType(srcType);
   bool dstPtrToFD = isPtrToFuncDescriptorType(dstToType);
   if (srcPtrToFD && dstPtrToFD) {
-    BexprLIRBuilder builder(context_, src);
     std::string tag(namegen("cast"));
-    llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
+    llvm::Value *bitcast = builder->CreateBitCast(src->value(), dstToType, tag);
     return bitcast;
   }
 
   // Case 2: handle circular function pointer types.
   bool dstCircPtr = isCircularPointerType(dstToType);
   if (srcPtrToFD && dstCircPtr) {
-    BexprLIRBuilder builder(context_, src);
     std::string tag(namegen("cast"));
-    llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
+    llvm::Value *bitcast = builder->CreateBitCast(src->value(), dstToType, tag);
     return bitcast;
   }
 
@@ -2013,9 +2035,8 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
   bool dstPtrToVoid = isPtrToVoidType(dstToType);
   bool srcFuncPtr = isPtrToFuncType(srcType);
   if (dstPtrToVoid && srcFuncPtr) {
-    BexprLIRBuilder builder(context_, src);
     std::string tag(namegen("cast"));
-    llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
+    llvm::Value *bitcast = builder->CreateBitCast(src->value(), dstToType, tag);
     return bitcast;
   }
 
@@ -2023,9 +2044,8 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
   // generated without a type initially, so we need to convert them
   // to the appropriate type if they appear in an assignment context.
   if (src->value() == nil_pointer_expression()->value()) {
-    BexprLIRBuilder builder(context_, src);
     std::string tag(namegen("cast"));
-    llvm::Value *bitcast = builder.CreateBitCast(src->value(), dstToType, tag);
+    llvm::Value *bitcast = builder->CreateBitCast(src->value(), dstToType, tag);
     return bitcast;
   }
 
