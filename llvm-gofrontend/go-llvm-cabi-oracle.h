@@ -122,6 +122,11 @@ class CABIParamInfo {
   CABIParamAttr attr() const { return attr_; }
   int sigOffset() const { return sigOffset_; }
 
+  // In the case where a given param consumed multiple arg slots
+  // (e.g. length of abiTypes_ is 2), return a type corresponding
+  // to a 2-field struct with fields having the ABI types.
+  llvm::Type *computeABIStructType(TypeManager *tm) const;
+
   void dump();
   void osdump(llvm::raw_ostream &os);
 

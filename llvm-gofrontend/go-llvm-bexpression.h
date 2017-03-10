@@ -43,17 +43,24 @@ public:
     return instructions_;
   }
   void appendInstruction(llvm::Instruction *inst) {
+    assert(isValidInst(inst));
     instructions_.push_back(inst);
   }
   void appendInstructions(const std::vector<llvm::Instruction *> &ilist) {
-    for (auto inst : ilist)
+    for (auto inst : ilist) {
+      assert(isValidInst(inst));
       instructions_.push_back(inst);
+    }
   }
 
   void clear() { instructions_.clear(); }
 
 private:
   std::vector<llvm::Instruction *> instructions_;
+
+  // Certain classes of instructions should not be hanging off a
+  // Bexpression -- they should only appear in a function prolog.
+  bool isValidInst(llvm::Instruction *);
 };
 
 // Helper class used as part of class Bexpression. This object records

@@ -122,7 +122,6 @@ TEST(BackendCoreTests, FunctionTypes) {
   LLVMContext C;
 
   Type *i64t = IntegerType::get(C, 64);
-  Type *i32t = IntegerType::get(C, 32);
 
   std::unique_ptr<Backend> be(go_get_backend(C));
 

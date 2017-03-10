@@ -189,7 +189,12 @@ Bvariable *Bfunction::local_variable(const std::string &name,
 
 llvm::Value *Bfunction::createTemporary(Btype *btype, const std::string &tag)
 {
-  return addAlloca(btype->type(), tag);
+  return createTemporary(btype->type(), tag);
+}
+
+llvm::Value *Bfunction::createTemporary(llvm::Type *typ, const std::string &tag)
+{
+  return addAlloca(typ, tag);
 }
 
 std::vector<Bvariable*> Bfunction::getParameterVars()
@@ -235,6 +240,8 @@ unsigned Bfunction::genArgSpill(Bvariable *paramVar,
   // Simple case: param arrived in single register.
   if (paramInfo.abiTypes().size() == 1) {
     llvm::Argument *arg = arguments_[paramInfo.sigOffset()];
+    // TODO: handle size-2 vector of floats case
+    assert(!paramInfo.abiType()->isVectorTy());
     llvm::Instruction *si = builder.CreateStore(arg, sploc);
     paramVar->setInitializer(si);
     return 1;
@@ -244,11 +251,8 @@ unsigned Bfunction::genArgSpill(Bvariable *paramVar,
   // More complex case: param arrives in two registers.
 
   // Create struct type corresponding to first and second params
-  const std::vector<llvm::Type *> &abiTypes = paramInfo.abiTypes();
-  llvm::Type *ft0 = abiTypes[0];
-  llvm::Type *ft1 = abiTypes[1];
   TypeManager *tm = abiOracle_->tm();
-  llvm::Type *llst = tm->makeLLVMTwoElementStructType(ft0, ft1);
+  llvm::Type *llst = paramInfo.computeABIStructType(tm);
   llvm::Type *ptst = tm->makeLLVMPointerType(llst);
 
   // Cast the spill location to a pointer to the struct created above.
@@ -267,7 +271,9 @@ unsigned Bfunction::genArgSpill(Bvariable *paramVar,
   llvm::Value *field1gep =
       builder.CreateConstInBoundsGEP2_32(llst, bitcast, 0, 1, tag0);
   llvm::Value *argChunk1 = arguments_[paramInfo.sigOffset()+1];
-  builder.CreateStore(argChunk1, field1gep);
+  llvm::Instruction *stinst = builder.CreateStore(argChunk1, field1gep);
+
+  paramVar->setInitializer(stinst);
 
   // All done.
   return 2;
@@ -297,6 +303,16 @@ void Bfunction::genProlog(llvm::BasicBlock *entry)
   // Param spills
   for (auto sp : spills.instructions())
     entry->getInstList().push_back(sp);
+
+  // Debug meta-data generation needs to know the position at which
+  // a parameter variable is available for inspection -- it does this
+  // currently by looking at the initializer for the var. Walk through the
+  // params and fix things up to make sure they all have initializers.
+  for (unsigned pidx = 0; pidx < nParms; ++pidx) {
+    Bvariable *v = getNthParamVar(pidx);
+    if (v->initializer() == nullptr)
+      v->setInitializer(&entry->back());
+  }
 
   prologGenerated_ = true;
 }
@@ -337,11 +353,26 @@ llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,
   if (! returnInfo.abiType()->isStructTy())
     return toRet->value();
 
-  // Direct return complex case: two-value struct. Bitcast needed here.
-  std::string tag(namegen("cast"));
-  llvm::Type *abiRetTyp = returnInfo.abiType();
-  llvm::Value *bitcast = builder.CreateBitCast(toRet->value(), abiRetTyp, tag);
-  return bitcast;
+  // Direct return trickier case: two-value struct. It would be nice
+  // if we could simply bitcast the struct value from one type to another
+  // but this sort of thing is not allowed. Instead we do the following:
+  // - create a temporary alloca using the original return type
+  // - store the value to the alloc
+  // - bitcast the temporary alloca to a pointer to the ABI struct type
+  // - issue a load from the ABI struct pointer
+
+  std::string sretname(namegen("sretv"));
+  llvm::Value *tmp = createTemporary(toRet->btype(), sretname);
+  builder.CreateStore(toRet->value(), tmp);
+
+  llvm::Type *llst = returnInfo.computeABIStructType(tm);
+  llvm::Type *ptst = tm->makeLLVMPointerType(llst);
+  std::string castname(namegen("cast"));
+  llvm::Value *bitcast = builder.CreateBitCast(tmp, ptst, castname);
+
+  std::string loadname(namegen("ld"));
+  llvm::Instruction *ldinst = builder.CreateLoad(bitcast, loadname);
+  return ldinst;
 }
 
 Blabel *Bfunction::newLabel(Location loc) {

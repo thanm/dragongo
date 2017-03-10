@@ -61,6 +61,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , TLI_(nullptr)
     , builtinTable_(new BuiltinTable(typeManager(), false))
     , errorFunction_(nullptr)
+    , curFcn_(nullptr)
 {
   // If nobody passed in a linemap, create one for internal use (unit testing)
   if (!linemap_) {
@@ -621,8 +622,7 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr,
                                  expr, expr->location());
     }
     Btype *btype = expr->btype();
-    Bexpression *rval = loadFromExpr(expr, btype, expr->location(),
-                                     expr->tag());
+    Bexpression *rval = loadFromExpr(expr, btype, expr->location(), expr->tag());
     return rval;
   }
   return expr;
@@ -1216,7 +1216,8 @@ Bexpression *Llvm_backend::conditional_expression(Bfunction *function,
                                                   Bexpression *condition,
                                                   Bexpression *then_expr,
                                                   Bexpression *else_expr,
-                                                  Location location) {
+                                                  Location location)
+{
   if (function == errorFunction_.get() ||
       btype == errorType() ||
       condition == errorExpression() ||
@@ -1224,6 +1225,7 @@ Bexpression *Llvm_backend::conditional_expression(Bfunction *function,
       else_expr == errorExpression())
     return errorExpression();
 
+  curFcn_ = function;
   assert(condition && then_expr);
 
   condition = resolveVarContext(condition);
@@ -1726,11 +1728,152 @@ Bexpression *Llvm_backend::array_index_expression(Bexpression *barray,
   return rval;
 }
 
+struct GenCallState {
+  CABIOracle oracle;
+  BlockLIRBuilder builder;
+  std::vector<Bexpression *> resolvedArgs;
+  llvm::SmallVector<llvm::Value *, 16> llargs;
+  llvm::Value *sretTemp;
+  BFunctionType *calleeFcnType;
+  Bfunction *callerFcn;
+
+  GenCallState(Bfunction *callerFunc,
+               BFunctionType *calleeFcnTyp,
+               TypeManager *tm)
+      : oracle(calleeFcnTyp, tm),
+        builder(callerFunc->function()),
+        sretTemp(nullptr),
+        calleeFcnType(calleeFcnTyp),
+        callerFcn(callerFunc) { }
+};
+
+void Llvm_backend::genCallProlog(GenCallState &state)
+{
+  const CABIParamInfo &returnInfo = state.oracle.returnInfo();
+  if (returnInfo.disp() == ParmIndirect ||
+      returnInfo.abiType()->isAggregateType()) {
+    assert(state.sretTemp == nullptr);
+    std::string tname(namegen("sret"));
+    Btype *resTyp = state.calleeFcnType->resultType();
+    state.sretTemp = state.callerFcn->createTemporary(resTyp, tname);
+    if (returnInfo.disp() == ParmIndirect)
+      state.llargs.push_back(state.sretTemp);
+  }
+}
+
+void Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
+                                       GenCallState &state)
+{
+
+  const std::vector<Btype *> &paramTypes = state.calleeFcnType->paramTypes();
+  for (unsigned idx = 0; idx < fn_args.size(); ++idx) {
+    const CABIParamInfo &paramInfo = state.oracle.paramInfo(idx);
+
+    // For arguments passed by value, no call to resolveVarContext
+    // (we want var address, not var value).
+    if (paramInfo.disp() == ParmIndirect) {
+      state.resolvedArgs.push_back(fn_args[idx]);
+      llvm::Value *mem = fn_args[idx]->value();
+      assert(mem && mem->getType()->isPointerTy());
+      state.llargs.push_back(mem);
+      continue;
+    }
+
+    // Resolve argument
+    Varexpr_context ctx = (paramInfo.abiTypes().size() == 2 ? VE_lvalue :
+                           VE_rvalue);
+    Bexpression *resarg = resolveVarContext(fn_args[idx], ctx);
+    state.resolvedArgs.push_back(resarg);
+
+    if (paramInfo.disp() == ParmIgnore)
+      continue;
+
+    assert(paramInfo.disp() == ParmDirect);
+
+    // Apply any necessary pointer type conversions.
+    Btype *paramTyp = paramTypes[idx];
+    llvm::Value *val = resarg->value();
+    if (val->getType()->isPointerTy() && ctx == VE_rvalue)
+      val = convertForAssignment(resarg, paramTyp->type());
+
+    // Apply any necessary sign-extensions or zero-extensions.
+    BlockLIRBuilder &builder = state.builder;
+    if (paramInfo.abiTypes().size() == 1) {
+      if (paramInfo.attr() == AttrZext)
+        val = builder.CreateZExt(val, paramInfo.abiType(), namegen("zext"));
+      else if (paramInfo.attr() == AttrSext)
+        val = builder.CreateZExt(val, paramInfo.abiType(), namegen("sext"));
+      state.llargs.push_back(val);
+      continue;
+    }
+
+    // This now corresponds to the case of passing the contents of
+    // a small structure via two pieces / pararms.
+    assert(paramInfo.abiTypes().size() == 2);
+    assert(paramInfo.attr() == AttrNone);
+
+    // Create a struct type of the appropriate shape
+    llvm::Type *llst = paramInfo.computeABIStructType(typeManager());
+    llvm::Type *ptst = makeLLVMPointerType(llst);
+
+    // Cast the value to the struct type
+    std::string tag(namegen("cast"));
+    llvm::Value *bitcast = builder.CreateBitCast(val, ptst, tag);
+
+    // Load up each field
+    std::string ftag0(namegen("field0"));
+    llvm::Value *field0gep =
+        builder.CreateConstInBoundsGEP2_32(llst, bitcast, 0, 0, ftag0);
+    std::string ltag0(namegen("ld"));
+    llvm::Value *ld0 = builder.CreateLoad(field0gep, ltag0);
+    state.llargs.push_back(ld0);
+
+    std::string ftag1(namegen("field1"));
+    llvm::Value *field1gep =
+        builder.CreateConstInBoundsGEP2_32(llst, bitcast, 0, 1, ftag1);
+    std::string ltag1(namegen("ld"));
+    llvm::Value *ld1 = builder.CreateLoad(field1gep, ltag1);
+    state.llargs.push_back(ld1);
+  }
+}
+
+void Llvm_backend::genCallEpilog(GenCallState &state,
+                                 llvm::Instruction *callInst,
+                                 Bexpression *callExpr)
+{
+  const CABIParamInfo &returnInfo = state.oracle.returnInfo();
+  if (returnInfo.disp() == ParmIndirect ||
+      returnInfo.abiType()->isAggregateType()) {
+    assert(state.sretTemp);
+    assert(callExpr->value() == state.sretTemp);
+    callExpr->setVarExprPending(VE_rvalue, 0);
+
+    if (returnInfo.disp() == ParmDirect) {
+      BinstructionsLIRBuilder builder(context_, callExpr);
+
+      // The call is returning a structure by value, however the
+      // ABI struct type may be different from the actual return type,
+      // so here we:
+      // - cast the sret temp to "pointer to ABI struct" type
+      // - store the result value into that casted address
+      llvm::Type *llst = returnInfo.computeABIStructType(typeManager());
+      llvm::Type *ptst = makeLLVMPointerType(llst);
+      std::string castname(namegen("cast"));
+      llvm::Value *bitcast = builder.CreateBitCast(state.sretTemp,
+                                                   ptst, castname);
+      std::string stname(namegen("st"));
+      builder.CreateStore(callInst, bitcast);
+    }
+  }
+}
+
 // Create an expression for a call to FN_EXPR with FN_ARGS.
 Bexpression *
 Llvm_backend::call_expression(Bexpression *fn_expr,
                               const std::vector<Bexpression *> &fn_args,
-                              Bexpression *chain_expr, Location location) {
+                              Bexpression *chain_expr,
+                              Bfunction *caller,
+                              Location location) {
   if (fn_expr == errorExpression() || exprVectorHasError(fn_args) ||
       chain_expr == errorExpression())
     return errorExpression();
@@ -1738,47 +1881,43 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
   // FIXME: call chain not yet handled
   // assert(chain_expr == nullptr);
 
-  // Resolve fcn
+  // Resolve fcn. Expect pointer-to-function type here.
   fn_expr = resolveVarContext(fn_expr);
-
-  // Pick out function type
-  BPointerType *bpft = fn_expr->btype()->castToBPointerType();
-  BFunctionType *bft = bpft->toType()->castToBFunctionType();
-  assert(bft);
-  const std::vector<Btype *> &paramTypes = bft->paramTypes();
-
-  // Unpack / resolve arguments
-  llvm::SmallVector<llvm::Value *, 64> llargs;
-  std::vector<Bexpression *> resolvedArgs;
-  resolvedArgs.push_back(fn_expr);
-  for (unsigned idx = 0; idx < fn_args.size(); ++idx) {
-    Bexpression *resarg = resolveVarContext(fn_args[idx]);
-    resolvedArgs.push_back(resarg);
-    Btype *paramTyp = paramTypes[idx];
-    llvm::Value *val = resarg->value();
-    if (val->getType()->isPointerTy())
-      val = convertForAssignment(resarg, paramTyp->type());
-    llargs.push_back(val);
-  }
-
-  // Expect pointer-to-function type here
   assert(fn_expr->btype()->type()->isPointerTy());
-  llvm::PointerType *pt =
-      llvm::cast<llvm::PointerType>(fn_expr->btype()->type());
-  llvm::FunctionType *llft =
-      llvm::cast<llvm::FunctionType>(pt->getElementType());
-
-  // Return type
   Btype *rbtype = functionReturnType(fn_expr->btype());
 
-  // FIXME: create struct to hold result from multi-return call
+  // Collect function type and param types
+  BPointerType *bpft = fn_expr->btype()->castToBPointerType();
+  BFunctionType *calleeFcnTyp = bpft->toType()->castToBFunctionType();
+  assert(calleeFcnTyp);
+
+  GenCallState state(caller, calleeFcnTyp, typeManager());
+  state.resolvedArgs.push_back(fn_expr);
+
+  // Set up for call (including creation of return tmp if needed)
+  genCallProlog(state);
+
+  // Unpack / resolve / marshall arguments
+  genCallMarshallArgs(fn_args, state);
+
+  // Create the actual call instruction
+  llvm::FunctionType *llft =
+      llvm::cast<llvm::FunctionType>(calleeFcnTyp->type());
   bool isvoid = llft->getReturnType()->isVoidTy();
   std::string callname(isvoid ? "" : namegen("call"));
   llvm::CallInst *call =
-      llvm::CallInst::Create(llft, fn_expr->value(), llargs, callname);
+      state.builder.CreateCall(llft, fn_expr->value(),
+                               state.llargs, callname);
 
+  llvm::Value *callValue = (state.sretTemp ? state.sretTemp : call);
+  Binstructions callInsns(state.builder.instructions());
   Bexpression *rval =
-      nbuilder_.mkCall(rbtype, call, resolvedArgs, location);
+      nbuilder_.mkCall(rbtype, callValue, state.resolvedArgs,
+                       callInsns, location);
+
+  // Any epilog processing here
+  genCallEpilog(state, call, rval);
+
   return rval;
 }
 
@@ -1795,9 +1934,11 @@ Bstatement *Llvm_backend::error_statement() { return errorStatement(); }
 // An expression as a statement.
 
 Bstatement *Llvm_backend::expression_statement(Bfunction *bfunction,
-                                               Bexpression *expr) {
+                                               Bexpression *expr)
+{
   if (expr == errorExpression() || bfunction == errorFunction_.get())
     return errorStatement();
+  curFcn_ = bfunction;
   Bstatement *es =
       nbuilder_.mkExprStmt(bfunction,
                            resolve(expr, bfunction),
@@ -1809,10 +1950,12 @@ Bstatement *Llvm_backend::expression_statement(Bfunction *bfunction,
 // Variable initialization.
 
 Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
-                                         Bvariable *var, Bexpression *init) {
+                                         Bvariable *var, Bexpression *init)
+{
   if (var == errorVariable_.get() || init == errorExpression() ||
       bfunction == errorFunction_.get())
     return errorStatement();
+  curFcn_ = bfunction;
   if (init) {
     if (init->compositeInitPending()) {
       init = resolveCompositeInit(init, bfunction, var->value());
@@ -1891,7 +2034,8 @@ llvm::Value *Llvm_backend::convertForAssignment(Bexpression *src,
 
 Bstatement *Llvm_backend::makeAssignment(Bfunction *function,
                                          llvm::Value *lval, Bexpression *lhs,
-                                         Bexpression *rhs, Location location) {
+                                         Bexpression *rhs, Location location)
+{
   assert(lval->getType()->isPointerTy());
 
   // This cases should have been handled in the caller
@@ -1913,6 +2057,7 @@ Bstatement *Llvm_backend::assignment_statement(Bfunction *bfunction,
   if (lhs == errorExpression() || rhs == errorExpression() ||
       bfunction == errorFunction_.get())
     return errorStatement();
+  curFcn_ = bfunction;
   Bexpression *lhs2 = resolveVarContext(lhs, VE_lvalue);
   Bexpression *rhs2 = rhs;
   if (rhs->compositeInitPending()) {
@@ -1934,9 +2079,11 @@ Bstatement *Llvm_backend::assignment_statement(Bfunction *bfunction,
 Bstatement*
 Llvm_backend::return_statement(Bfunction *bfunction,
                                const std::vector<Bexpression *> &vals,
-                               Location location) {
+                               Location location)
+{
   if (bfunction == error_function() || exprVectorHasError(vals))
     return errorStatement();
+  curFcn_ = bfunction;
 
   // For the moment return instructions are going to have null type,
   // since their values should not be feeding into anything else (and
@@ -2001,6 +2148,7 @@ Bstatement *Llvm_backend::if_statement(Bfunction *bfunction,
                                        Location location) {
   if (condition == errorExpression())
     return errorStatement();
+  curFcn_ = bfunction;
   condition = resolve(condition, bfunction);
   assert(then_block);
   Btype *bt = makeAuxType(llvmBoolType());
@@ -2022,6 +2170,7 @@ Bstatement *Llvm_backend::switch_statement(Bfunction *bfunction,
   // Error handling
   if (value == errorExpression())
     return errorStatement();
+  curFcn_ = bfunction;
   for (auto casev : cases)
     if (exprVectorHasError(casev))
       return errorStatement();
@@ -2231,6 +2380,7 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
   assert(function);
   if (btype == errorType() || function == error_function())
     return errorVariable_.get();
+  curFcn_ = function;
   return function->local_variable(name, btype, is_address_taken, location);
 }
 
@@ -2241,6 +2391,7 @@ Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
                                             Btype *btype, bool is_address_taken,
                                             Location location) {
   assert(function);
+  curFcn_ = function;
   if (btype == errorType() || function == error_function())
     return errorVariable_.get();
   return function->parameter_variable(name, btype,
@@ -2268,6 +2419,7 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function,
                                             Bstatement **pstatement) {
   if (binit == errorExpression())
     return errorVariable_.get();
+  curFcn_ = function;
   std::string tname(namegen("tmpv"));
   Bvariable *tvar = local_variable(function, tname, btype,
                                    is_address_taken, location);
@@ -2825,7 +2977,11 @@ void Llvm_backend::fixupEpilogBlog(Bfunction *bfunction,
 // Set the function body for FUNCTION using the code in CODE_BLOCK.
 
 bool Llvm_backend::function_set_body(Bfunction *function,
-                                     Bstatement *code_stmt) {
+                                     Bstatement *code_stmt)
+{
+  assert(curFcn_ == nullptr || curFcn_ == function);
+  curFcn_ = nullptr;
+
   // debugging
   if (traceLevel() > 1) {
     std::cerr << "Statement tree dump:\n";

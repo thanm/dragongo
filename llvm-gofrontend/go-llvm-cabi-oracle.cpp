@@ -316,6 +316,20 @@ void EightByteInfo::determineABITypes()
 
 //......................................................................
 
+llvm::Type *CABIParamInfo::computeABIStructType(TypeManager *tm) const
+{
+  assert(tm);
+  if (abiTypes_.size() == 1) {
+    assert(abiTypes_[0]->isStructTy());
+    return abiTypes_[0];
+  }
+  assert(abiTypes_.size() == 2);
+  llvm::Type *ft0 = abiTypes_[0];
+  llvm::Type *ft1 = abiTypes_[1];
+  llvm::Type *llst = tm->makeLLVMTwoElementStructType(ft0, ft1);
+  return llst;
+}
+
 void CABIParamInfo::dump()
 {
   std::string s;

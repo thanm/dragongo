@@ -221,6 +221,7 @@ class BnodeBuilder {
                            Location loc);
   Bexpression *mkCall(Btype *btype, llvm::Value *value,
                       const std::vector<Bexpression *> &vals,
+                      Binstructions &instructions,
                       Location loc);
   Bexpression *mkReturn(Btype *typ,
                         llvm::Value *value,

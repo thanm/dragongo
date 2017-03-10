@@ -17,12 +17,19 @@
 
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Value.h"
 
 static void indent(llvm::raw_ostream &os, unsigned ilevel) {
   for (unsigned i = 0; i < ilevel; ++i)
     os << " ";
+}
+
+bool Binstructions::isValidInst(llvm::Instruction *inst)
+{
+  if (llvm::isa<llvm::AllocaInst>(inst))
+    return false;
+  return true;
 }
 
 Bexpression::Bexpression(NodeFlavor fl, const std::vector<Bnode *> &kids,

@@ -21,9 +21,9 @@ namespace {
 TEST(BackEndPointerExprTests, TestAddrAndIndirection) {
   FcnTestHarness h("foo");
   Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
 
   // var y int64 = 10
-  Bfunction *func = mkFunci32o64(be, "foo");
   Btype *bi64t = be->integer_type(false, 64);
   Location loc;
   Bvariable *y = h.mkLocal("y", bi64t, mkInt64Const(be, 10));

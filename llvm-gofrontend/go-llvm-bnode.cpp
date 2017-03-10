@@ -20,7 +20,7 @@
 
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/IR/DerivedTypes.h"
-#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Value.h"
 
@@ -420,8 +420,8 @@ Bexpression *BnodeBuilder::mkBinaryOp(Operator op, Btype *typ, llvm::Value *val,
   std::vector<Bnode *> kids = { left, right };
   Bexpression *rval =
       new Bexpression(N_BinaryOp, kids, val, typ, loc);
-  for (auto &i : instructions.instructions())
-    rval->appendInstruction(i);
+  for (auto &inst : instructions.instructions())
+    rval->appendInstruction(inst);
   rval->u.op = op;
   return archive(rval);
 }
@@ -560,6 +560,7 @@ Bexpression *BnodeBuilder::mkCompound(Bstatement *st,
 Bexpression *BnodeBuilder::mkCall(Btype *btype,
                                   llvm::Value *val,
                                   const std::vector<Bexpression *> &args,
+                                  Binstructions &instructions,
                                   Location loc)
 {
   std::vector<Bnode *> kids;
@@ -568,8 +569,16 @@ Bexpression *BnodeBuilder::mkCall(Btype *btype,
   assert(val);
   Bexpression *rval =
       new Bexpression(N_Call, kids, val, btype, loc);
-  assert(llvm::isa<llvm::Instruction>(val));
-  rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
+  bool found = false;
+  for (auto &inst : instructions.instructions()) {
+    if (inst == val)
+      found = true;
+    rval->appendInstruction(inst);
+  }
+  if (!found && ! llvm::isa<llvm::AllocaInst>(val)) {
+    assert(llvm::isa<llvm::Instruction>(val));
+    rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
+  }
   return archive(rval);
 }
 

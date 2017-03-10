@@ -89,7 +89,8 @@ public:
   std::vector<Bvariable*> getParameterVars();
 
   // Return an alloca temporary of the specified type.
-  llvm::Value *createTemporary(Btype *type, const std::string &tag);
+  llvm::Value *createTemporary(Btype *btype, const std::string &tag);
+  llvm::Value *createTemporary(llvm::Type *type, const std::string &tag);
 
   // If the function return value is passing via memory instead of
   // directly, this function returns the location into which the

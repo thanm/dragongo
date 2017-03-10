@@ -56,6 +56,7 @@ class raw_ostream;
 
 class BuiltinTable;
 class BexprLIRBuilder;
+struct GenCallState;
 
 #include "llvm/IR/GlobalValue.h"
 
@@ -196,7 +197,9 @@ public:
 
   Bexpression *call_expression(Bexpression *fn,
                                const std::vector<Bexpression *> &args,
-                               Bexpression *static_chain, Location);
+                               Bexpression *static_chain,
+                               Bfunction *caller,
+                               Location);
 
   Bexpression *stack_allocation_expression(int64_t size, Location);
 
@@ -560,6 +563,17 @@ public:
   std::pair<llvm::Value *, llvm::Value *>
   convertForBinary(Bexpression *left, Bexpression *right);
 
+  // Helpers for call sequence generation.
+  void genCallProlog(GenCallState &state);
+  void genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
+                           GenCallState &state);
+  void genCallEpilog(GenCallState &state, llvm::Instruction *callInst,
+                     Bexpression *callExpr);
+
+  // Store the value in question to a temporary, returning the alloca
+  // for the temp.
+  llvm::Instruction *storeToTemporary(Bfunction *func, llvm::Value *val);
+
 private:
   template <typename T1, typename T2> class pairvalmap_hash {
     typedef std::pair<T1, T2> pairtype;
@@ -669,6 +683,12 @@ private:
   // by the frontend, so here we keep track of all returned Bfunctions
   // so that we can free them on exit.
   std::vector<Bfunction *> functions_;
+
+  // HACK: pointer to current function being generated.  This really
+  // should not be here, but at the moment there is no way to recover
+  // the enclosing function at the point from within
+  // Llvm_backend::call_expression.
+  Bfunction *curFcn_;
 };
 
 #endif

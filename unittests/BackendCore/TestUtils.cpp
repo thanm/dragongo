@@ -545,7 +545,7 @@ Bexpression *FcnTestHarness::mkCallExpr(Backend *be, Bfunction *fun, ...)
     args.push_back(e);
     e = va_arg(ap, Bexpression *);
   }
-  Bexpression *call = be->call_expression(fn, args, nullptr, loc_);
+  Bexpression *call = be->call_expression(fn, args, nullptr, func_, loc_);
   return call;
 }
 
