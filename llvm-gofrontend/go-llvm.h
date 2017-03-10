@@ -478,6 +478,16 @@ public:
                         Bexpression *dstExpr,
                         Location location);
 
+
+  // Lower-level version of the above
+  llvm::Value *genStore(BinstructionsLIRBuilder *builder,
+                Btype *srcType,
+                Btype *dstType,
+                llvm::Value *srcValue,
+                llvm::Value *dstLoc);
+
+
+
   // Materialize a composite constant into a variable
   Bvariable *genVarForConstant(llvm::Constant *conval, Btype *type);
 
@@ -545,8 +555,14 @@ public:
   // Return value will be a new convert Bexpression if a convert is
   // needed, NULL otherwise.
   llvm::Value *convertForAssignment(Bexpression *src,
+                                    llvm::Type *dstToType);
+
+  // lower-level version of the routine above
+  llvm::Value *convertForAssignment(Btype *srcType,
+                                    llvm::Value *srcVal,
                                     llvm::Type *dstToType,
-                                    BinstructionsLIRBuilder *builder = nullptr);
+                                    BinstructionsLIRBuilder *builder);
+
 
   // Apply type conversion for a binary operation. This helper exists
   // to resolve situations where expressions are created by the front

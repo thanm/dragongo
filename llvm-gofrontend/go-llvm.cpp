@@ -650,6 +650,42 @@ Bvariable *Llvm_backend::genVarForConstant(llvm::Constant *conval,
   return rv;
 }
 
+#if 0
+llvm::Value *Llvm_backend::genStore(BinstructionsLIRBuilder *builder,
+                                    Btype *srcType,
+                                    Btype *dstType,
+                                    llvm::Value *srcValue,
+                                    llvm::Value *dstLoc)
+{
+  // If the value we're storing has non-composite type,
+  // then issue a simple store instruction.
+  if (!srcType->type()->isAggregateType()) {
+
+    if (val->getType()->isPointerTy()) {
+      llvm::PointerType *dstpt =
+          llvm::cast<llvm::PointerType>(dst->getType());
+      val = convertForAssignment(srcType, srcVal, dstpt->getElementType(), builder);
+    }
+
+    // At this point the types should agree
+    llvm::PointerType *dpt = llvm::cast<llvm::PointerType>(dst->getType());
+    assert(val->getType() == dpt->getElementType());
+
+    // Create and return store
+    llvm::Instruction *si = builder.CreateStore(val, dst);
+
+    // Return result
+    Binstructions insns(builder.instructions());
+    Bexpression *rval =
+        nbuilder_.mkBinaryOp(OPERATOR_EQ, valexp->btype(), si,
+                             dstExpr, valexp, insns, location);
+    return rval;
+  }
+  return val;
+}
+
+#endif
+
 Bexpression *Llvm_backend::genStore(Bfunction *func,
                                     Bexpression *srcExpr,
                                     Bexpression *dstExpr,
@@ -1995,19 +2031,22 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
 
 llvm::Value *
 Llvm_backend::convertForAssignment(Bexpression *src,
+                                   llvm::Type *dstToType)
+{
+  BinstructionsLIRBuilder builder(context_, src);
+  return convertForAssignment(src->btype(), src->value(), dstToType, &builder);
+}
+
+llvm::Value *
+Llvm_backend::convertForAssignment(Btype *srcBType,
+                                   llvm::Value *srcVal,
                                    llvm::Type *dstToType,
                                    BinstructionsLIRBuilder *builder)
 {
-  std::unique_ptr<BinstructionsLIRBuilder> myBuilder;
-  if (!builder) {
-    myBuilder.reset(new BinstructionsLIRBuilder(context_, src));
-    builder = myBuilder.get();
-  }
-
-  llvm::Type *srcType = src->value()->getType();
+  llvm::Type *srcType = srcBType->type();
 
   if (dstToType == srcType)
-    return src->value();
+    return srcVal;
 
   // Case 1: handle discrepancies between representations of function
   // descriptors. All front end function descriptor types are structs
@@ -2017,7 +2056,7 @@ Llvm_backend::convertForAssignment(Bexpression *src,
   bool dstPtrToFD = isPtrToFuncDescriptorType(dstToType);
   if (srcPtrToFD && dstPtrToFD) {
     std::string tag(namegen("cast"));
-    llvm::Value *bitcast = builder->CreateBitCast(src->value(), dstToType, tag);
+    llvm::Value *bitcast = builder->CreateBitCast(srcVal, dstToType, tag);
     return bitcast;
   }
 
@@ -2025,7 +2064,7 @@ Llvm_backend::convertForAssignment(Bexpression *src,
   bool dstCircPtr = isCircularPointerType(dstToType);
   if (srcPtrToFD && dstCircPtr) {
     std::string tag(namegen("cast"));
-    llvm::Value *bitcast = builder->CreateBitCast(src->value(), dstToType, tag);
+    llvm::Value *bitcast = builder->CreateBitCast(srcVal, dstToType, tag);
     return bitcast;
   }
 
@@ -2036,20 +2075,20 @@ Llvm_backend::convertForAssignment(Bexpression *src,
   bool srcFuncPtr = isPtrToFuncType(srcType);
   if (dstPtrToVoid && srcFuncPtr) {
     std::string tag(namegen("cast"));
-    llvm::Value *bitcast = builder->CreateBitCast(src->value(), dstToType, tag);
+    llvm::Value *bitcast = builder->CreateBitCast(srcVal, dstToType, tag);
     return bitcast;
   }
 
   // Case 4: handle polymorphic nil pointer expressions-- these are
   // generated without a type initially, so we need to convert them
   // to the appropriate type if they appear in an assignment context.
-  if (src->value() == nil_pointer_expression()->value()) {
+  if (srcVal == nil_pointer_expression()->value()) {
     std::string tag(namegen("cast"));
-    llvm::Value *bitcast = builder->CreateBitCast(src->value(), dstToType, tag);
+    llvm::Value *bitcast = builder->CreateBitCast(srcVal, dstToType, tag);
     return bitcast;
   }
 
-  return src->value();
+  return srcVal;
 }
 
 Bstatement *Llvm_backend::makeAssignment(Bfunction *function,
@@ -2373,7 +2412,8 @@ Bvariable *Llvm_backend::global_variable(const std::string &var_name,
 
 // Set the initial value of a global variable.
 
-void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr) {
+void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr)
+{
   if (var == errorVariable_.get() || expr == errorExpression())
     return;
   assert(llvm::isa<llvm::GlobalVariable>(var->value()));
@@ -2388,7 +2428,10 @@ void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr) {
   gvar->setInitializer(econ);
 }
 
-Bvariable *Llvm_backend::error_variable() { return errorVariable_.get(); }
+Bvariable *Llvm_backend::error_variable()
+{
+  return errorVariable_.get();
+}
 
 // Make a local variable.
 
@@ -2396,7 +2439,8 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
                                         const std::string &name,
                                         Btype *btype,
                                         bool is_address_taken,
-                                        Location location) {
+                                        Location location)
+{
   assert(function);
   if (btype == errorType() || function == error_function())
     return errorVariable_.get();
@@ -2409,7 +2453,8 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
 Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
                                             const std::string &name,
                                             Btype *btype, bool is_address_taken,
-                                            Location location) {
+                                            Location location)
+{
   assert(function);
   curFcn_ = function;
   if (btype == errorType() || function == error_function())
@@ -2423,7 +2468,8 @@ Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
 Bvariable *Llvm_backend::static_chain_variable(Bfunction *function,
                                                const std::string &name,
                                                Btype *btype,
-                                               Location location) {
+                                               Location location)
+{
   assert(false && "Llvm_backend::static_chain_variable not yet impl");
   return nullptr;
 }
@@ -2436,7 +2482,8 @@ Bvariable *Llvm_backend::temporary_variable(Bfunction *function,
                                             Bexpression *binit,
                                             bool is_address_taken,
                                             Location location,
-                                            Bstatement **pstatement) {
+                                            Bstatement **pstatement)
+{
   if (binit == errorExpression())
     return errorVariable_.get();
   curFcn_ = function;
@@ -2460,7 +2507,8 @@ Bvariable *Llvm_backend::implicit_variable(const std::string &name,
                                            bool is_hidden,
                                            bool is_constant,
                                            bool is_common,
-                                           int64_t ialignment) {
+                                           int64_t ialignment)
+{
   if (btype == errorType())
     return errorVariable_.get();
 
@@ -2497,8 +2545,8 @@ void Llvm_backend::implicit_variable_set_init(Bvariable *var,
                                               const std::string &,
                                               Btype *type,
                                               bool, bool, bool is_common,
-                                              Bexpression *init) {
-
+                                              Bexpression *init)
+{
   if (init != nullptr && init == errorExpression())
     return;
   if (var == errorVariable_.get())
@@ -2512,7 +2560,8 @@ void Llvm_backend::implicit_variable_set_init(Bvariable *var,
 
 Bvariable *Llvm_backend::implicit_variable_reference(const std::string &name,
                                                      const std::string &asmname,
-                                                     Btype *btype) {
+                                                     Btype *btype)
+{
   assert(false && "Llvm_backend::implicit_variable_reference not yet impl");
   return nullptr;
 }
@@ -2524,7 +2573,8 @@ Bvariable *Llvm_backend::immutable_struct(const std::string &name,
                                           bool is_hidden,
                                           bool is_common,
                                           Btype *btype,
-                                          Location location) {
+                                          Location location)
+{
   if (btype == errorType())
     return errorVariable_.get();
 
@@ -2555,7 +2605,8 @@ void Llvm_backend::immutable_struct_set_init(Bvariable *var,
                                              bool is_common,
                                              Btype *,
                                              Location,
-                                             Bexpression *initializer) {
+                                             Bexpression *initializer)
+{
   if (var == errorVariable_.get() || initializer == errorExpression())
     return;
 
@@ -2572,7 +2623,8 @@ void Llvm_backend::immutable_struct_set_init(Bvariable *var,
 Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
                                                     const std::string &asmname,
                                                     Btype *btype,
-                                                    Location location) {
+                                                    Location location)
+{
   if (btype == errorType())
     return errorVariable_.get();
 
@@ -2597,14 +2649,16 @@ Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
 
 Blabel *Llvm_backend::label(Bfunction *function,
                             const std::string &name,
-                            Location location) {
+                            Location location)
+{
   assert(function);
   return function->newLabel(location);
 }
 
 // Make a statement which defines a label.
 
-Bstatement *Llvm_backend::label_definition_statement(Blabel *label) {
+Bstatement *Llvm_backend::label_definition_statement(Blabel *label)
+{
   Bfunction *function = label->function();
   Bstatement *st = nbuilder_.mkLabelDefStmt(function, label, label->location());
   function->registerLabelDefStatement(st, label);
@@ -2613,7 +2667,8 @@ Bstatement *Llvm_backend::label_definition_statement(Blabel *label) {
 
 // Make a goto statement.
 
-Bstatement *Llvm_backend::goto_statement(Blabel *label, Location location) {
+Bstatement *Llvm_backend::goto_statement(Blabel *label, Location location)
+{
   Bfunction *function = label->function();
   return nbuilder_.mkGotoStmt(function, label, location);
 }
@@ -2624,7 +2679,10 @@ Bexpression *Llvm_backend::label_address(Blabel *label, Location location) {
   assert(false);
 }
 
-Bfunction *Llvm_backend::error_function() { return errorFunction_.get(); }
+Bfunction *Llvm_backend::error_function()
+{
+  return errorFunction_.get();
+}
 
 // Declare or define a new function.
 
@@ -2632,7 +2690,8 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
                                   const std::string &asm_name, bool is_visible,
                                   bool is_declaration, bool is_inlinable,
                                   bool disable_split_stack,
-                                  bool in_unique_section, Location location) {
+                                  bool in_unique_section, Location location)
+{
   if (fntype == errorType())
     return errorFunction_.get();
   llvm::Twine fn(name);
@@ -2681,7 +2740,8 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
 Bstatement *Llvm_backend::function_defer_statement(Bfunction *function,
                                                    Bexpression *undefer,
                                                    Bexpression *defer,
-                                                   Location location) {
+                                                   Location location)
+{
   assert(false && "Llvm_backend::function_defer_statement not yet impl");
   return nullptr;
 }
@@ -2690,7 +2750,8 @@ Bstatement *Llvm_backend::function_defer_statement(Bfunction *function,
 // This will only be called for a function definition.
 
 bool Llvm_backend::function_set_parameters(
-    Bfunction *function, const std::vector<Bvariable *> &param_vars) {
+    Bfunction *function, const std::vector<Bvariable *> &param_vars)
+{
   // At the moment this is a no-op.
   return true;
 }
