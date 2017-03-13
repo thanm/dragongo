@@ -668,7 +668,7 @@ llvm::Value *Llvm_backend::genStore(BlockLIRBuilder *builder,
     }
 
     // At this point the types should agree
-    llvm::PointerType *dpt = llvm::cast<llvm::PointerType>(dstLoc->getType());
+    llvm::PointerType *dpt = llvm::cast<llvm::PointerType>(dstType);
     assert(srcVal->getType() == dpt->getElementType());
 
     // Create and return store
@@ -779,33 +779,37 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
   assert(nFields == fexprs.size());
 
   for (unsigned fidx = 0; fidx < nFields; ++fidx) {
+    Bexpression *fieldValExpr = fexprs[fidx];
+    assert(fieldValExpr);
 
-    // Construct an appropriate GEP
-    llvm::Value *gep = makeFieldGEP(llst, fidx, storage);
-    if (llvm::isa<llvm::Instruction>(gep))
-      expr->appendInstruction(llvm::cast<llvm::Instruction>(gep));
-#if 0
+    Varexpr_context ctx = VE_rvalue;
+    if (fieldValExpr->btype()->type()->isAggregateType())
+      ctx = VE_lvalue;
+
+    Bexpression *valexp = resolve(fieldValExpr, bfunc, ctx);
+    nbuilder_.updateCompositeChild(expr, fidx, valexp);
+
+    BlockLIRBuilder builder(bfunc->function());
+
+    // Create GEP
     assert(fidx < llst->getNumElements());
     std::string tag(namegen("field"));
     llvm::Value *gep =
         builder.CreateConstInBoundsGEP2_32(llst, storage,
                                            0, fidx, tag);
-#endif
 
-    // Unpack/post-process the value in question
-    assert(fexprs[fidx]);
-    Bexpression *valexp = resolve(fexprs[fidx], bfunc);
-    nbuilder_.updateCompositeChild(expr, fidx, valexp);
+    // Store field value into GEP
+    genStore(&builder, valexp->btype(), gep->getType(),
+             valexp->value(), gep);
 
-    // Store value into gep
-    llvm::Value *val = valexp->value();
-    if (val->getType()->isPointerTy()) {
-      llvm::PointerType *geppt =
-          llvm::cast<llvm::PointerType>(gep->getType());
-      val = convertForAssignment(valexp, geppt->getElementType(), bfunc);
+    // Collect any instructions created by the call above
+    // and transfer them to the composite child.
+    for (auto i : builder.instructions()) {
+      // hack: irbuilder likes to create unnamed bitcasts
+      if (i->isCast() && i->getName() == "")
+        i->setName(namegen("cast"));
+      expr->appendInstruction(i);
     }
-    llvm::Instruction *si = new llvm::StoreInst(val, gep);
-    expr->appendInstruction(si);
   }
 
   nbuilder_.finishComposite(expr, storage);
