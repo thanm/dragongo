@@ -209,6 +209,68 @@ TEST(BackendArrayStructTests, CreateStructConstructionExprs) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendArrayStructTests, CreateNestedStructConstructionExprs) {
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+  Location loc;
+
+  // type X struct {
+  //    f1 *int32
+  //    f2 int32
+  // }
+  // type Y struct {
+  //    f1 X
+  //    f2 float32
+  // }
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bf32t = be->float_type(32);
+  Btype *pbi32t = be->pointer_type(bi32t);
+  Btype *sxt = mkBackendStruct(be, pbi32t, "f1", bi32t, "f2", nullptr);
+  Btype *syt = mkBackendStruct(be, sxt, "f1", bf32t, "f2", nullptr);
+
+  // var l1 Y = Y{ X{nil, 3}, 3.0}
+  std::vector<Bexpression *> vals1;
+  Bvariable *p1 = func->getNthParamVar(0);
+  Bexpression *ve1 = be->var_expression(p1, VE_rvalue, loc);
+  Bexpression *adp = be->address_expression(ve1, loc);
+  vals1.push_back(adp);
+  vals1.push_back(mkInt32Const(be, int32_t(3)));
+  Bexpression *scon1 =
+      be->constructor_expression(sxt, vals1, loc);
+  std::vector<Bexpression *> vals2;
+  vals2.push_back(scon1);
+  Bexpression *ci3 = mkInt32Const(be, int32_t(3));
+  vals2.push_back(be->convert_expression(bf32t, ci3, loc));
+  Bexpression *scon2 =
+      be->constructor_expression(syt, vals2, loc);
+  Bvariable *loc1 = h.mkLocal("loc1", syt);
+  Bexpression *vex = be->var_expression(loc1, VE_lvalue, loc);
+  h.mkAssign(vex, scon2);
+
+  const char *exp = R"RAW_RESULT(
+  %cast.0 = bitcast { { i32*, i32 }, float }* %loc1 to i8*
+  %cast.1 = bitcast { { i32*, i32 }, float }* @const.0 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.0, i8* %cast.1, i64 24, i32 8, i1 false)
+  %field.0 = getelementptr inbounds { i32*, i32 }, { i32*, i32 }* %tmp.0, i32 0, i32 0
+  store i32* %param1.addr, i32** %field.0
+  %field.1 = getelementptr inbounds { i32*, i32 }, { i32*, i32 }* %tmp.0, i32 0, i32 1
+  store i32 3, i32* %field.1
+  %field.2 = getelementptr inbounds { { i32*, i32 }, float }, { { i32*, i32 }, float }* %loc1, i32 0, i32 0
+  %cast.2 = bitcast { i32*, i32 }* %field.2 to i8*
+  %cast.3 = bitcast { i32*, i32 }* %tmp.0 to i8*
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.2, i8* %cast.3, i64 16, i32 8, i1 false)
+  %field.3 = getelementptr inbounds { { i32*, i32 }, float }, { { i32*, i32 }, float }* %loc1, i32 0, i32 1
+  store float 3.000000e+00, float* %field.3
+  )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish(PreserveDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 TEST(BackendArrayStructTests, CreateStructConstructionExprs2) {
   FcnTestHarness h;
   Llvm_backend *be = h.be();

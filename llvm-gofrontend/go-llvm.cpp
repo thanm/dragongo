@@ -1073,7 +1073,8 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
 
   // No-op casts are ok
   llvm::Type *toType = type->type();
-  if (toType == expr->value()->getType())
+  llvm::Type *valType = val->getType();
+  if (toType == valType)
     return expr;
 
   // When the frontend casts something to function type, what this
@@ -1089,7 +1090,7 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   if (expr->varExprPending()) {
     llvm::Type *pet = llvm::PointerType::get(expr->btype()->type(),
                                              addressSpace_);
-    if (val->getType() == pet)
+    if (valType == pet)
       toType = llvm::PointerType::get(toType, addressSpace_);
   }
 
@@ -1098,45 +1099,77 @@ Bexpression *Llvm_backend::convert_expression(Btype *type, Bexpression *expr,
   // creation of function descriptor vals) or constant array to
   // uintptr (as part of GC symbol initializer creation), and in other
   // places in FE-generated code (ex: array index checks).
-  if (val->getType()->isPointerTy() && toType == llvmIntegerType()) {
+  if (valType->isPointerTy() && toType == llvmIntegerType()) {
     std::string tname(namegen("pticast"));
-    llvm::Value *pticast = builder.CreatePtrToInt(val, type->type(), tname);
+    llvm::Value *pticast = builder.CreatePtrToInt(val, toType, tname);
     return nbuilder_.mkConversion(type, pticast, expr, location);
   }
 
   // Pointer-sized-integer type pointer type. This comes up
   // in type hash/compare functions.
-  if (toType && val->getType() == llvmIntegerType()) {
+  if (toType && valType == llvmIntegerType()) {
     std::string tname(namegen("itpcast"));
-    llvm::Value *itpcast = builder.CreateIntToPtr(val, type->type(), tname);
+    llvm::Value *itpcast = builder.CreateIntToPtr(val, toType, tname);
     return nbuilder_.mkConversion(type, itpcast, expr, location);
   }
 
   // For pointer conversions (ex: *int32 => *int64) create an
   // appropriate bitcast.
-  if (val->getType()->isPointerTy() && toType->isPointerTy()) {
+  if (valType->isPointerTy() && toType->isPointerTy()) {
     std::string tag(namegen("cast"));
     llvm::Value *bitcast = builder.CreateBitCast(val, toType, tag);
     return nbuilder_.mkConversion(type, bitcast, expr, location);
   }
 
   // Integer-to-integer conversions
-  if (val->getType()->isIntegerTy() && type->type()->isIntegerTy()) {
+  if (valType->isIntegerTy() && toType->isIntegerTy()) {
     llvm::IntegerType *valIntTyp =
-        llvm::cast<llvm::IntegerType>(val->getType());
+        llvm::cast<llvm::IntegerType>(valType);
     llvm::IntegerType *toIntTyp =
-        llvm::cast<llvm::IntegerType>(type->type());
+        llvm::cast<llvm::IntegerType>(toType);
     unsigned valbits = valIntTyp->getBitWidth();
     unsigned tobits = toIntTyp->getBitWidth();
     llvm::Value *conv = nullptr;
     if (tobits > valbits) {
       if (type->castToBIntegerType()->isUnsigned())
-        conv = builder.CreateZExt(val, type->type(), namegen("zext"));
+        conv = builder.CreateZExt(val, toType, namegen("zext"));
       else
-        conv = builder.CreateSExt(val, type->type(), namegen("sext"));
+        conv = builder.CreateSExt(val, toType, namegen("sext"));
     } else {
-      conv = builder.CreateTrunc(val, type->type(), namegen("trunc"));
+      conv = builder.CreateTrunc(val, toType, namegen("trunc"));
     }
+    return nbuilder_.mkConversion(type, conv, expr, location);
+  }
+
+  // Float -> float conversions
+  if (toType->isFloatTy() && valType->isFloatTy()) {
+    llvm::Value *conv = nullptr;
+    if (toType == llvmFloatType() && valType == llvmDoubleType())
+      conv = builder.CreateFPTrunc(val, toType, namegen("trunc"));
+    else if (toType == llvmDoubleType() && valType == llvmFloatType())
+      conv = builder.CreateFPExt(val, toType, namegen("trunc"));
+    else
+      assert(0 && "unexpected float type");
+    return nbuilder_.mkConversion(type, conv, expr, location);
+  }
+
+  // Float -> integer conversions
+  if (toType->isIntegerTy() && valType->isFloatTy()) {
+    llvm::Value *conv = nullptr;
+    if (type->castToBIntegerType()->isUnsigned())
+      conv = builder.CreateFPToUI(val, toType, namegen("ftoui"));
+    else
+      conv = builder.CreateFPToUI(val, toType, namegen("ftosi"));
+    return nbuilder_.mkConversion(type, conv, expr, location);
+  }
+
+  // Integer -> float conversions
+  if (toType->isFloatTy() && valType->isIntegerTy()) {
+    llvm::Value *conv = nullptr;
+    if (expr->btype()->castToBIntegerType()->isUnsigned())
+      conv = builder.CreateUIToFP(val, toType, namegen("uitof"));
+    else
+      conv = builder.CreateSIToFP(val, toType, namegen("sitof"));
     return nbuilder_.mkConversion(type, conv, expr, location);
   }
 
