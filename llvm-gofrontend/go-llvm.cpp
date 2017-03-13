@@ -650,41 +650,56 @@ Bvariable *Llvm_backend::genVarForConstant(llvm::Constant *conval,
   return rv;
 }
 
-#if 0
 llvm::Value *Llvm_backend::genStore(BinstructionsLIRBuilder *builder,
                                     Btype *srcType,
                                     Btype *dstType,
-                                    llvm::Value *srcValue,
+                                    llvm::Value *srcVal,
                                     llvm::Value *dstLoc)
 {
   // If the value we're storing has non-composite type,
   // then issue a simple store instruction.
   if (!srcType->type()->isAggregateType()) {
 
-    if (val->getType()->isPointerTy()) {
+    if (srcVal->getType()->isPointerTy()) {
       llvm::PointerType *dstpt =
-          llvm::cast<llvm::PointerType>(dst->getType());
-      val = convertForAssignment(srcType, srcVal, dstpt->getElementType(), builder);
+          llvm::cast<llvm::PointerType>(dstType->type());
+      srcVal = convertForAssignment(srcType, srcVal,
+                                 dstpt->getElementType(), builder);
     }
 
     // At this point the types should agree
-    llvm::PointerType *dpt = llvm::cast<llvm::PointerType>(dst->getType());
-    assert(val->getType() == dpt->getElementType());
+    llvm::PointerType *dpt = llvm::cast<llvm::PointerType>(dstLoc->getType());
+    assert(srcVal->getType() == dpt->getElementType());
 
     // Create and return store
-    llvm::Instruction *si = builder.CreateStore(val, dst);
+    builder->CreateStore(srcVal, dstLoc);
 
-    // Return result
-    Binstructions insns(builder.instructions());
-    Bexpression *rval =
-        nbuilder_.mkBinaryOp(OPERATOR_EQ, valexp->btype(), si,
-                             dstExpr, valexp, insns, location);
-    return rval;
+    return srcVal;
   }
-  return val;
-}
 
-#endif
+  // destination should be pointer
+  assert(dstLoc->getType()->isPointerTy());
+
+  // memcpy src: handle constant input (we need something addressable
+  // in order to do a memcpy, not a raw constant value)
+  if (llvm::isa<llvm::Constant>(srcVal)) {
+    llvm::Constant *cval = llvm::cast<llvm::Constant>(srcVal);
+    Bvariable *cvar = genVarForConstant(cval, srcType);
+    srcVal = cvar->value();
+  }
+  assert(srcVal->getType()->isPointerTy());
+
+  // number of bytes to copy
+  uint64_t sz = typeSize(srcType);
+
+  // alignment of src expr
+  unsigned algn = typeAlignment(srcType);
+
+  // Q: should we be using memmove here instead?
+  llvm::CallInst *call = builder->CreateMemCpy(dstLoc, srcVal, sz, algn);
+
+  return call;
+}
 
 Bexpression *Llvm_backend::genStore(Bfunction *func,
                                     Bexpression *srcExpr,
