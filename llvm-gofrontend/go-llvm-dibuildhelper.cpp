@@ -90,10 +90,12 @@ void DIBuildHelper::insertVarDecl(Bvariable *var,
   llvm::Instruction *insertionPoint = nullptr;
   llvm::Instruction *decl =
       dibuilder().insertDeclare(var->value(), dilv, expr, vloc, insertionPoint);
-  if (var->initializer())
+  if (var->initializer()) {
+    assert(var->initializerInstruction()->getParent());
     decl->insertAfter(var->initializerInstruction());
-  else
+  } else {
     entryBlock_->getInstList().push_back(decl);
+  }
 }
 
 void DIBuildHelper::endFunction(Bfunction *function)

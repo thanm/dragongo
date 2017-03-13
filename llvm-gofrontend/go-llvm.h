@@ -480,13 +480,11 @@ public:
 
 
   // Lower-level version of the above
-  llvm::Value *genStore(BinstructionsLIRBuilder *builder,
-                Btype *srcType,
-                Btype *dstType,
-                llvm::Value *srcValue,
-                llvm::Value *dstLoc);
-
-
+  llvm::Value *genStore(BlockLIRBuilder *builder,
+                        Btype *srcType,
+                        llvm::Type *dstType,
+                        llvm::Value *srcValue,
+                        llvm::Value *dstLoc);
 
   // Materialize a composite constant into a variable
   Bvariable *genVarForConstant(llvm::Constant *conval, Btype *type);
@@ -555,13 +553,13 @@ public:
   // Return value will be a new convert Bexpression if a convert is
   // needed, NULL otherwise.
   llvm::Value *convertForAssignment(Bexpression *src,
-                                    llvm::Type *dstToType);
-
+                                    llvm::Type *dstToType,
+                                    Bfunction *bfunc);
   // lower-level version of the routine above
   llvm::Value *convertForAssignment(Btype *srcType,
                                     llvm::Value *srcVal,
                                     llvm::Type *dstToType,
-                                    BinstructionsLIRBuilder *builder);
+                                    BlockLIRBuilder *builder);
 
 
   // Apply type conversion for a binary operation. This helper exists
