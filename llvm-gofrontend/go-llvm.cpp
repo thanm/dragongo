@@ -746,19 +746,37 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
   unsigned nElements = llat->getNumElements();
   assert(nElements == aexprs.size());
 
+  BlockLIRBuilder builder(bfunc->function());
+
   for (unsigned eidx = 0; eidx < nElements; ++eidx) {
 
     // Construct an appropriate GEP
+    llvm::SmallVector<llvm::Value *, 2> elems(2);
     llvm::Value *idxval = llvm::ConstantInt::get(llvmInt32Type(), eidx);
-    llvm::Value *gep = makeArrayIndexGEP(llat, idxval, storage);
-    if (llvm::isa<llvm::Instruction>(gep))
-      expr->appendInstruction(llvm::cast<llvm::Instruction>(gep));
+    elems[0] = llvm::ConstantInt::get(llvmInt32Type(), 0);
+    elems[1] = idxval;
+    std::string tag(namegen("index"));
+    llvm::Value *gep = builder.CreateGEP(llat, storage, elems, tag);
 
-    // Store value into gep
-    Bexpression *valexp = resolve(aexprs[eidx], bfunc);
+    // Resolve element value if needed
+    Varexpr_context ctx = VE_rvalue;
+    if (aexprs[eidx]->btype()->type()->isAggregateType())
+      ctx = VE_lvalue;
+    Bexpression *valexp = resolve(aexprs[eidx], bfunc, ctx);
     nbuilder_.updateCompositeChild(expr, eidx, valexp);
-    llvm::Instruction *si = new llvm::StoreInst(valexp->value(), gep);
-    expr->appendInstruction(si);
+
+    // Store field value into GEP
+    genStore(&builder, valexp->btype(), gep->getType(),
+             valexp->value(), gep);
+
+    // Collect any instructions created by the call above
+    // and transfer them to the composite child.
+    for (auto i : builder.instructions()) {
+      // hack: irbuilder likes to create unnamed bitcasts
+      if (i->isCast() && i->getName() == "")
+        i->setName(namegen("cast"));
+      expr->appendInstruction(i);
+    }
   }
 
   nbuilder_.finishComposite(expr, storage);
