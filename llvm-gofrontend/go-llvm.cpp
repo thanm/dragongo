@@ -2210,8 +2210,6 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   // values).
   Btype *btype = nullptr;
 
-
-
   // Resolve arguments
   std::vector<Bexpression *> resolvedVals;
   for (auto &val : vals)
@@ -2219,7 +2217,9 @@ Llvm_backend::return_statement(Bfunction *bfunction,
 
   // Collect up the return value
   Bexpression *toret = nullptr;
-  if (vals.size() == 1) {
+  if (vals.size() == 0) {
+    // no worked needed here
+  } else if (vals.size() == 1) {
     toret = resolvedVals[0];
   } else {
     Btype *rtyp = bfunction->fcnType()->resultType();
