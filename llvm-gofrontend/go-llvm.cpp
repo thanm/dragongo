@@ -2105,7 +2105,7 @@ Llvm_backend::convertForAssignment(Btype *srcBType,
     return bitcast;
   }
 
-  // Case 2: handle raw function pointer assignment (frontend will
+  // Case 3: handle raw function pointer assignment (frontend will
   // sometimes take a function pointer and assign it to "void *" without
   // an explicit conversion).
   bool dstPtrToVoid = isPtrToVoidType(dstToType);
@@ -2116,7 +2116,16 @@ Llvm_backend::convertForAssignment(Btype *srcBType,
     return bitcast;
   }
 
-  // Case 4: handle polymorphic nil pointer expressions-- these are
+  // Case 4: in some cases when calling a function (for example, __gogo)
+  // the front end will pass a raw function vale in place of a function
+  // descriptor. Allow this case.
+  if (dstPtrToFD && srcFuncPtr) {
+    std::string tag(namegen("cast"));
+    llvm::Value *bitcast = builder->CreateBitCast(srcVal, dstToType, tag);
+    return bitcast;
+  }
+
+  // Case 5: handle polymorphic nil pointer expressions-- these are
   // generated without a type initially, so we need to convert them
   // to the appropriate type if they appear in an assignment context.
   if (srcVal == nil_pointer_expression()->value()) {
