@@ -244,7 +244,6 @@ TEST(BackendCABIOracleTests, RecursiveCall1) {
   Bstatement *rst2 = h.mkReturn(rvals2, FcnTestHarness::NoAppend);
 
   const char *exp = R"RAW_RESULT(
-     %p2.ld.0 = load {}, {}* %p2
      %p3.ld.1 = load i8, i8* %p3.addr
      %sub.0 = sub i8 %p3.ld.1, 1
      %p4.ld.0 = load i8, i8* %p4.addr
@@ -259,11 +258,9 @@ TEST(BackendCABIOracleTests, RecursiveCall1) {
      %field1.1 = getelementptr inbounds { double, <2 x float> }, { double, <2 x float> }* %cast.1, i32 0, i32 1
      %ld.3 = load <2 x float>, <2 x float>* %field1.1
      %call.0 = call { double, <2 x float> } @foo(<2 x float> %ld.0, i48 %ld.1, double %ld.2, <2 x float> %ld.3, i8 %sub.0, i8 %p4.ld.0, { { float, float, i16, i16, i16 }, { double, float, float } }* %p5)
-     %cast.2 = bitcast { double, float, float }* %sret.0 to { double, <2 x float> }*
+     %cast.2 = bitcast { double, float, float }* %sret.actual.0 to { double, <2 x float> }*
      store { double, <2 x float> } %call.0, { double, <2 x float> }* %cast.2
-     %.ld.0 = load { double, float, float }, { double, float, float }* %sret.0
-     store { double, float, float } %.ld.0, { double, float, float }* %sretv.1
-     %cast.4 = bitcast { double, float, float }* %sretv.1 to { double, <2 x float> }*
+     %cast.4 = bitcast { double, float, float }* %sret.actual.0 to { double, <2 x float> }*
      %ld.5 = load { double, <2 x float> }, { double, <2 x float> }* %cast.4
      ret { double, <2 x float> } %ld.5
     )RAW_RESULT";
@@ -277,6 +274,53 @@ TEST(BackendCABIOracleTests, RecursiveCall1) {
   bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 
+}
+
+TEST(BackendCABIOracleTests, PassAndReturnArrays) {
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+
+  Btype *bf32t = be->float_type(32);
+  Btype *bf64t = be->float_type(64);
+  Btype *at2f = be->array_type(bf32t, mkInt64Const(be, int64_t(2)));
+  Btype *at3d = be->array_type(bf64t, mkInt64Const(be, int64_t(3)));
+
+  // func foo(fp [2]float32) [3]float64
+  BFunctionType *befty1 = mkFuncTyp(be,
+                                    L_PARM, at2f,
+                                    L_RES, at3d,
+                                    L_END);
+  Bfunction *func = h.mkFunction("foo", befty1);
+
+  // foo(fp)
+  Location loc;
+  Bvariable *p0 = func->getNthParamVar(0);
+  Bexpression *vex = be->var_expression(p0, VE_rvalue, loc);
+  Bexpression *fn = be->function_code_expression(func, loc);
+  std::vector<Bexpression *> args;
+  args.push_back(vex);
+  Bexpression *call = be->call_expression(fn, args, nullptr, func, h.loc());
+
+  // return foo(fp)
+  std::vector<Bexpression *> rvals;
+  rvals.push_back(call);
+  h.mkReturn(rvals);
+
+  const char *exp = R"RAW_RESULT(
+    %cast.0 = bitcast [2 x float]* %p0.addr to <2 x float>*
+    %ld.0 = load <2 x float>, <2 x float>* %cast.0
+    call void @foo([3 x double]* %sret.actual.0, <2 x float> %ld.0)
+    %cast.1 = bitcast [3 x double]* %sret.formal.0 to i8*
+    %cast.2 = bitcast [3 x double]* %sret.actual.0 to i8*
+    call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.1, i8* %cast.2, i64 8, i32 8, i1 false)
+    ret void
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish(PreserveDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
 }

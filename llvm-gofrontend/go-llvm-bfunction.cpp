@@ -82,7 +82,7 @@ void Bfunction::abiSetup()
   // of the argument in question, and set up the arg.
   unsigned argIdx = 0;
   if (abiOracle_->returnInfo().disp() == ParmIndirect) {
-    std::string sretname(namegen("sret.tmp"));
+    std::string sretname(namegen("sret.formal"));
     arguments_[0]->setName(sretname);
     arguments_[0]->addAttr(llvm::Attribute::StructRet);
     rtnValueMem_ = arguments_[0];
@@ -235,13 +235,18 @@ unsigned Bfunction::genArgSpill(Bvariable *paramVar,
 {
   assert(paramInfo.disp() == ParmDirect);
   BinstructionsLIRBuilder builder(function()->getContext(), spillInstructions);
-  llvm::Instruction *sploc = llvm::cast<llvm::Instruction>(paramValues_[pIdx]);
+  llvm::Value *sploc = llvm::cast<llvm::Instruction>(paramValues_[pIdx]);
+  TypeManager *tm = abiOracle_->tm();
 
   // Simple case: param arrived in single register.
   if (paramInfo.abiTypes().size() == 1) {
     llvm::Argument *arg = arguments_[paramInfo.sigOffset()];
-    // TODO: handle size-2 vector of floats case
-    assert(!paramInfo.abiType()->isVectorTy());
+    if (paramInfo.abiType()->isVectorTy()) {
+      std::string tag(namegen("cast"));
+      llvm::Type *ptv = tm->makeLLVMPointerType(paramInfo.abiType());
+      llvm::Value *bitcast = builder.CreateBitCast(sploc, ptv, tag);
+      sploc = bitcast;
+    }
     llvm::Instruction *si = builder.CreateStore(arg, sploc);
     paramVar->setInitializer(si);
     return 1;
@@ -251,7 +256,6 @@ unsigned Bfunction::genArgSpill(Bvariable *paramVar,
   // More complex case: param arrives in two registers.
 
   // Create struct type corresponding to first and second params
-  TypeManager *tm = abiOracle_->tm();
   llvm::Type *llst = paramInfo.computeABIStructType(tm);
   llvm::Type *ptst = tm->makeLLVMPointerType(llst);
 
@@ -353,22 +357,12 @@ llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,
   if (! returnInfo.abiType()->isStructTy())
     return toRet->value();
 
-  // Direct return trickier case: two-value struct. It would be nice
-  // if we could simply bitcast the struct value from one type to another
-  // but this sort of thing is not allowed. Instead we do the following:
-  // - create a temporary alloca using the original return type
-  // - store the value to the alloc
-  // - bitcast the temporary alloca to a pointer to the ABI struct type
-  // - issue a load from the ABI struct pointer
-
-  std::string sretname(namegen("sretv"));
-  llvm::Value *tmp = createTemporary(toRet->btype(), sretname);
-  builder.CreateStore(toRet->value(), tmp);
-
+  // Direct return: two-value struct. Bitcast the struct address to
+  // the ABI type and then issue a load from the bitcast.
   llvm::Type *llst = returnInfo.computeABIStructType(tm);
   llvm::Type *ptst = tm->makeLLVMPointerType(llst);
   std::string castname(namegen("cast"));
-  llvm::Value *bitcast = builder.CreateBitCast(tmp, ptst, castname);
+  llvm::Value *bitcast = builder.CreateBitCast(toRet->value(), ptst, castname);
 
   std::string loadname(namegen("ld"));
   llvm::Instruction *ldinst = builder.CreateLoad(bitcast, loadname);

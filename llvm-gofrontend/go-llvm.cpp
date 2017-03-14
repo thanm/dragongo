@@ -706,9 +706,7 @@ Bexpression *Llvm_backend::genStore(Bfunction *func,
 {
   BlockLIRBuilder builder(func->function());
 
-  Varexpr_context ctx = VE_rvalue;
-  if (srcExpr->btype()->type()->isAggregateType())
-    ctx = VE_lvalue;
+  Varexpr_context ctx = srcExpr->varContextDisp();
 
   // Resolve pending var exprs and/or composites
   Bexpression *valexp = resolve(srcExpr, func, ctx);
@@ -759,9 +757,7 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
     llvm::Value *gep = builder.CreateGEP(llat, storage, elems, tag);
 
     // Resolve element value if needed
-    Varexpr_context ctx = VE_rvalue;
-    if (aexprs[eidx]->btype()->type()->isAggregateType())
-      ctx = VE_lvalue;
+    Varexpr_context ctx = aexprs[eidx]->varContextDisp();
     Bexpression *valexp = resolve(aexprs[eidx], bfunc, ctx);
     nbuilder_.updateCompositeChild(expr, eidx, valexp);
 
@@ -800,10 +796,7 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
     Bexpression *fieldValExpr = fexprs[fidx];
     assert(fieldValExpr);
 
-    Varexpr_context ctx = VE_rvalue;
-    if (fieldValExpr->btype()->type()->isAggregateType())
-      ctx = VE_lvalue;
-
+    Varexpr_context ctx = fieldValExpr->varContextDisp();
     Bexpression *valexp = resolve(fieldValExpr, bfunc, ctx);
     nbuilder_.updateCompositeChild(expr, fidx, valexp);
 
@@ -1828,7 +1821,7 @@ void Llvm_backend::genCallProlog(GenCallState &state)
   if (returnInfo.disp() == ParmIndirect ||
       returnInfo.abiType()->isAggregateType()) {
     assert(state.sretTemp == nullptr);
-    std::string tname(namegen("sret"));
+    std::string tname(namegen("sret.actual"));
     Btype *resTyp = state.calleeFcnType->resultType();
     assert(state.callerFcn);
     state.sretTemp = state.callerFcn->createTemporary(resTyp, tname);
@@ -1857,8 +1850,9 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
     }
 
     // Resolve argument
-    Varexpr_context ctx = (paramInfo.abiTypes().size() == 2 ?
-                           VE_lvalue : VE_rvalue);
+    Varexpr_context ctx = fn_args[idx]->varContextDisp();
+    if (paramInfo.abiTypes().size() == 2)
+      ctx = VE_lvalue;
     Bexpression *resarg = resolve(fn_args[idx], state.callerFcn, ctx);
     state.resolvedArgs.push_back(resarg);
 
@@ -1876,10 +1870,22 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
     // Apply any necessary sign-extensions or zero-extensions.
     BinstructionsLIRBuilder &builder = state.builder;
     if (paramInfo.abiTypes().size() == 1) {
-      if (paramInfo.attr() == AttrZext)
-        val = builder.CreateZExt(val, paramInfo.abiType(), namegen("zext"));
-      else if (paramInfo.attr() == AttrSext)
-        val = builder.CreateZExt(val, paramInfo.abiType(), namegen("sext"));
+      if (paramInfo.abiType()->isVectorTy()) {
+        // Passing [2xfloat] => <2xfloat> (array to vector)
+        std::string castname(namegen("cast"));
+        llvm::Type *ptv = makeLLVMPointerType(paramInfo.abiType());
+        llvm::Value *bitcast = builder.CreateBitCast(val, ptv, castname);
+        std::string ltag(namegen("ld"));
+        llvm::Value *ld = builder.CreateLoad(bitcast, ltag);
+        state.llargs.push_back(ld);
+        continue;
+      }
+      if (paramInfo.abiType()->isIntegerTy()) {
+        if (paramInfo.attr() == AttrZext)
+          val = builder.CreateZExt(val, paramInfo.abiType(), namegen("zext"));
+        else if (paramInfo.attr() == AttrSext)
+          val = builder.CreateZExt(val, paramInfo.abiType(), namegen("sext"));
+      }
       state.llargs.push_back(val);
       continue;
     }
@@ -1892,6 +1898,14 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
     // Create a struct type of the appropriate shape
     llvm::Type *llst = paramInfo.computeABIStructType(typeManager());
     llvm::Type *ptst = makeLLVMPointerType(llst);
+
+    // If the value we're passing is a composite constant, we have to
+    // spill it to memory here in order for the casts below to work.
+    if (llvm::isa<llvm::Constant>(val)) {
+      llvm::Constant *cval = llvm::cast<llvm::Constant>(val);
+      Bvariable *cv = genVarForConstant(cval, resarg->btype());
+      val = cv->value();
+    }
 
     // Cast the value to the struct type
     std::string tag(namegen("cast"));
@@ -2190,16 +2204,20 @@ Llvm_backend::return_statement(Bfunction *bfunction,
     return errorStatement();
   curFcn_ = bfunction;
 
-  // For the moment return instructions are going to have null type,
-  // since their values should not be feeding into anything else (and
-  // since Go functions can return multiple values).
+  // For the moment the Bexpression for a return is going to have null
+  // type, since the value of a return expr should not be feeding into
+  // anything else (and since Go functions can return multiple
+  // values).
   Btype *btype = nullptr;
+
+
 
   // Resolve arguments
   std::vector<Bexpression *> resolvedVals;
   for (auto &val : vals)
-    resolvedVals.push_back(resolve(val, bfunction));
+    resolvedVals.push_back(resolve(val, bfunction, val->varContextDisp()));
 
+  // Collect up the return value
   Bexpression *toret = nullptr;
   if (vals.size() == 1) {
     toret = resolvedVals[0];
@@ -2219,7 +2237,7 @@ Llvm_backend::return_statement(Bfunction *bfunction,
         structVal = var_expression(cv, VE_rvalue, location);
         structVal = address_expression(structVal, location);
       }
-        toret = structVal;
+      toret = structVal;
     }
   }
 

@@ -183,6 +183,11 @@ class Bexpression : public Bnode, public Binstructions {
   const std::vector<Bexpression *> getChildExprs() const;
   void setStoreValue(llvm::Value *val);
 
+  // Return context disposition based on expression type.
+  // Composite values need to be referred to by address,
+  // whereas non-composite values can be used directly.
+  Varexpr_context varContextDisp() const;
+
   // debugging
   void dumpInstructions(llvm::raw_ostream &os, unsigned ilevel,
                         Llvm_linemap *linemap, bool terse) const;
