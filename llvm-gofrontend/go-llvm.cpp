@@ -2058,6 +2058,9 @@ Llvm_backend::convertForAssignment(Bexpression *src,
                                    llvm::Type *dstToType,
                                    Bfunction *bfunc)
 {
+  if (src->value()->getType() == dstToType)
+    return src->value();
+
   BlockLIRBuilder builder(bfunc->function());
   llvm::Value *val = convertForAssignment(src->btype(), src->value(),
                                           dstToType, &builder);
@@ -3094,6 +3097,8 @@ void Llvm_backend::fixupEpilogBlog(Bfunction *bfunction,
 bool Llvm_backend::function_set_body(Bfunction *function,
                                      Bstatement *code_stmt)
 {
+  if (function == errorFunction_.get())
+    return true;
   assert(curFcn_ == nullptr || curFcn_ == function);
   curFcn_ = nullptr;
 
