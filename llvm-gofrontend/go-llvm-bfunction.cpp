@@ -241,7 +241,10 @@ unsigned Bfunction::genArgSpill(Bvariable *paramVar,
   // Simple case: param arrived in single register.
   if (paramInfo.abiTypes().size() == 1) {
     llvm::Argument *arg = arguments_[paramInfo.sigOffset()];
-    if (paramInfo.abiType()->isVectorTy()) {
+    assert(sploc->getType()->isPointerTy());
+    llvm::PointerType *llpt = llvm::cast<llvm::PointerType>(sploc->getType());
+    if (paramInfo.abiType()->isVectorTy() ||
+        arg->getType() != llpt->getElementType()) {
       std::string tag(namegen("cast"));
       llvm::Type *ptv = tm->makeLLVMPointerType(paramInfo.abiType());
       llvm::Value *bitcast = builder.CreateBitCast(sploc, ptv, tag);

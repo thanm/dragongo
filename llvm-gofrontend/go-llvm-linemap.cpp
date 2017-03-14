@@ -223,6 +223,17 @@ std::string Llvm_linemap::statistics()
   return ss.str();
 }
 
+void Llvm_linemap::dumpHandle(unsigned handle)
+{
+  Location loc(handle);
+  std::cerr << to_string(loc);
+}
+
+void Llvm_linemap::dumpLocation(Location loc)
+{
+  std::cerr << to_string(loc);
+}
+
 void Llvm_linemap::dump()
 {
   std::cerr << "Files:\n";

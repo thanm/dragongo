@@ -70,6 +70,7 @@ TEST(BackendCABIOracleTests, Extended) {
   Btype *st2 = mkBackendStruct(be, bf64t, "f1", bf64t, "f2", nullptr);
   Btype *st3 = mkBackendStruct(be, st2, "f1", bi8t, "f2", nullptr);
   Btype *st4 = mkBackendStruct(be, bf32t, "f1", bf32t, "f2", nullptr);
+  Btype *st5 = mkBackendStruct(be, bf32t, "f1", nullptr);
 
   struct FcnItem {
     FcnItem(const std::vector<Btype*> &r,
@@ -97,6 +98,11 @@ TEST(BackendCABIOracleTests, Extended) {
              "Return: Ignore { void } sigOffset: -1 "
              "Param 1: Direct AttrSext { i8 } sigOffset: 0",
              "void (i8)"),
+
+    FcnItem( {  }, { st5 },
+             "Return: Ignore { void } sigOffset: -1 "
+             "Param 1: Direct { float } sigOffset: 0",
+             "void (float)"),
 
     FcnItem({ bi8t, bf64t }, { bi8t, bu8t, st0 },
             "Return: Direct { { i8, double } } sigOffset: -1 "
@@ -136,11 +142,14 @@ TEST(BackendCABIOracleTests, Extended) {
     Btype *t = be->function_type(mkid(nt), params, results, rt, Location());
     BFunctionType *bft = t->castToBFunctionType();
     CABIOracle cab(bft, be->typeManager());
-    //cab.dump();
 
     { std::string reason;
       bool equal = difftokens(item.expDump, cab.toString(), reason);
       EXPECT_EQ("pass", equal ? "pass" : reason);
+      if (!equal) {
+        std::cerr << "exp:\n" << item.expDump << "\n";
+        std::cerr << "act:\n" << cab.toString() << "\n";
+      }
     }
     { std::string reason;
       std::string result(repr(cab.getFunctionTypeForABI()));

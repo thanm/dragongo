@@ -111,6 +111,8 @@ class Llvm_linemap : public Linemap
 
   // Debugging
   void dump();
+  void dumpLocation(Location loc);
+  void dumpHandle(unsigned handle);
 
  private:
   // Source files we've seen so far.

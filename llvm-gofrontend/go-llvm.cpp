@@ -2218,7 +2218,11 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   // Collect up the return value
   Bexpression *toret = nullptr;
   if (vals.size() == 0) {
-    // no worked needed here
+    // The return Bexpression node has a single child, so in the case
+    // of the void function, create a dummy return value (easier than
+    // making return a variadic node).
+    toret = nbuilder_.mkConst(voidType(),
+                              llvm::UndefValue::get(llvmVoidType()));
   } else if (vals.size() == 1) {
     toret = resolvedVals[0];
   } else {

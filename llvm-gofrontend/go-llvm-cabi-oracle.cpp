@@ -299,9 +299,11 @@ void EightByteInfo::determineABITypes()
       // Case 1: two floats -> vector
       if (ebr.types.size() == 2)
         ebr.abiDirectType = tm()->llvmTwoFloatVecType();
-      else if (ebr.types.size() == 1)
-        ebr.abiDirectType = tm()->llvmDoubleType();
-      else {
+      else if (ebr.types.size() == 1) {
+        assert(ebr.types[0] == tm()->llvmDoubleType() ||
+               ebr.types[0] == tm()->llvmFloatType());
+        ebr.abiDirectType = ebr.types[0];
+      } else {
         assert(false && "this should never happen");
       }
     } else {
