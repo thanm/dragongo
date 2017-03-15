@@ -1859,19 +1859,16 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
     if (paramInfo.disp() == ParmIgnore)
       continue;
 
+    // At this point we're passing an argument directly,
+    // as opposed to in memory.
     assert(paramInfo.disp() == ParmDirect);
 
-    // Apply any necessary pointer type conversions.
-    Btype *paramTyp = paramTypes[idx];
     llvm::Value *val = resarg->value();
-    if (val->getType()->isPointerTy() && ctx == VE_rvalue)
-      val = convertForAssignment(resarg, paramTyp->type(), state.callerFcn);
 
-    // Apply any necessary sign-extensions or zero-extensions.
     BinstructionsLIRBuilder &builder = state.builder;
     if (paramInfo.abiTypes().size() == 1) {
-      if (paramInfo.abiType()->isVectorTy()) {
-        // Passing [2xfloat] => <2xfloat> (array to vector)
+      if (ctx == VE_lvalue) {
+        // Passing single-eightbyte struct or array directly.
         std::string castname(namegen("cast"));
         llvm::Type *ptv = makeLLVMPointerType(paramInfo.abiType());
         llvm::Value *bitcast = builder.CreateBitCast(val, ptv, castname);
@@ -1880,6 +1877,14 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
         state.llargs.push_back(ld);
         continue;
       }
+      // Passing a single 8-byte-or-less argument.
+
+      // Apply any necessary pointer type conversions.
+      Btype *paramTyp = paramTypes[idx];
+      if (val->getType()->isPointerTy() && ctx == VE_rvalue)
+        val = convertForAssignment(resarg, paramTyp->type(), state.callerFcn);
+
+      // Apply any necessary sign-extensions or zero-extensions.
       if (paramInfo.abiType()->isIntegerTy()) {
         if (paramInfo.attr() == AttrZext)
           val = builder.CreateZExt(val, paramInfo.abiType(), namegen("zext"));
@@ -1894,6 +1899,7 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
     // a small structure via two pieces / pararms.
     assert(paramInfo.abiTypes().size() == 2);
     assert(paramInfo.attr() == AttrNone);
+    assert(ctx == VE_lvalue);
 
     // Create a struct type of the appropriate shape
     llvm::Type *llst = paramInfo.computeABIStructType(typeManager());

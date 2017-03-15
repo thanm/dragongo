@@ -65,6 +65,7 @@ TEST(BackendCABIOracleTests, Extended) {
   Btype *bu8t = be->integer_type(true, 8);
   Btype *bf32t = be->float_type(32);
   Btype *bf64t = be->float_type(64);
+  Btype *bpf64t = be->pointer_type(bf64t);
   Btype *st0 = mkBackendStruct(be, nullptr);
   Btype *st1 = mkBackendStruct(be, bi8t, "a", bu8t, "b", bf32t, "c", nullptr);
   Btype *st2 = mkBackendStruct(be, bf64t, "f1", bf64t, "f2", nullptr);
@@ -99,10 +100,11 @@ TEST(BackendCABIOracleTests, Extended) {
              "Param 1: Direct AttrSext { i8 } sigOffset: 0",
              "void (i8)"),
 
-    FcnItem( {  }, { st5 },
+    FcnItem( {  }, { st5, bpf64t },
              "Return: Ignore { void } sigOffset: -1 "
-             "Param 1: Direct { float } sigOffset: 0",
-             "void (float)"),
+             "Param 1: Direct { float } sigOffset: 0 "
+             "Param 2: Direct { double* } sigOffset: 1",
+             "void (float, double*)"),
 
     FcnItem({ bi8t, bf64t }, { bi8t, bu8t, st0 },
             "Return: Direct { { i8, double } } sigOffset: -1 "
