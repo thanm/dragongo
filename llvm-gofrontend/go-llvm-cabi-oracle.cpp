@@ -176,14 +176,14 @@ EightByteInfo::EightByteInfo(Btype *bt, TypeManager *tmgr)
   determineABITypes();
 }
 
-// Given a struct type, explode it into 0, 1, or two EightByteInfo
+// Given a struct type, explode it into 0, 1, or two EightByteRegion
 // descriptors. Examples of the contents of EightByteInfo structs
 // for various Go types follow. The first type (empty struct) results
-// in a single EightByteInfo struct with empty vectors. The second
-// type results in a single EightByteInfo, and the third yields two
-// EightByteInfos.
+// in a single EightByteRegion struct with empty vectors. The second
+// type results in a single EightByteRegion, and the third yields two
+// EightByteRegion.
 //
-//    Go struct type:              Computed EightByteInfo:
+//    Go struct type:              Computed EightByteRegions:
 //                                 C types:           offsets:
 //
 //    type empty struct { }  [0]   <no types>         <no offsets>
@@ -207,18 +207,16 @@ void EightByteInfo::explodeStruct(BStructType *bst)
   unsigned numFields = bst->fields().size();
 
   // collect offsets and field types
-  unsigned curOffset = 0;
   EightByteRegion *cur8 = nullptr;
   for (unsigned fidx = 0; fidx < numFields; ++fidx) {
     unsigned offset = typeManager_->typeFieldOffset(bst, fidx);
-    if (cur8 == nullptr || (offset >= 8 && curOffset < 8)) {
+    if (cur8 == nullptr || (offset >= 8 && ebrs_.size() == 1)) {
       ebrs_.push_back(EightByteRegion());
       cur8 = &ebrs_.back();
     }
     // note that field type here may be a struct or array
     cur8->types.push_back(bst->fieldType(fidx)->type());
     cur8->offsets.push_back(offset);
-    curOffset += offset;
   }
 }
 

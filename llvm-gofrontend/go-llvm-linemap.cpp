@@ -251,10 +251,20 @@ void Llvm_linemap::dump()
   std::cerr << "lasthandle: " << lasthandle_ << "\n";
 }
 
-// Return the Linemap to use for the backend.
+// Return the singleton Linemap to use for the backend.
+
+static Llvm_linemap *singletonLinemap = nullptr;
+
+Llvm_linemap*
+go_get_llvm_linemap()
+{
+  if (singletonLinemap == nullptr)
+    singletonLinemap = new Llvm_linemap;
+  return singletonLinemap;
+}
 
 Linemap*
 go_get_linemap()
 {
-  return new Llvm_linemap;
+  return go_get_llvm_linemap();
 }

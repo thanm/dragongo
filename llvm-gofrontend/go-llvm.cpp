@@ -58,6 +58,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , createDebugMetaData_(true)
     , exportDataStarted_(false)
     , exportDataFinalized_(false)
+    , errorCount_(0u)
     , TLI_(nullptr)
     , builtinTable_(new BuiltinTable(typeManager(), false))
     , errorFunction_(nullptr)
@@ -236,7 +237,10 @@ void Llvm_backend::enforceTreeIntegrity(Bstatement *s)
   }
 }
 
-Btype *Llvm_backend::error_type() { return errorType(); }
+Btype *Llvm_backend::error_type() {
+  errorCount_++;
+  return errorType();
+}
 
 Btype *Llvm_backend::void_type() { return voidType(); }
 
@@ -478,7 +482,11 @@ Bexpression *Llvm_backend::zero_expression(Btype *btype) {
   return makeGlobalExpression(cexpr, zeroval, btype, Location());
 }
 
-Bexpression *Llvm_backend::error_expression() { return errorExpression(); }
+Bexpression *Llvm_backend::error_expression()
+{
+  errorCount_++;
+  return errorExpression();
+}
 
 Bexpression *Llvm_backend::nil_pointer_expression() {
 
@@ -656,6 +664,13 @@ llvm::Value *Llvm_backend::genStore(BlockLIRBuilder *builder,
                                     llvm::Value *srcVal,
                                     llvm::Value *dstLoc)
 {
+  // Don't try to emit a store if the value in question is void
+  // (for example, the return value from a call to a function that
+  // returns a struct with no fields). In this case just manufacture
+  // an undef and return it.
+  if (srcVal->getType()->isVoidTy())
+    return llvm::UndefValue::get(srcVal->getType());
+
   // If the value we're storing has non-composite type,
   // then issue a simple store instruction.
   if (!srcType->type()->isAggregateType()) {
@@ -1815,11 +1830,24 @@ struct GenCallState {
         callerFcn(callerFunc) { }
 };
 
+static bool needSretTemp(const CABIParamInfo &returnInfo,
+                         BFunctionType *calleeFcnTyp)
+{
+  if (returnInfo.disp() == ParmIgnore)
+    return false;
+  if (returnInfo.disp() == ParmIndirect)
+    return true;
+  if (returnInfo.abiType()->isAggregateType())
+    return true;
+  if (calleeFcnTyp->resultType()->type()->isAggregateType())
+    return true;
+  return false;
+}
+
 void Llvm_backend::genCallProlog(GenCallState &state)
 {
   const CABIParamInfo &returnInfo = state.oracle.returnInfo();
-  if (returnInfo.disp() == ParmIndirect ||
-      returnInfo.abiType()->isAggregateType()) {
+  if (needSretTemp(returnInfo, state.calleeFcnType)) {
     assert(state.sretTemp == nullptr);
     std::string tname(namegen("sret.actual"));
     Btype *resTyp = state.calleeFcnType->resultType();
@@ -1939,25 +1967,30 @@ void Llvm_backend::genCallEpilog(GenCallState &state,
                                  Bexpression *callExpr)
 {
   const CABIParamInfo &returnInfo = state.oracle.returnInfo();
-  if (returnInfo.disp() == ParmIndirect ||
-      returnInfo.abiType()->isAggregateType()) {
+
+  if (needSretTemp(returnInfo, state.calleeFcnType)) {
     assert(state.sretTemp);
     assert(callExpr->value() == state.sretTemp);
     callExpr->setVarExprPending(VE_rvalue, 0);
 
     if (returnInfo.disp() == ParmDirect) {
-      BinstructionsLIRBuilder builder(context_, callExpr);
-
-      // The call is returning a structure by value, however the
-      // ABI struct type may be different from the actual return type,
-      // so here we:
-      // - cast the sret temp to "pointer to ABI struct" type
-      // - store the result value into that casted address
+#if 0
       llvm::Type *llst = returnInfo.computeABIStructType(typeManager());
       llvm::Type *ptst = makeLLVMPointerType(llst);
+#endif
+
+      // The call is returning something by value that doesn't match
+      // the expected abstract result type of the function. Cast the
+      // sret storage location to a pointer to the abi type and store
+      // the ABI return value into it.
+      BinstructionsLIRBuilder builder(context_, callExpr);
+      llvm::Type *rt = (returnInfo.abiTypes().size() == 1 ?
+                        returnInfo.abiType()  :
+                        returnInfo.computeABIStructType(typeManager()));
+      llvm::Type *ptrt = makeLLVMPointerType(rt);
       std::string castname(namegen("cast"));
       llvm::Value *bitcast = builder.CreateBitCast(state.sretTemp,
-                                                   ptst, castname);
+                                                   ptrt, castname);
       std::string stname(namegen("st"));
       builder.CreateStore(callInst, bitcast);
     }
@@ -2026,7 +2059,11 @@ Bexpression *Llvm_backend::stack_allocation_expression(int64_t size,
   return nullptr;
 }
 
-Bstatement *Llvm_backend::error_statement() { return errorStatement(); }
+Bstatement *Llvm_backend::error_statement()
+{
+  errorCount_++;
+  return errorStatement();
+}
 
 // An expression as a statement.
 
@@ -2068,7 +2105,9 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
   Bexpression *varexp = nbuilder_.mkVar(var, var->location());
   Bstatement *st = makeAssignment(bfunction, var->value(),
                                   varexp, init, Location());
-  var->setInitializer(st->getExprStmtExpr()->value());
+  llvm::Value *ival = st->getExprStmtExpr()->value();
+  if (! llvm::isa<llvm::UndefValue>(ival))
+    var->setInitializer(ival);
   CHKTREE(st);
   return st;
 }
@@ -2154,6 +2193,16 @@ Llvm_backend::convertForAssignment(Btype *srcBType,
     return bitcast;
   }
 
+  // Case 6: the code that creates interface values stores pointers of
+  // various flavors into i8*. Ideally it would be better to insert
+  // forced type conversions in the FE, but for now we allow this case.
+  bool srcPtrToIface = isPtrToIfaceStructType(srcType);
+  if (dstPtrToVoid && srcPtrToIface) {
+    std::string tag(namegen("cast"));
+    llvm::Value *bitcast = builder->CreateBitCast(srcVal, dstToType, tag);
+    return bitcast;
+  }
+
   return srcVal;
 }
 
@@ -2206,7 +2255,7 @@ Llvm_backend::return_statement(Bfunction *bfunction,
                                const std::vector<Bexpression *> &vals,
                                Location location)
 {
-  if (bfunction == error_function() || exprVectorHasError(vals))
+  if (bfunction == errorFunction_.get() || exprVectorHasError(vals))
     return errorStatement();
   curFcn_ = bfunction;
 
@@ -2504,6 +2553,7 @@ void Llvm_backend::global_variable_set_init(Bvariable *var, Bexpression *expr)
 
 Bvariable *Llvm_backend::error_variable()
 {
+  errorCount_++;
   return errorVariable_.get();
 }
 
@@ -2516,7 +2566,7 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
                                         Location location)
 {
   assert(function);
-  if (btype == errorType() || function == error_function())
+  if (btype == errorType() || function == errorFunction_.get())
     return errorVariable_.get();
   curFcn_ = function;
   return function->local_variable(name, btype, is_address_taken, location);
@@ -2531,7 +2581,7 @@ Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
 {
   assert(function);
   curFcn_ = function;
-  if (btype == errorType() || function == error_function())
+  if (btype == errorType() || function == errorFunction_.get())
     return errorVariable_.get();
   return function->parameter_variable(name, btype,
                                       is_address_taken, location);
@@ -2755,6 +2805,7 @@ Bexpression *Llvm_backend::label_address(Blabel *label, Location location) {
 
 Bfunction *Llvm_backend::error_function()
 {
+  errorCount_++;
   return errorFunction_.get();
 }
 
@@ -3152,9 +3203,12 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   // Create and populate entry block
   llvm::BasicBlock *entryBlock = genEntryBlock(function);
 
+  // Avoid debug meta-generation if errors seen
+  bool dodebug = (createDebugMetaData_ && errorCount_ == 0);
+
   // Walk the code statements
   GenBlocks gb(context_, this, function, code_stmt,
-               getDICompUnit(), createDebugMetaData_, entryBlock);
+               getDICompUnit(), dodebug, entryBlock);
   llvm::BasicBlock *block = gb.walk(code_stmt, entryBlock);
   gb.finishFunction();
 

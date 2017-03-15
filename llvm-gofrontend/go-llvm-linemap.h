@@ -150,4 +150,7 @@ class Llvm_linemap : public Linemap
 // Main hook for linemap creation
 extern Linemap *go_get_linemap();
 
+// For unit testing and error reporting
+extern Llvm_linemap *go_get_llvm_linemap();
+
 #endif // !defined(GO_LLVM_LINEMAP_H)

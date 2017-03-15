@@ -175,6 +175,10 @@ void Bnode::osdump(llvm::raw_ostream &os, unsigned ilevel,
   // Additional info
   const Bexpression *expr = castToBexpression();
   switch(flavor()) {
+    case N_Error: {
+      os << "\n";
+      return;
+    }
     case N_Const: {
       assert(expr);
       expr->value()->print(os);

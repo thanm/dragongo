@@ -671,6 +671,13 @@ private:
   bool exportDataStarted_;
   bool exportDataFinalized_;
 
+  // This counter gets incremented when the FE requests an error
+  // object (error variable, error type, etc). We check to see whether
+  // it is non-zero before walking function bodies to emit debug
+  // meta-data (the idea being that there is no point going through
+  // that process if there were errors).
+  unsigned errorCount_;
+
   // Target library info oracle
   llvm::TargetLibraryInfo *TLI_;
 

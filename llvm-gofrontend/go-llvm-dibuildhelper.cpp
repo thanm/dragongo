@@ -94,7 +94,11 @@ void DIBuildHelper::insertVarDecl(Bvariable *var,
     assert(var->initializerInstruction()->getParent());
     decl->insertAfter(var->initializerInstruction());
   } else {
-    entryBlock_->getInstList().push_back(decl);
+    // locals with no initializer should only be zero-sized vars.
+    // make them available immediately after their alloca.
+    assert(typemanager()->typeSize(var->btype()) == 0);
+    llvm::Instruction *alloca = llvm::cast<llvm::Instruction>(var->value());
+    decl->insertAfter(alloca);
   }
 }
 

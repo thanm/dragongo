@@ -360,8 +360,8 @@ llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,
   if (! returnInfo.abiType()->isStructTy())
     return toRet->value();
 
-  // Direct return: two-value struct. Bitcast the struct address to
-  // the ABI type and then issue a load from the bitcast.
+  // Direct return: one-value or two-value struct. Bitcast the struct
+  // address to the ABI type and then issue a load from the bitcast.
   llvm::Type *llst = returnInfo.computeABIStructType(tm);
   llvm::Type *ptst = tm->makeLLVMPointerType(llst);
   std::string castname(namegen("cast"));

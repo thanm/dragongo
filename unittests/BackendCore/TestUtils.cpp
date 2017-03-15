@@ -605,9 +605,12 @@ void FcnTestHarness::addStmt(Bstatement *stmt)
   addStmtToBlock(be(), curBlock_, stmt);
 }
 
-void FcnTestHarness::newBlock()
+void FcnTestHarness::newBlock(std::vector<Bvariable *> *varlist)
 {
   assert(func_);
+
+  if (!varlist)
+    varlist = &emptyVarList_;
 
   // Create label for new block and append jump to current block
   std::string lab = be()->namegen("_lab");
@@ -627,7 +630,7 @@ void FcnTestHarness::newBlock()
   returnAdded_ = false;
 
   // New block
-  curBlock_ = be()->block(func_, nullptr, emptyVarList_, loc_, loc_);
+  curBlock_ = be()->block(func_, nullptr, *varlist, loc_, loc_);
 }
 
 static void emitStringToDumpFile(const char *tag,

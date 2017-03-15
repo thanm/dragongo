@@ -204,7 +204,7 @@ class FcnTestHarness {
   void addStmt(Bstatement *stmt);
 
   // Create a new block (prev block will jump to new one)
-  void newBlock();
+  void newBlock(std::vector<Bvariable *> *varlist = nullptr);
 
   // Verify that block contains specified contents. Return false
   // and emit diagnostics if not.

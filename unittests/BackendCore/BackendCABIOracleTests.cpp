@@ -63,6 +63,7 @@ TEST(BackendCABIOracleTests, Extended) {
 
   Btype *bi8t = be->integer_type(false, 8);
   Btype *bu8t = be->integer_type(true, 8);
+  Btype *bi64t = be->integer_type(true, 64);
   Btype *bf32t = be->float_type(32);
   Btype *bf64t = be->float_type(64);
   Btype *bpf64t = be->pointer_type(bf64t);
@@ -72,6 +73,8 @@ TEST(BackendCABIOracleTests, Extended) {
   Btype *st3 = mkBackendStruct(be, st2, "f1", bi8t, "f2", nullptr);
   Btype *st4 = mkBackendStruct(be, bf32t, "f1", bf32t, "f2", nullptr);
   Btype *st5 = mkBackendStruct(be, bf32t, "f1", nullptr);
+  Btype *st6 = mkBackendStruct(be, bf32t, "f1", bi8t, "a", bu8t, "b",
+                               bi64t, "c", nullptr);
 
   struct FcnItem {
     FcnItem(const std::vector<Btype*> &r,
@@ -129,6 +132,11 @@ TEST(BackendCABIOracleTests, Extended) {
             "void ({ { double, double }, i8 }*, "
             "{ { double, double }, i8 }*, i8)"),
 
+    FcnItem( { st6 }, { st6, st6 },
+             "Return: Direct { { i48, i64 } } sigOffset: -1 "
+             "Param 1: Direct { i48, i64 } sigOffset: 0 "
+             "Param 2: Direct { i48, i64 } sigOffset: 2",
+             "{ i48, i64 } (i48, i64, i48, i64)"),
   };
 
   for (auto &item : items) {
@@ -157,6 +165,10 @@ TEST(BackendCABIOracleTests, Extended) {
       std::string result(repr(cab.getFunctionTypeForABI()));
       bool equal = difftokens(item.expTyp, result, reason);
       EXPECT_EQ("pass", equal ? "pass" : reason);
+      if (!equal) {
+        std::cerr << "exp:\n" << item.expTyp << "\n";
+        std::cerr << "act:\n" << result << "\n";
+      }
     }
   }
 }
@@ -325,6 +337,53 @@ TEST(BackendCABIOracleTests, PassAndReturnArrays) {
     %cast.2 = bitcast [3 x double]* %sret.actual.0 to i8*
     call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.1, i8* %cast.2, i64 8, i32 8, i1 false)
     ret void
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish(PreserveDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+TEST(BackendCABIOracleTests, EmptyStructParamsAndReturns) {
+  FcnTestHarness h;
+  Llvm_backend *be = h.be();
+
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *set = mkBackendStruct(be, nullptr); // struct with no fields
+
+  // func foo(f1 empty, f2 empty, f3 int32, f4 empty) empty
+  BFunctionType *befty1 = mkFuncTyp(be,
+                                    L_RES, set,
+                                    L_PARM, set,
+                                    L_PARM, set,
+                                    L_PARM, bi32t,
+                                    L_PARM, set,
+                                    L_PARM, set,
+                                    L_END);
+  Bfunction *func = h.mkFunction("foo", befty1);
+
+  // foo(f1, f1, 4, f1, f1)
+  Location loc;
+  Bexpression *fn = be->function_code_expression(func, loc);
+  Bvariable *p0 = func->getNthParamVar(0);
+  std::vector<Bexpression *> args;
+  args.push_back(be->var_expression(p0, VE_rvalue, loc));
+  args.push_back(be->var_expression(p0, VE_rvalue, loc));
+  args.push_back(mkInt32Const(be, 4));
+  args.push_back(be->var_expression(p0, VE_rvalue, loc));
+  args.push_back(be->var_expression(p0, VE_rvalue, loc));
+  Bexpression *call = be->call_expression(fn, args, nullptr, func, h.loc());
+
+  // return the call above
+  std::vector<Bexpression *> rvals;
+  rvals.push_back(call);
+  h.mkReturn(rvals);
+
+  const char *exp = R"RAW_RESULT(
+     call void @foo(i32 4)
+     ret void
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);

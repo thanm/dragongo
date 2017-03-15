@@ -172,6 +172,7 @@ class TypeManager {
   // Helpers
   bool isFuncDescriptorType(llvm::Type *typ);
   bool isPtrToFuncDescriptorType(llvm::Type *typ);
+  bool isPtrToIfaceStructType(llvm::Type *typ);
   bool isPtrToFuncType(llvm::Type *typ);
   bool isPtrToVoidType(llvm::Type *typ);
 

@@ -1319,6 +1319,24 @@ int64_t TypeManager::typeFieldOffset(Btype *btype, size_t index) {
   return static_cast<int64_t>(uoff);
 }
 
+bool TypeManager::isPtrToIfaceStructType(llvm::Type *typ)
+{
+  if (! typ->isPointerTy())
+    return false;
+  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
+  llvm::Type *elt = pt->getElementType();
+  if (! elt->isStructTy())
+    return false;
+  llvm::StructType *st = llvm::cast<llvm::StructType>(elt);
+  if (st->getNumElements() != 2)
+    return false;
+  llvm::SmallPtrSet<llvm::Type *, 32> vis;
+  // expect { ptr, ptr } or { ptr, uintptr }
+  return (st->getElementType(0)->isPointerTy() &&
+          (st->getElementType(1)->isPointerTy() ||
+           st->getElementType(1) == llvmIntegerType()));
+}
+
 bool TypeManager::isFuncDescriptorType(llvm::Type *typ)
 {
   if (! typ->isStructTy())
