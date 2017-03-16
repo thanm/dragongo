@@ -121,7 +121,7 @@ TEST(BackendDebugEmit, MoreComplexVarDecls) {
       declcount += 1;
 
   // five formals and six locals => 11 var decls
-  EXPECT_EQ(declcount, 11);
+  EXPECT_EQ(declcount, 11u);
   if (declcount != 11)
     std::cerr << fdump;
 }

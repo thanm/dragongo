@@ -704,6 +704,12 @@ private:
   // module-scope variables, not vars local to a function.
   std::unordered_map<llvm::Value *, Bvariable *> valueVarMap_;
 
+  // A map from function asm name to Bfunction, used to cache declarations
+  // of external functions (for example, well-known functions in the
+  // runtime). Only declarations will be placed in this map-- if a function
+  // is being defined, it will only be added to the functions_ list below.
+  std::unordered_map<std::string, Bfunction*> fcnNameMap_;
+
   // Currently we don't do any commoning of Bfunction objects created
   // by the frontend, so here we keep track of all returned Bfunctions
   // so that we can free them on exit.

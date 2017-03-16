@@ -2819,9 +2819,23 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
 {
   if (fntype == errorType())
     return errorFunction_.get();
-  llvm::Twine fn(name);
+
+  // If this is a declaration, then look to see if we already have an existing
+  // function with the same name, and reuse that if need be. Check to make
+  // sure that the function types agree if we see a hit in the cache.
+  std::string fns(!asm_name.empty() ? asm_name : name);
   llvm::FunctionType *fty = llvm::cast<llvm::FunctionType>(fntype->type());
+  if (is_declaration) {
+    auto it = fcnNameMap_.find(fns);
+    if (it != fcnNameMap_.end()) {
+      Bfunction *found = it->second;
+      assert(found->fcnType()->type() == fty);
+      return found;
+    }
+  }
+
   llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
+  llvm::Twine fn(fns);
   llvm::Function *fcn = llvm::Function::Create(fty, linkage, fn, module_);
 
   fcn->addFnAttr("disable-tail-calls", "true");
@@ -2852,8 +2866,9 @@ Bfunction *Llvm_backend::function(Btype *fntype, const std::string &name,
   // for clang/LLVM.
   assert(!in_unique_section || is_declaration);
 
+  if (is_declaration)
+    fcnNameMap_[fns] = bfunc;
   functions_.push_back(bfunc);
-
   return bfunc;
 }
 

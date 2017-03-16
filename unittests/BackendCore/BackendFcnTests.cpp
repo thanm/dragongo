@@ -87,19 +87,18 @@ TEST(BackendFcnTests, MakeFunction) {
   const bool is_inlinable[2] = {true, false};
   bool split_stack[2] = {true, false};
   Location loc;
-  bool first = true;
+  unsigned count = 0;
   for (auto vis : is_visible) {
     for (auto inl : is_inlinable) {
       for (auto split : split_stack) {
+        std::stringstream ss;
+        ss << "fcn" << count++;
         Bfunction *befcn =
-            be->function(befty, "foo", "foo", vis, is_declaration, inl, split,
-                         in_unique_section, loc);
+            be->function(befty, "_foo", ss.str(), vis, is_declaration,
+                         inl, split, in_unique_section, loc);
         llvm::Function *llfunc = befcn->function();
         ASSERT_TRUE(llfunc != NULL);
-        if (first) {
-          EXPECT_EQ(llfunc->getName(), "foo");
-          first = false;
-        }
+        EXPECT_EQ(llfunc->getName(), ss.str());
         EXPECT_FALSE(llfunc->isVarArg());
         EXPECT_EQ(llfunc->hasFnAttribute(Attribute::NoInline), !inl);
         EXPECT_EQ(llfunc->hasHiddenVisibility(), !vis);
@@ -219,6 +218,40 @@ TEST(BackendFcnTests, MakeFuncWithRecursiveTypeParam) {
 
   bool isOK = h.expectBlock(exp);
   EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish(PreserveDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
+TEST(BackendFcnTests, MakeMultipleDeclarations) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Location loc;
+
+  // If a function of a given name is declared more than once,
+  // we expect to get back the original decl on the second time.
+  // For definitions, a new function will be created each time (although
+  // this could certainly be changed if needed);
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *bi64t = be->integer_type(false, 64);
+  BFunctionType *befty1 = mkFuncTyp(be, L_RES, bi32t, L_PARM, bi64t, L_END);
+  bool is_visible = false;
+  bool is_declaration = true;
+  bool is_inl = true;
+  bool is_splitstack = true;
+  bool in_unique_section = false;
+  Bfunction *bf1 =
+      be->function(befty1, "_foo", "bar", is_visible, is_declaration,
+                         is_inl, is_splitstack, in_unique_section, loc);
+  Bfunction *bf2 =
+      be->function(befty1, "_foo", "bar", is_visible, is_declaration,
+                         is_inl, is_splitstack, in_unique_section, loc);
+  Bfunction *bf3 =
+      be->function(befty1, "_foo", "bar", is_visible, !is_declaration,
+                         is_inl, is_splitstack, in_unique_section, loc);
+  EXPECT_EQ(bf1, bf2);
+  EXPECT_NE(bf1, bf3);
 
   bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
