@@ -704,6 +704,14 @@ private:
   // module-scope variables, not vars local to a function.
   std::unordered_map<llvm::Value *, Bvariable *> valueVarMap_;
 
+  // Table for commoning strings by value. String constants have
+  // concrete types like "[5 x i8]", whereas we would like to return
+  // things that have type "i8*". To manage this, we eagerly create
+  // module-scope vars with strings, but this tends to defeat the
+  // caching mechanisms, so here we have a map from constant string
+  // value to Bexpression holding that string const.
+  std::unordered_map<llvm::Value *, Bexpression*> stringConstantMap_;
+
   // A map from function asm name to Bfunction, used to cache declarations
   // of external functions (for example, well-known functions in the
   // runtime). Only declarations will be placed in this map-- if a function

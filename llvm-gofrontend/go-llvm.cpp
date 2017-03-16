@@ -1012,12 +1012,20 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val)
     return makeGlobalExpression(bconst, zer, stringType(), Location());
   }
 
-  // At the moment strings are not commoned.
+  // Create constant
   bool doAddNull = true;
   llvm::Constant *scon =
       llvm::ConstantDataArray::getString(context_,
                                          llvm::StringRef(val),
                                          doAddNull);
+
+  // Return existing const if installed in table already.
+  auto it = stringConstantMap_.find(scon);
+  if (it != stringConstantMap_.end())
+    return it->second;
+
+  // New string. Manufacture a module-scope var to hold the constant,
+  // then install various maps.
   Bvariable *svar =
       makeModuleVar(makeAuxType(scon->getType()),
                     "", "", Location(), MV_Constant, MV_DefaultSection,
@@ -1027,7 +1035,10 @@ Bexpression *Llvm_backend::string_constant_expression(const std::string &val)
   llvm::Constant *bitcast =
       llvm::ConstantExpr::getBitCast(varval, stringType()->type());
   Bexpression *bconst = nbuilder_.mkConst(stringType(), bitcast);
-  return makeGlobalExpression(bconst, bitcast, stringType(), Location());
+  Bexpression *rval =
+      makeGlobalExpression(bconst, bitcast, stringType(), Location());
+  stringConstantMap_[scon] = rval;
+  return rval;
 }
 
 // Make a constant boolean expression.
@@ -2500,7 +2511,7 @@ Llvm_backend::makeModuleVar(Btype *btype,
     glob->setInitializer(initializer);
   bool addressTaken = true; // for now
   Bvariable *bv =
-      new Bvariable(btype, location, name, GlobalVar, addressTaken, glob);
+      new Bvariable(btype, location, gname, GlobalVar, addressTaken, glob);
   assert(valueVarMap_.find(bv->value()) == valueVarMap_.end());
   valueVarMap_[bv->value()] = bv;
   return bv;

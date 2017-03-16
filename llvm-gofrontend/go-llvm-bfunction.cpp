@@ -357,16 +357,20 @@ llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,
   }
 
   // Direct return: single value
-  if (! returnInfo.abiType()->isStructTy())
+  if (! returnInfo.abiType()->isAggregateType() &&
+      ! toRet->btype()->type()->isAggregateType())
     return toRet->value();
 
-  // Direct return: one-value or two-value struct. Bitcast the struct
-  // address to the ABI type and then issue a load from the bitcast.
-  llvm::Type *llst = returnInfo.computeABIStructType(tm);
-  llvm::Type *ptst = tm->makeLLVMPointerType(llst);
+  // Direct return: either the ABI type is a structure or the
+  // return value type is a structure. In this case we bitcast
+  // the return location address to the ABI type and then issue a load
+  // from the bitcast.
+  llvm::Type *llrt = (returnInfo.abiType()->isAggregateType() ?
+                      returnInfo.computeABIStructType(tm) :
+                      returnInfo.abiType());
+  llvm::Type *ptst = tm->makeLLVMPointerType(llrt);
   std::string castname(namegen("cast"));
   llvm::Value *bitcast = builder.CreateBitCast(toRet->value(), ptst, castname);
-
   std::string loadname(namegen("ld"));
   llvm::Instruction *ldinst = builder.CreateLoad(bitcast, loadname);
   return ldinst;

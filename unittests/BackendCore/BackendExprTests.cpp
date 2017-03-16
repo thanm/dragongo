@@ -840,4 +840,20 @@ TEST(BackendExprTests, TestCallArgConversions) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendExprTests, TestStringDuplication) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+
+  Bexpression *bst = be->string_constant_expression("abc");
+  Bexpression *bst2 = be->string_constant_expression("def");
+  Bexpression *bst3 = be->string_constant_expression("abc");
+  EXPECT_EQ(bst->value(), bst3->value());
+
+  bool broken = h.finish(StripDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
+
+  h.func()->function()->dump();
+}
+
 }
