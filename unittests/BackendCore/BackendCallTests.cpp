@@ -113,7 +113,7 @@ TEST(BackendCallTests, MultiReturnCall) {
     const char *exp = R"RAW_RESULT(
      %cast.0 = bitcast { i8*, i32*, i64*, i64 }* %sret.formal.0 to i8*
      %cast.1 = bitcast { i8*, i32*, i64*, i64 }* @const.0 to i8*
-     call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.0, i8* %cast.1, i64 8, i32 8, i1 false)
+     call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.0, i8* %cast.1, i64 32, i32 8, i1 false)
      ret void
     )RAW_RESULT";
 
@@ -147,7 +147,7 @@ TEST(BackendCallTests, MultiReturnCall) {
   store i64 101, i64* %field.3
   %cast.3 = bitcast { i8*, i32*, i64*, i64 }* %sret.formal.0 to i8*
   %cast.4 = bitcast { i8*, i32*, i64*, i64 }* %tmp.0 to i8*
-  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.3, i8* %cast.4, i64 8, i32 8, i1 false)
+  call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.3, i8* %cast.4, i64 32, i32 8, i1 false)
   ret void
     )RAW_RESULT";
 

@@ -335,7 +335,7 @@ TEST(BackendCABIOracleTests, PassAndReturnArrays) {
     call void @foo([3 x double]* %sret.actual.0, <2 x float> %ld.0)
     %cast.1 = bitcast [3 x double]* %sret.formal.0 to i8*
     %cast.2 = bitcast [3 x double]* %sret.actual.0 to i8*
-    call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.1, i8* %cast.2, i64 8, i32 8, i1 false)
+    call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.1, i8* %cast.2, i64 24, i32 8, i1 false)
     ret void
     )RAW_RESULT";
 

@@ -342,9 +342,8 @@ llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,
   // Indirect return: emit memcpy into sret
   if (returnInfo.disp() == ParmIndirect) {
     BlockLIRBuilder bbuilder(function());
-    Btype *rmemt = tm->makeAuxType(rtnValueMem_->getType());
-    uint64_t sz = tm->typeSize(rmemt);
-    uint64_t algn = tm->typeAlignment(rmemt);
+    uint64_t sz = tm->typeSize(fcnType_->resultType());
+    uint64_t algn = tm->typeAlignment(fcnType_->resultType());
     bbuilder.CreateMemCpy(rtnValueMem_, toRet->value(), sz, algn);
     for (auto i : bbuilder.instructions()) {
       // hack: irbuilder likes to create unnamed bitcasts
