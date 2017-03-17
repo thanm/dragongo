@@ -618,9 +618,6 @@ private:
       std::unordered_map<std::pair<T1, T2>, V, pairvalmap_hash<T1, T2>,
                          pairvalmap_equal<T1, T2>>;
 
-  typedef std::pair<const std::string, llvm::Type *> named_llvm_type;
-  typedef pairvalmap<std::string, llvm::Type *, Btype *> named_type_maptyp;
-
   typedef std::pair<llvm::Type *, bool> type_plus_unsigned;
   typedef pairvalmap<llvm::Type *, bool, Btype *> integer_type_maptyp;
 
@@ -711,6 +708,11 @@ private:
   // caching mechanisms, so here we have a map from constant string
   // value to Bexpression holding that string const.
   std::unordered_map<llvm::Value *, Bexpression*> stringConstantMap_;
+
+  // For caching of immutable struct references. Similar situation here
+  // as above, in that we can't look for such things in valueVarMap_
+  // without creating what it is we're looking for.
+  std::unordered_map<std::string, Bvariable *> immutableStructRefs_;
 
   // A map from function asm name to Bfunction, used to cache declarations
   // of external functions (for example, well-known functions in the

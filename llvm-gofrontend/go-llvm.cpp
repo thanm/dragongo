@@ -2756,27 +2756,35 @@ void Llvm_backend::immutable_struct_set_init(Bvariable *var,
 // defined in another package.
 
 Bvariable *Llvm_backend::immutable_struct_reference(const std::string &name,
-                                                    const std::string &asmname,
+                                                    const std::string &asm_name,
                                                     Btype *btype,
                                                     Location location)
 {
   if (btype == errorType())
     return errorVariable_.get();
 
-  // FIXME: add code to insure non-zero size
-  assert(datalayout().getTypeSizeInBits(btype->type()) != 0);
+  // Seen this already?
+  std::string gname(asm_name.empty() ? name : asm_name);
+  auto it = immutableStructRefs_.find(gname);
+  if (it != immutableStructRefs_.end()) {
+    // type should agree
+    Bvariable *existing = it->second;
+    assert(btype->type() == existing->btype()->type());
+    return existing;
+  }
 
-  // FIXME: add DIGlobalVariable to debug info for this variable
-
+  // Create new external global
   llvm::GlobalValue::LinkageTypes linkage = llvm::GlobalValue::ExternalLinkage;
   bool isConstant = true;
   llvm::Constant *init = nullptr;
   llvm::GlobalVariable *glob = new llvm::GlobalVariable(
-      module(), btype->type(), isConstant, linkage, init, asmname);
+      module(), btype->type(), isConstant, linkage, init, gname);
   Bvariable *bv =
       new Bvariable(btype, location, name, GlobalVar, false, glob);
   assert(valueVarMap_.find(bv->value()) == valueVarMap_.end());
   valueVarMap_[bv->value()] = bv;
+  immutableStructRefs_[gname] = bv;
+
   return bv;
 }
 

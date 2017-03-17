@@ -122,7 +122,8 @@ TEST(BackendExprTests, MakeFloatConstExpr) {
 TEST(BackendExprTests, MakeZeroValueExpr) {
   llvm::LLVMContext C;
 
-  std::unique_ptr<Backend> be(go_get_backend(C));
+  std::unique_ptr<Backend> bep(go_get_backend(C));
+  Backend *be = bep.get();
 
   // Zero value expressions for various types
   Btype *bt = be->bool_type();
@@ -135,7 +136,7 @@ TEST(BackendExprTests, MakeZeroValueExpr) {
   ASSERT_TRUE(bpzero != nullptr);
   EXPECT_EQ(repr(bpzero->value()), "i8* null");
   Btype *bi32t = be->integer_type(false, 32);
-  Btype *s2t = mkBackendStruct(be.get(), pbt, "f1", bi32t, "f2", nullptr);
+  Btype *s2t = mkBackendStruct(be, pbt, "f1", bi32t, "f2", nullptr);
   Bexpression *bszero = be->zero_expression(s2t);
   ASSERT_TRUE(bszero != nullptr);
 
@@ -848,7 +849,30 @@ TEST(BackendExprTests, TestStringDuplication) {
   Bexpression *bst = be->string_constant_expression("abc");
   Bexpression *bst2 = be->string_constant_expression("def");
   Bexpression *bst3 = be->string_constant_expression("abc");
+  EXPECT_NE(bst->value(), bst2->value());
   EXPECT_EQ(bst->value(), bst3->value());
+
+  bool broken = h.finish(StripDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
+
+  h.func()->function()->dump();
+}
+
+TEST(BackendExprTests, TestImmutableStructReferenceDuplication) {
+
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Location loc = h.loc();
+
+  Btype *bi32t = be->integer_type(false, 32);
+  Btype *st = mkBackendStruct(be, bi32t, "f1", nullptr);
+
+
+  Bvariable *v1 = be->immutable_struct_reference("foo", "", st, loc);
+  Bvariable *v2 = be->immutable_struct_reference("bar", "", st, loc);
+  Bvariable *v3 = be->immutable_struct_reference("", "foo", st, loc);
+  EXPECT_EQ(v1, v3);
+  EXPECT_NE(v1, v2);
 
   bool broken = h.finish(StripDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");

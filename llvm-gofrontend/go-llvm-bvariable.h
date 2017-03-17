@@ -32,10 +32,7 @@ class Bvariable {
 public:
   Bvariable(Btype *type, Location location,
             const std::string &name, WhichVar which,
-            bool address_taken, llvm::Value *value)
-      : name_(name), location_(location), value_(value),
-        initializer_(nullptr), type_(type), which_(which),
-        addrtaken_(address_taken), temporary_(false) {}
+            bool address_taken, llvm::Value *value);
 
   // Common to all varieties of variables
   Location location() { return location_; }
@@ -70,10 +67,10 @@ public:
 private:
   Bvariable() = delete;
   const std::string name_;
-  Location location_;
   llvm::Value *value_;
   llvm::Value *initializer_;
   Btype *type_;
+  Location location_;
   WhichVar which_;
   bool addrtaken_;
   bool temporary_;

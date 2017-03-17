@@ -17,6 +17,15 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/IR/Instruction.h"
 
+Bvariable::Bvariable(Btype *type, Location location,
+                     const std::string &name, WhichVar which,
+                     bool address_taken, llvm::Value *value)
+    : name_(name), value_(value), initializer_(nullptr),
+      type_(type), location_(location), which_(which),
+      addrtaken_(address_taken), temporary_(false)
+{
+}
+
 void Bvariable::setInitializer(llvm::Value *init)
 {
   assert(initializer_ == nullptr);
