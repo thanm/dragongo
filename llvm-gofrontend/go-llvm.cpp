@@ -1579,6 +1579,14 @@ Bexpression *Llvm_backend::binary_expression(Operator op, Bexpression *left,
       val = builder.CreateMul(leftVal, rightVal, namegen("mul"));
     break;
   }
+  case OPERATOR_MOD: {
+    assert(! ltype->isFloatingPointTy());
+    if (isUnsigned)
+      val = builder.CreateURem(leftVal, rightVal, namegen("mod"));
+    else
+      val = builder.CreateSRem(leftVal, rightVal, namegen("mod"));
+    break;
+  }
   case OPERATOR_DIV: {
     if (ltype->isFloatingPointTy())
       val = builder.CreateFDiv(leftVal, rightVal, namegen("fdiv"));

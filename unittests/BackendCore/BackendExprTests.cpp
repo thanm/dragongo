@@ -514,6 +514,70 @@ TEST(BackendExprTests, TestLogicalOps) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
 
+TEST(BackendExprTests, TestMulDiv) {
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+
+  Operator optotest[] = {OPERATOR_MULT,OPERATOR_DIV,OPERATOR_MOD};
+
+  Btype *bi16t = be->integer_type(false, 16);
+  Btype *bu16t = be->integer_type(true, 16);
+  Btype *bf64t = be->float_type(64);
+  Bvariable *x = h.mkLocal("x", bi16t);
+  Bvariable *y = h.mkLocal("y", bu16t);
+  Bvariable *z = h.mkLocal("z", bf64t);
+  Bexpression *beic = mkIntConst(be, -17, 16u);
+  Bexpression *beuc = mkUIntConst(be, 13, 16u);
+  Bexpression *befc = mkFloat64Const(be, 9.0);
+  std::vector<std::pair<Bexpression *, Bvariable *>> valtotest;
+  valtotest.push_back(std::make_pair(beic, x));
+  valtotest.push_back(std::make_pair(beuc, y));
+  valtotest.push_back(std::make_pair(befc, z));
+
+  Location loc;
+  for (unsigned tidx = 0; tidx < valtotest.size(); ++tidx) {
+    Bexpression *bleft = valtotest[tidx].first;
+    Bvariable *bv = valtotest[tidx].second;
+    for (auto op : optotest) {
+      if (op == OPERATOR_MOD && bleft->btype()->type()->isFloatingPointTy())
+        continue;
+      Bexpression *bright = be->var_expression(bv, VE_rvalue, loc);
+      Bexpression *cmp = be->binary_expression(op, bleft, bright, Location());
+      Bstatement *es = be->expression_statement(func, cmp);
+      h.addStmt(es);
+    }
+  }
+
+  const char *exp = R"RAW_RESULT(
+  store i16 0, i16* %x
+  store i16 0, i16* %y
+  store double 0.000000e+00, double* %z
+  %x.ld.0 = load i16, i16* %x
+  %mul.0 = mul i16 -17, %x.ld.0
+  %x.ld.1 = load i16, i16* %x
+  %div.0 = sdiv i16 -17, %x.ld.1
+  %x.ld.2 = load i16, i16* %x
+  %mod.0 = srem i16 -17, %x.ld.2
+  %y.ld.0 = load i16, i16* %y
+  %mul.1 = mul i16 13, %y.ld.0
+  %y.ld.1 = load i16, i16* %y
+  %div.1 = udiv i16 13, %y.ld.1
+  %y.ld.2 = load i16, i16* %y
+  %mod.1 = urem i16 13, %y.ld.2
+  %z.ld.0 = load double, double* %z
+  %fmul.0 = fmul double 9.000000e+00, %z.ld.0
+  %z.ld.1 = load double, double* %z
+  %fdiv.0 = fdiv double 9.000000e+00, %z.ld.1
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish(StripDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 TEST(BackendExprTests, CreateStringConstantExpressions) {
 
   FcnTestHarness h("foo");

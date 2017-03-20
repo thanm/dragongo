@@ -330,24 +330,36 @@ Bfunction *mkFuncFromType(Backend *be, const char *fname, BFunctionType *befty)
   return func;
 }
 
-Bexpression *mkUint64Const(Backend *be, uint64_t val) {
+Bexpression *mkUIntConst(Backend *be, uint64_t val, unsigned bits) {
   mpz_t mpz_val;
   memset(&mpz_val, '0', sizeof(mpz_val));
   mpz_init_set_ui(mpz_val, val);
-  Btype *bu64t = be->integer_type(true, 64);
-  Bexpression *rval = be->integer_constant_expression(bu64t, mpz_val);
+  Btype *but = be->integer_type(true, bits);
+  Bexpression *rval = be->integer_constant_expression(but, mpz_val);
+  mpz_clear(mpz_val);
+  return rval;
+}
+
+Bexpression *mkIntConst(Backend *be, int64_t val, unsigned bits) {
+  mpz_t mpz_val;
+  memset(&mpz_val, '0', sizeof(mpz_val));
+  mpz_init_set_si(mpz_val, val);
+  Btype *bit = be->integer_type(false, bits);
+  Bexpression *rval = be->integer_constant_expression(bit, mpz_val);
   mpz_clear(mpz_val);
   return rval;
 }
 
 Bexpression *mkInt64Const(Backend *be, int64_t val) {
-  mpz_t mpz_val;
-  memset(&mpz_val, '0', sizeof(mpz_val));
-  mpz_init_set_si(mpz_val, val);
-  Btype *bi64t = be->integer_type(false, 64);
-  Bexpression *rval = be->integer_constant_expression(bi64t, mpz_val);
-  mpz_clear(mpz_val);
-  return rval;
+  return mkIntConst(be, val, 64);
+}
+
+Bexpression *mkUint64Const(Backend *be, uint64_t val) {
+  return mkUIntConst(be, val, 64);
+}
+
+Bexpression *mkInt32Const(Backend *be, int32_t val) {
+  return mkIntConst(be, val, 32);
 }
 
 Bexpression *mkFloat64Const(Backend *be, double val) {
@@ -359,17 +371,6 @@ Bexpression *mkFloat64Const(Backend *be, double val) {
   Bexpression *beval = be->float_constant_expression(bf64t, mpfr_val);
   mpfr_clear(mpfr_val);
   return beval;
-}
-
-Bexpression *mkInt32Const(Backend *be, int32_t val)
-{
-  mpz_t mpz_val;
-  memset(&mpz_val, '0', sizeof(mpz_val));
-  mpz_init_set_si(mpz_val, int64_t(val));
-  Btype *bi32t = be->integer_type(false, 32);
-  Bexpression *rval = be->integer_constant_expression(bi32t, mpz_val);
-  mpz_clear(mpz_val);
-  return rval;
 }
 
 // Return func desc type

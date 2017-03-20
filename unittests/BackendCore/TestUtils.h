@@ -122,6 +122,10 @@ Bexpression *mkFloat64Const(Backend *be, double val);
 // Manufacture a signed 32-bit integer constant
 Bexpression *mkInt32Const(Backend *be, int32_t val);
 
+// Manufacture N-bit constants
+Bexpression *mkIntConst(Backend *be, int64_t val, unsigned bits);
+Bexpression *mkUIntConst(Backend *be, uint64_t val, unsigned bits);
+
 // Return func desc type
 Btype *mkFuncDescType(Backend *be);
 
