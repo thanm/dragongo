@@ -77,6 +77,7 @@ void Bexpression::resetVarExprContext()
   varContext_.reset();
 }
 
+#if 0
 Bexpression *Bexpression::cloneConstant() const {
   assert(flavor() == N_Const ||
          flavor() == N_Composite ||
@@ -85,6 +86,7 @@ Bexpression *Bexpression::cloneConstant() const {
   Bexpression *rval = new Bexpression(*this);
   return rval;
 }
+#endif
 
 bool Bexpression::compositeInitPending() const
 {
@@ -105,6 +107,11 @@ const std::vector<Bexpression *> Bexpression::getChildExprs() const
 void Bexpression::setStoreValue(llvm::Value *val)
 {
   assert(value_ == nullptr);
+  setValue(val);
+}
+
+void Bexpression::setValue(llvm::Value *val)
+{
   assert(val);
   value_ = val;
 }

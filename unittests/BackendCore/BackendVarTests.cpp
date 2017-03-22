@@ -301,7 +301,7 @@ TEST(BackendVarTests, ImmutableStructSetInit) {
   // Q: do we want weak_odr here?
   const char *exp = R"RAW_RESULT(
     @desc = weak_odr constant { i64 } { i64 ptrtoint
-    (i64 (i32, i32, i64*)* @foo to i64) }
+    (i64 (i8*, i32, i32, i64*)* @foo to i64) }
   )RAW_RESULT";
 
   bool isOK = h.expectValue(ims->value(), exp);

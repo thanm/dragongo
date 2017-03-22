@@ -43,16 +43,17 @@ TEST(BackendCABIOracleTests, Basic) {
     CABIOracle cab(befty1, be->typeManager());
     const char *exp = R"RAW_RESULT(
       Return: Direct { { double, double } } sigOffset: -1
-      Param 1: Direct AttrSext { i8 } sigOffset: 0
-      Param 2: Direct { float } sigOffset: 1
-      Param 3: Ignore { void } sigOffset: -1
-      Param 4: Direct { i64 } sigOffset: 2
+      Param 1: Direct AttrNest { i8* } sigOffset: 0
+      Param 2: Direct AttrSext { i8 } sigOffset: 1
+      Param 3: Direct { float } sigOffset: 2
+      Param 4: Ignore { void } sigOffset: -1
+      Param 5: Direct { i64 } sigOffset: 3
     )RAW_RESULT";
     std::string reason;
     bool equal = difftokens(exp, cab.toString(), reason);
     EXPECT_EQ("pass", equal ? "pass" : reason);
     EXPECT_EQ(repr(cab.getFunctionTypeForABI()),
-              "{ double, double } (i8, float, i64)");
+              "{ double, double } (i8*, i8, float, i64)");
   }
 }
 
@@ -91,52 +92,60 @@ TEST(BackendCABIOracleTests, Extended) {
   std::vector<FcnItem> items = {
 
     FcnItem( {  }, {  },
-             "Return: Ignore { void } sigOffset: -1",
-             "void ()"),
+             "Return: Ignore { void } sigOffset: -1 "
+             "Param 1: Direct AttrNest { i8* } sigOffset: 0",
+             "void (i8*)"),
 
     FcnItem( { bi8t }, { },
-             "Return: Direct AttrSext { i8 } sigOffset: -1",
-             "i8 ()"),
+             "Return: Direct AttrSext { i8 } sigOffset: -1 "
+             "Param 1: Direct AttrNest { i8* } sigOffset: 0",
+             "i8 (i8*)"),
 
     FcnItem( {  }, { bi8t },
              "Return: Ignore { void } sigOffset: -1 "
-             "Param 1: Direct AttrSext { i8 } sigOffset: 0",
-             "void (i8)"),
+             "Param 1: Direct AttrNest { i8* } sigOffset: 0 "
+             "Param 2: Direct AttrSext { i8 } sigOffset: 1",
+             "void (i8*, i8)"),
 
     FcnItem( {  }, { st5, bpf64t },
              "Return: Ignore { void } sigOffset: -1 "
-             "Param 1: Direct { float } sigOffset: 0 "
-             "Param 2: Direct { double* } sigOffset: 1",
-             "void (float, double*)"),
+             "Param 1: Direct AttrNest { i8* } sigOffset: 0 "
+             "Param 2: Direct { float } sigOffset: 1 "
+             "Param 3: Direct { double* } sigOffset: 2",
+             "void (i8*, float, double*)"),
 
     FcnItem({ bi8t, bf64t }, { bi8t, bu8t, st0 },
             "Return: Direct { { i8, double } } sigOffset: -1 "
-            "Param 1: Direct AttrSext { i8 } sigOffset: 0 "
-            "Param 2: Direct AttrZext { i8 } sigOffset: 1 "
-            "Param 3: Ignore { void } sigOffset: -1",
-            "{ i8, double } (i8, i8)"),
+            "Param 1: Direct AttrNest { i8* } sigOffset: 0 "
+            "Param 2: Direct AttrSext { i8 } sigOffset: 1 "
+            "Param 3: Direct AttrZext { i8 } sigOffset: 2 "
+            "Param 4: Ignore { void } sigOffset: -1",
+            "{ i8, double } (i8*, i8, i8)"),
 
     FcnItem({ st2 }, { st2, st0, st4, st1 },
             "Return: Direct { { double, double } } sigOffset: -1 "
-            "Param 1: Direct { double, double } sigOffset: 0 "
-            "Param 2: Ignore { void } sigOffset: -1 "
-            "Param 3: Direct { <2 x float> } sigOffset: 2 "
-            "Param 4: Direct { i64 } sigOffset: 3 ",
-            "{ double, double } (double, double, <2 x float>, i64)"),
+            "Param 1: Direct AttrNest { i8* } sigOffset: 0 "
+            "Param 2: Direct { double, double } sigOffset: 1 "
+            "Param 3: Ignore { void } sigOffset: -1 "
+            "Param 4: Direct { <2 x float> } sigOffset: 3 "
+            "Param 5: Direct { i64 } sigOffset: 4 ",
+            "{ double, double } (i8*, double, double, <2 x float>, i64)"),
 
     FcnItem({ st3 }, { st3, st0, bu8t },
             "Return: Indirect AttrStructReturn { { { double, double }, i8 }* } sigOffset: 0 "
-            "Param 1: Indirect AttrByVal { { { double, double }, i8 }* } sigOffset: 1 "
-            "Param 2: Ignore { void } sigOffset: -1 "
-            "Param 3: Direct AttrZext { i8 } sigOffset: 2 ",
-            "void ({ { double, double }, i8 }*, "
+            "Param 1: Direct AttrNest { i8* } sigOffset: 1 "
+            "Param 2: Indirect AttrByVal { { { double, double }, i8 }* } sigOffset: 2 "
+            "Param 3: Ignore { void } sigOffset: -1 "
+            "Param 4: Direct AttrZext { i8 } sigOffset: 3 ",
+            "void ({ { double, double }, i8 }*, i8*, "
             "{ { double, double }, i8 }*, i8)"),
 
     FcnItem( { st6 }, { st6, st6 },
              "Return: Direct { { i48, i64 } } sigOffset: -1 "
-             "Param 1: Direct { i48, i64 } sigOffset: 0 "
-             "Param 2: Direct { i48, i64 } sigOffset: 2",
-             "{ i48, i64 } (i48, i64, i48, i64)"),
+             "Param 1: Direct AttrNest { i8* } sigOffset: 0 "
+             "Param 2: Direct { i48, i64 } sigOffset: 1 "
+             "Param 3: Direct { i48, i64 } sigOffset: 3",
+             "{ i48, i64 } (i8*, i48, i64, i48, i64)"),
   };
 
   for (auto &item : items) {
@@ -280,7 +289,7 @@ TEST(BackendCABIOracleTests, RecursiveCall1) {
      %ld.2 = load double, double* %field0.1
      %field1.1 = getelementptr inbounds { double, <2 x float> }, { double, <2 x float> }* %cast.1, i32 0, i32 1
      %ld.3 = load <2 x float>, <2 x float>* %field1.1
-     %call.0 = call { double, <2 x float> } @foo(<2 x float> %ld.0, i48 %ld.1, double %ld.2, <2 x float> %ld.3, i8 %sub.0, i8 %p4.ld.0, { { float, float, i16, i16, i16 }, { double, float, float } }* %p5)
+     %call.0 = call { double, <2 x float> } @foo(i8* undef, <2 x float> %ld.0, i48 %ld.1, double %ld.2, <2 x float> %ld.3, i8 %sub.0, i8 %p4.ld.0, { { float, float, i16, i16, i16 }, { double, float, float } }* %p5)
      %cast.2 = bitcast { double, float, float }* %sret.actual.0 to { double, <2 x float> }*
      store { double, <2 x float> } %call.0, { double, <2 x float> }* %cast.2
      %cast.4 = bitcast { double, float, float }* %sret.actual.0 to { double, <2 x float> }*
@@ -332,7 +341,7 @@ TEST(BackendCABIOracleTests, PassAndReturnArrays) {
   const char *exp = R"RAW_RESULT(
     %cast.0 = bitcast [2 x float]* %p0.addr to <2 x float>*
     %ld.0 = load <2 x float>, <2 x float>* %cast.0
-    call void @foo([3 x double]* %sret.actual.0, <2 x float> %ld.0)
+    call void @foo([3 x double]* %sret.actual.0, i8* undef, <2 x float> %ld.0)
     %cast.1 = bitcast [3 x double]* %sret.formal.0 to i8*
     %cast.2 = bitcast [3 x double]* %sret.actual.0 to i8*
     call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.1, i8* %cast.2, i64 24, i32 8, i1 false)
@@ -382,7 +391,7 @@ TEST(BackendCABIOracleTests, EmptyStructParamsAndReturns) {
   h.mkReturn(rvals);
 
   const char *exp = R"RAW_RESULT(
-     call void @foo(i32 4)
+     call void @foo(i8* undef, i32 4)
      ret void
     )RAW_RESULT";
 
@@ -392,5 +401,30 @@ TEST(BackendCABIOracleTests, EmptyStructParamsAndReturns) {
   bool broken = h.finish(PreserveDebugInfo);
   EXPECT_FALSE(broken && "Module failed to verify.");
 }
+
+TEST(BackendCABIOracleTests, CallBuiltinFunction) {
+  FcnTestHarness h("foo");
+  Llvm_backend *be = h.be();
+  Bfunction *func = h.func();
+
+  Bfunction *tfunc = be->lookup_builtin("__builtin_trap");
+
+  // trap()
+  Location loc;
+  Bexpression *fn = be->function_code_expression(tfunc, loc);
+  std::vector<Bexpression *> args;
+  h.mkExprStmt(be->call_expression(fn, args, nullptr, func, h.loc()));
+
+  const char *exp = R"RAW_RESULT(
+     call void @llvm.trap()
+    )RAW_RESULT";
+
+  bool isOK = h.expectBlock(exp);
+  EXPECT_TRUE(isOK && "Block does not have expected contents");
+
+  bool broken = h.finish(PreserveDebugInfo);
+  EXPECT_FALSE(broken && "Module failed to verify.");
+}
+
 
 }

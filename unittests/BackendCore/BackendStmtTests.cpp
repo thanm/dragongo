@@ -190,7 +190,7 @@ TEST(BackendStmtTests, TestIfStmt) {
 
   // verify
   const char *exp = R"RAW_RESULT(
-    define i64 @foo(i32 %param1, i32 %param2, i64* %param3) #0 {
+    define i64 @foo(i8* nest %nest.0, i32 %param1, i32 %param2, i64* %param3) #0 {
     entry:
       %param1.addr = alloca i32
       %param2.addr = alloca i32
@@ -270,7 +270,7 @@ TEST(BackendStmtTests, TestSwitchStmt) {
 
   // verify
   const char *exp = R"RAW_RESULT(
-   define i64 @foo(i32 %param1, i32 %param2, i64* %param3) #0 {
+   define i64 @foo(i8* nest %nest.0, i32 %param1, i32 %param2, i64* %param3) #0 {
    entry:
      %param1.addr = alloca i32
      %param2.addr = alloca i32

@@ -348,7 +348,7 @@ void CABIParamInfo::osdump(llvm::raw_ostream &os)
            (attr() == AttrByVal ? " AttrByVal" :
             (attr() == AttrNest ? " AttrNest" :
              (attr() == AttrZext ? " AttrZext" :
-              (attr() == AttrSext ? " AttrSext" : "<unknown>")))));
+              (attr() == AttrSext ? " AttrSext" : " <unknown>")))));
   os << " { ";
   unsigned idx = 0;
   for (auto &abit : abiTypes_) {
@@ -381,6 +381,9 @@ class ABIState {
   void addIndirectArg() {
     argCount_ += 1;
   }
+  void addChainArg() {
+    argCount_ += 1;
+  }
   unsigned argCount() const { return argCount_; }
   unsigned availIntRegs() const { return availIntRegs_; }
   unsigned availSSERegs() const { return availSSERegs_; }
@@ -395,11 +398,13 @@ class ABIState {
 
 CABIOracle::CABIOracle(const std::vector<Btype *> &fcnParamTypes,
                        Btype *fcnResultType,
+                       bool followsCabi,
                        TypeManager *typeManager)
     : fcnParamTypes_(fcnParamTypes)
     , fcnResultType_(fcnResultType)
     , fcnTypeForABI_(nullptr)
     , typeManager_(typeManager)
+    , followsCabi_(followsCabi)
 {
   analyze();
 }
@@ -410,6 +415,7 @@ CABIOracle::CABIOracle(BFunctionType *ft,
     , fcnResultType_(ft->resultType())
     , fcnTypeForABI_(nullptr)
     , typeManager_(typeManager)
+    , followsCabi_(ft->followsCabi())
 {
   analyze();
 }
@@ -433,7 +439,10 @@ llvm::FunctionType *CABIOracle::getFunctionTypeForABI()
 const CABIParamInfo &CABIOracle::paramInfo(unsigned idx)
 {
   assert(supported());
-  unsigned pidx = idx + 1;
+  // Slot 0: return info
+  // Slot 1: static chain param
+  // Slot 2: first argument / parameter
+  unsigned pidx = idx + 2;
   assert(pidx < infov_.size());
   return infov_[pidx];
 }
@@ -442,6 +451,14 @@ const CABIParamInfo &CABIOracle::returnInfo()
 {
   assert(supported());
   unsigned ridx = 0;
+  assert(ridx < infov_.size());
+  return infov_[ridx];
+}
+
+const CABIParamInfo &CABIOracle::chainInfo()
+{
+  assert(supported());
+  unsigned ridx = 1;
   assert(ridx < infov_.size());
   return infov_[ridx];
 }
@@ -589,6 +606,38 @@ CABIParamInfo CABIOracle::analyzeABIParam(Btype *paramType, ABIState &state)
   }
 }
 
+// Fill in parameter / return / type information for a builtin function,
+// e.g. all values passed + returned directly, no static chain param.
+
+void CABIOracle::analyzeRaw()
+{
+  //if (fcnTypeForABI_)
+  //return;
+
+  // First slot in the info vector will be for the return.
+  llvm::Type *rtyp = fcnResultType_->type();
+  CABIParamInfo rinfo(rtyp, ParmDirect, AttrNone, -1);
+  infov_.push_back(rinfo);
+
+  // No static chain, but we'll create an entry for the chain marked
+  // as ignored.
+  CABIParamInfo cinfo(tm()->llvmPtrType(), ParmIgnore, AttrNest, -1);
+  infov_.push_back(cinfo);
+
+  // Now process the params.
+  llvm::SmallVector<llvm::Type *, 8> elems(0);
+  for (unsigned idx = 0; idx < fcnParamTypes_.size(); ++idx) {
+    Btype *pType = fcnParamTypes_[idx];
+    CABIParamInfo pinfo(pType->type(), ParmDirect, AttrNone, idx);
+    infov_.push_back(pinfo);
+    elems.push_back(pType->type());
+  }
+
+  // Build the proper LLVM function type
+  const bool isVarargs = false;
+  fcnTypeForABI_ = llvm::FunctionType::get(rtyp, elems, isVarargs);
+}
+
 // This driver function carries out the various classification steps
 // described in the AMD64 ABI Draft 0.99.8 document, section 3.2.3,
 // 4th page and thereabouts.
@@ -597,11 +646,21 @@ void CABIOracle::analyze()
 {
   if (fcnTypeForABI_)
     return;
+  if (! followsCabi_) {
+    analyzeRaw();
+    return;
+  }
 
   ABIState state;
 
   // First slot in the info vector will be for the return.
   infov_.push_back(analyzeABIReturn(fcnResultType_, state));
+
+  // Static chain parameter
+  int sigOff = state.argCount();
+  state.addChainArg();
+  CABIParamInfo cparm(tm()->llvmPtrType(), ParmDirect, AttrNest, sigOff);
+  infov_.push_back(cparm);
 
   // Now process the params.
   for (unsigned idx = 0; idx < fcnParamTypes_.size(); ++idx) {

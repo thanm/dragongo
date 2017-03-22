@@ -42,6 +42,7 @@
 
 #include "go-c.h"
 #include "go-llvm-linemap.h"
+#include "go-llvm-diagnostics.h"
 #include "go-llvm.h"
 
 #include "mpfr.h"
@@ -303,6 +304,16 @@ int main(int argc, char **argv)
     }
   }
 
+
+  // Figure out where we are going to send the output.
+  if (OutputFileName.empty()) {
+    errs() << "no output file specified (please use -o option)\n";
+    return 1;
+  }
+  std::unique_ptr<tool_output_file> Out = GetOutputStream();
+  if (!Out) return 1;
+
+  // Kick off the front end
   unsigned nfiles = InputFilenames.size();
   std::unique_ptr<const char *> filenames(new const char *[nfiles]);
   const char **fns = filenames.get();
@@ -312,23 +323,20 @@ int main(int argc, char **argv)
   go_parse_input_files(fns, nfiles, false, true);
   if (! NoBackend)
     go_write_globals();
-  if (! NoVerify)
+  if (! NoVerify && !go_be_saw_errors())
     backend->verifyModule();
   if (DumpIR)
     backend->dumpModule();
   if (TraceLevel)
     std::cerr << "linemap stats:" << linemap->statistics() << "\n";
 
-  llvm::Module *M = module.get();
-
-  if (OutputFileName.empty()) {
-    errs() << "no output file specified (please use -o option)\n";
+  // Early exit at this point if we've seen errors
+  if (go_be_saw_errors())
     return 1;
-  }
 
-  // Figure out where we are going to send the output.
-  std::unique_ptr<tool_output_file> Out = GetOutputStream();
-  if (!Out) return 1;
+
+  // On to the back end for this module...
+  llvm::Module *M = module.get();
 
   // Pass manager
   legacy::PassManager PM;
@@ -336,9 +344,6 @@ int main(int argc, char **argv)
   // Add an appropriate TargetLibraryInfo pass for the module triple.
   TargetLibraryInfoImpl TLII(TheTriple);
   PM.add(new TargetLibraryInfoWrapperPass(TLII));
-
-  // Fixme: pass in module to Llvm_backend
-
 
   // Override function attributes based on CPUStr, FeaturesStr, and command line
   // flags.

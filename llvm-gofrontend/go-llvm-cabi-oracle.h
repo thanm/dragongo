@@ -57,7 +57,7 @@ enum CABIParamAttr : uint8_t  {
   AttrByVal,
   AttrNest,
   AttrZext,
-  AttrSext
+  AttrSext,
 };
 
 // Container class for storing info on how a specific parameter is
@@ -150,6 +150,7 @@ class CABIOracle {
   // queries about the function.
   CABIOracle(const std::vector<Btype *> &fcnParamTypes,
              Btype *fcnResultType,
+             bool followsCabi,
              TypeManager *typeManager);
 
   // This constructor draws param/result info from an existing BFunctionType
@@ -170,6 +171,9 @@ class CABIOracle {
   // Return info on transmission of return value.
   const CABIParamInfo &returnInfo();
 
+  // Return info on the static chain parameter for the function.
+  const CABIParamInfo &chainInfo();
+
   // Type manager used with this oracle.
   TypeManager *tm() const { return typeManager_; }
 
@@ -184,8 +188,10 @@ class CABIOracle {
   llvm::FunctionType *fcnTypeForABI_;
   TypeManager *typeManager_;
   std::vector<CABIParamInfo> infov_;
+  bool followsCabi_;
 
   void analyze();
+  void analyzeRaw();
   CABIParamInfo analyzeABIReturn(Btype *resultType, ABIState &state);
   CABIParamInfo analyzeABIParam(Btype *pType, ABIState &state);
   bool canPassDirectly(unsigned regsInt, unsigned regsSSE, ABIState &state);

@@ -629,30 +629,30 @@ TEST(BackendExprTests, TestConditionalExpression1) {
   h.mkExprStmt(condex);
 
   const char *exp = R"RAW_RESULT(
-     define void @foo() #0 {
-     entry:
-       %a = alloca i64
-       %b = alloca i64
-       store i64 0, i64* %a
-       store i64 0, i64* %b
-       %a.ld.0 = load i64, i64* %a
-       %b.ld.0 = load i64, i64* %b
-       %icmp.0 = icmp slt i64 %a.ld.0, %b.ld.0
-       %zext.0 = zext i1 %icmp.0 to i8
-       %trunc.0 = trunc i8 %zext.0 to i1
-       br i1 %trunc.0, label %then.0, label %else.0
+define void @foo(i8* nest %nest.0) #0 {
+entry:
+  %a = alloca i64
+  %b = alloca i64
+  store i64 0, i64* %a
+  store i64 0, i64* %b
+  %a.ld.0 = load i64, i64* %a
+  %b.ld.0 = load i64, i64* %b
+  %icmp.0 = icmp slt i64 %a.ld.0, %b.ld.0
+  %zext.0 = zext i1 %icmp.0 to i8
+  %trunc.0 = trunc i8 %zext.0 to i1
+  br i1 %trunc.0, label %then.0, label %else.0
 
-     then.0:                                           ; preds = %entry
-       call void @foo()
-       br label %fallthrough.0
+then.0:                                           ; preds = %entry
+  call void @foo(i8* undef)
+  br label %fallthrough.0
 
-     fallthrough.0:                                    ; preds = %else.0, %then.0
-       ret void
+fallthrough.0:                                    ; preds = %else.0, %then.0
+  ret void
 
-     else.0:                                           ; preds = %entry
-       call void @foo()
-       br label %fallthrough.0
-     }
+else.0:                                           ; preds = %entry
+  call void @foo(i8* undef)
+  br label %fallthrough.0
+}
     )RAW_RESULT";
 
   bool broken = h.finish(StripDebugInfo);
@@ -686,23 +686,23 @@ TEST(BackendExprTests, TestConditionalExpression2) {
   h.mkExprStmt(condex);
 
   const char *exp = R"RAW_RESULT(
-      define void @foo() #0 {
-      entry:
-        %a = alloca i64
-        %tmpv.0 = alloca i64
-        store i64 0, i64* %a
-        br i1 true, label %then.0, label %else.0
-      then.0:                                           ; preds = %entry
-        call void @foo()
-        br label %fallthrough.0
-      fallthrough.0:                         ; preds = %else.0, %then.0
-        %tmpv.0.ld.0 = load i64, i64* %tmpv.0
-        ret void
-      else.0:                                           ; preds = %entry
-        %a.ld.0 = load i64, i64* %a
-        store i64 %a.ld.0, i64* %tmpv.0
-        br label %fallthrough.0
-      }
+    define void @foo(i8* nest %nest.0) #0 {
+    entry:
+      %a = alloca i64
+      %tmpv.0 = alloca i64
+      store i64 0, i64* %a
+      br i1 true, label %then.0, label %else.0
+    then.0:                                           ; preds = %entry
+      call void @foo(i8* undef)
+      br label %fallthrough.0
+    fallthrough.0:                                    ; preds = %else.0, %then.0
+      %tmpv.0.ld.0 = load i64, i64* %tmpv.0
+      ret void
+    else.0:                                           ; preds = %entry
+      %a.ld.0 = load i64, i64* %a
+      store i64 %a.ld.0, i64* %tmpv.0
+      br label %fallthrough.0
+    }
     )RAW_RESULT";
 
   bool broken = h.finish(StripDebugInfo);
@@ -733,7 +733,7 @@ TEST(BackendExprTests, TestCompoundExpression) {
   h.addStmt(es);
 
   const char *exp = R"RAW_RESULT(
-      define i64 @foo(i32 %param1, i32 %param2, i64* %param3) #0 {
+    define i64 @foo(i8* nest %nest.0, i32 %param1, i32 %param2, i64* %param3) #0 {
       entry:
         %param1.addr = alloca i32
         %param2.addr = alloca i32
@@ -784,7 +784,7 @@ TEST(BackendExprTests, TestLhsConditionalExpression) {
   h.mkAssign(dex, mkInt32Const(be, 7));
 
   const char *exp = R"RAW_RESULT(
-      define void @foo(i32* %p0, i32* %p1) #0 {
+      define void @foo(i8* nest %nest.0, i32* %p0, i32* %p1) #0 {
       entry:
         %p0.addr = alloca i32*
         %p1.addr = alloca i32*
@@ -894,7 +894,7 @@ TEST(BackendExprTests, TestCallArgConversions) {
   h.mkExprStmt(call1);
 
   const char *exp = R"RAW_RESULT(
-     call void @foo(i8* null, i32* null, i64* null)
+     call void @foo(i8* undef, i8* null, i32* null, i64* null)
     )RAW_RESULT";
 
   // Note that this
@@ -930,8 +930,6 @@ TEST(BackendExprTests, TestImmutableStructReferenceDuplication) {
 
   Btype *bi32t = be->integer_type(false, 32);
   Btype *st = mkBackendStruct(be, bi32t, "f1", nullptr);
-
-
   Bvariable *v1 = be->immutable_struct_reference("foo", "", st, loc);
   Bvariable *v2 = be->immutable_struct_reference("bar", "", st, loc);
   Bvariable *v3 = be->immutable_struct_reference("", "foo", st, loc);

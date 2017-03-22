@@ -75,6 +75,9 @@ class Llvm_linemap : public Linemap
   bool
   is_unknown(Location);
 
+  static Llvm_linemap*
+  instance();
+
  private:
 
   // File/line/column container

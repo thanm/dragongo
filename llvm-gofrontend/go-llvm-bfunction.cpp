@@ -36,12 +36,13 @@ Bfunction::Bfunction(llvm::Function *f,
 
     : fcnType_(fcnType), function_(f),
       abiOracle_(new CABIOracle(fcnType, tm)),
-      rtnValueMem_(nullptr), paramsRegistered_(0),
-      name_(name), asmName_(asmName),
+      rtnValueMem_(nullptr), chainVal_(nullptr),
+      paramsRegistered_(0), name_(name), asmName_(asmName),
       location_(location), splitStack_(YesSplit),
       prologGenerated_(false)
 {
-  abiSetup();
+  if (fcnType->followsCabi())
+    abiSetup();
 }
 
 Bfunction::~Bfunction()
@@ -83,11 +84,20 @@ void Bfunction::abiSetup()
   unsigned argIdx = 0;
   if (abiOracle_->returnInfo().disp() == ParmIndirect) {
     std::string sretname(namegen("sret.formal"));
-    arguments_[0]->setName(sretname);
-    arguments_[0]->addAttr(llvm::Attribute::StructRet);
-    rtnValueMem_ = arguments_[0];
+    arguments_[argIdx]->setName(sretname);
+    arguments_[argIdx]->addAttr(llvm::Attribute::StructRet);
+    rtnValueMem_ = arguments_[argIdx];
     argIdx += 1;
   }
+
+  // Handle static chain param.  In contrast with real / explicit
+  // function params, we don't create the spill slot eagerly.
+  assert(abiOracle_->chainInfo().disp() == ParmDirect);
+  std::string nestname(namegen("nest"));
+  arguments_[argIdx]->setName(nestname);
+  arguments_[argIdx]->addAttr(llvm::Attribute::Nest);
+  chainVal_ = arguments_[argIdx];
+  argIdx += 1;
 
   // Sort out what to do with each of the parameters.
   const std::vector<Btype *> &paramTypes = fcnType()->paramTypes();
@@ -118,6 +128,8 @@ void Bfunction::abiSetup()
           arguments_[argIdx]->addAttr(llvm::Attribute::SExt);
         else if (paramInfo.attr() == AttrZext)
           arguments_[argIdx]->addAttr(llvm::Attribute::ZExt);
+        else
+          assert(paramInfo.attr() == AttrNone);
         argIdx += paramInfo.numArgSlots();
         break;
       }
@@ -125,10 +137,10 @@ void Bfunction::abiSetup()
   }
 }
 
-Bvariable *Bfunction::parameter_variable(const std::string &name,
-                                         Btype *btype,
-                                         bool is_address_taken,
-                                         Location location)
+Bvariable *Bfunction::parameterVariable(const std::string &name,
+                                        Btype *btype,
+                                        bool is_address_taken,
+                                        Location location)
 {
   unsigned argIdx = paramsRegistered_++;
 
@@ -174,10 +186,39 @@ Bvariable *Bfunction::parameter_variable(const std::string &name,
   return bv;
 }
 
-Bvariable *Bfunction::local_variable(const std::string &name,
+Bvariable *Bfunction::staticChainVariable(const std::string &name,
+                                          Btype *btype,
+                                          Location location)
+{
+  const CABIParamInfo &chainInfo = abiOracle_->chainInfo();
+  assert(chainInfo.disp() == ParmDirect);
+
+  // Set name of function parameter
+  unsigned soff = chainInfo.sigOffset();
+  arguments_[soff]->setName(name);
+
+  // Create the spill slot for the param.
+  std::string spname(name);
+  spname += ".addr";
+  llvm::Instruction *inst = addAlloca(btype->type(), spname);
+  assert(chainVal_);
+  assert(llvm::isa<llvm::Argument>(chainVal_));
+  chainVal_ = inst;
+
+  // Create backend variable to encapsulate the above.
+  Bvariable *bv =
+      new Bvariable(btype, location, name, ParamVar, false, inst);
+  assert(valueVarMap_.find(bv->value()) == valueVarMap_.end());
+  valueVarMap_[bv->value()] = bv;
+
+  return bv;
+}
+
+Bvariable *Bfunction::localVariable(const std::string &name,
                                      Btype *btype,
                                      bool is_address_taken,
-                                     Location location) {
+                                     Location location)
+{
   llvm::Instruction *inst = addAlloca(btype->type(), name);
   Bvariable *bv =
       new Bvariable(btype, location, name, LocalVar, is_address_taken, inst);
@@ -231,11 +272,10 @@ Bvariable *Bfunction::getNthParamVar(unsigned argIdx)
 unsigned Bfunction::genArgSpill(Bvariable *paramVar,
                                 const CABIParamInfo &paramInfo,
                                 Binstructions *spillInstructions,
-                                unsigned pIdx)
+                                llvm::Value *sploc)
 {
   assert(paramInfo.disp() == ParmDirect);
   BinstructionsLIRBuilder builder(function()->getContext(), spillInstructions);
-  llvm::Value *sploc = llvm::cast<llvm::Instruction>(paramValues_[pIdx]);
   TypeManager *tm = abiOracle_->tm();
 
   // Simple case: param arrived in single register.
@@ -288,18 +328,33 @@ unsigned Bfunction::genArgSpill(Bvariable *paramVar,
 
 void Bfunction::genProlog(llvm::BasicBlock *entry)
 {
-  // Spill any directly-passed arguments to the function
-  // into their previous created spill areas.
+  unsigned argIdx = (abiOracle_->returnInfo().disp() == ParmIndirect ? 1 : 0);
   Binstructions spills;
+
+  // Spill the static chain param if needed. We only want to do this
+  // if a chain variable was explicitly requested.
+  const CABIParamInfo &chainInfo = abiOracle_->chainInfo();
+  assert(chainInfo.disp() == ParmDirect);
+  unsigned soff = chainInfo.sigOffset();
+  if (arguments_[soff] != chainVal_) {
+    auto it = valueVarMap_.find(chainVal_);
+    assert(it != valueVarMap_.end());
+    Bvariable *chainVar = it->second;
+    genArgSpill(chainVar, chainInfo, &spills, chainVal_);
+  }
+  argIdx += 1;
+
+  // Spill any directly-passed function arguments into their previous
+  // created spill areas.
   const std::vector<Btype *> &paramTypes = fcnType()->paramTypes();
   unsigned nParms = paramTypes.size();
-  unsigned argIdx = (abiOracle_->returnInfo().disp() == ParmIndirect ? 1 : 0);
   for (unsigned pidx = 0; pidx < nParms; ++pidx) {
     const CABIParamInfo &paramInfo = abiOracle_->paramInfo(pidx);
     if (paramInfo.disp() != ParmDirect)
       continue;
     Bvariable *v = getNthParamVar(pidx);
-    argIdx += genArgSpill(v, paramInfo, &spills, pidx);
+    llvm::Value *sploc = llvm::cast<llvm::Instruction>(paramValues_[pidx]);
+    argIdx += genArgSpill(v, paramInfo, &spills, sploc);
   }
 
   // Append allocas for local variables

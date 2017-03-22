@@ -31,7 +31,7 @@ TEST(BackendDebugEmit, TestSimpleDecl) {
   h.mkLocal("x", bu32t);
 
   const char *exp = R"RAW_RESULT(
-      define void @foo() #0 {
+      define void @foo(i8* nest %nest.0) #0 {
       entry:
         %x = alloca i32
         store i32 0, i32* %x

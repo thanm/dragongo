@@ -20,7 +20,7 @@
 
 void IntegrityVisitor::dumpTag(const char *tag, void *ptr) {
   ss_ << tag << ": ";
-  if (includePointers_ == DumpPointers)
+  if (includePointers() == DumpPointers)
     ss_ << ptr;
   ss_ << "\n";
 }
@@ -49,57 +49,150 @@ static bool varExprOrConvVar(Bnode *node)
   return false;
 }
 
-bool IntegrityVisitor::setParent(Bnode *child, Bnode *parent)
+void IntegrityVisitor::setParent(Bnode *child, Bnode *parent, unsigned slot)
 {
   Bexpression *expr = child->castToBexpression();
   if (expr && be_->moduleScopeValue(expr->value(), expr->btype()))
-    return true;
-  if (includeVarExprs_ == IgnoreVarExprs && varExprOrConvVar(child))
-    return true;
+    return;
+  if (includeVarExprs() == IgnoreVarExprs && varExprOrConvVar(child))
+    return;
   auto it = nparent_.find(child);
   if (it != nparent_.end()) {
-    const char *wh = (child->isStmt() ? "stmt" : "expr");
+    parslot pps = it->second;
+    Bnode *prevParent = pps.first;
+    unsigned prevSlot = pps.second;
+    if (prevParent == parent && prevSlot == slot)
+      return;
+    const char *wh = nullptr;
+    if (child->isStmt()) {
+      stmtShareCount_ += 1;
+      wh = "stmt";
+    } else {
+      exprShareCount_ += 1;
+      wh = "expr";
+    }
     ss_ << "error: " << wh << " has multiple parents\n";
     ss_ << "child " << wh << ":\n";
     dump(child);
     ss_ << "parent 1:\n";
-    dump(it->second);
+    dump(prevParent);
     ss_ << "parent 2:\n";
     dump(parent);
-    return false;
+    parslot ps = std::make_pair(parent, slot);
+    sharing_.push_back(std::make_pair(child, ps));
   }
-  nparent_[child] = parent;
-  return true;
+  nparent_[child] = std::make_pair(parent, slot);
 }
 
-bool IntegrityVisitor::setParent(llvm::Instruction *inst,
-                                 Bexpression *exprParent)
+void IntegrityVisitor::setParent(llvm::Instruction *inst,
+                                 Bexpression *exprParent,
+                                 unsigned slot)
 {
   auto it = iparent_.find(inst);
   if (it != iparent_.end()) {
+    parslot ps = it->second;
+    Bnode *prevParent = ps.first;
+    unsigned prevSlot = ps.second;
+    if (prevParent == exprParent && prevSlot == slot)
+      return;
+    instShareCount_ += 1;
     ss_ << "error: instruction has multiple parents\n";
     dump(inst);
     ss_ << "parent 1:\n";
-    dump(it->second);
+    dump(prevParent);
     ss_ << "parent 2:\n";
     dump(exprParent);
-    return false;
+  } else {
+    iparent_[inst] = std::make_pair(exprParent, slot);
   }
-  iparent_[inst] = exprParent;
+}
+
+bool IntegrityVisitor::repairableSubTree(Bexpression *root)
+{
+  std::set<NodeFlavor> acceptable;
+  acceptable.insert(N_Const);
+  acceptable.insert(N_Var);
+  acceptable.insert(N_Conversion);
+  acceptable.insert(N_Deref);
+  acceptable.insert(N_StructField);
+
+  std::set<Bexpression *> visited;
+  visited.insert(root);
+  std::vector<Bexpression *> workList;
+  workList.push_back(root);
+
+  while (! workList.empty()) {
+    Bexpression *e = workList.back();
+    workList.pop_back();
+    if (acceptable.find(e->flavor()) == acceptable.end())
+      return false;
+    for (auto &c : e->children()) {
+      Bexpression *ce = c->castToBexpression();
+      assert(ce);
+      if (visited.find(ce) == visited.end()) {
+        visited.insert(ce);
+        workList.push_back(ce);
+      }
+    }
+  }
   return true;
 }
 
-bool IntegrityVisitor::visit(Bnode *node)
+bool IntegrityVisitor::repair(Bnode *node)
 {
-  bool rval = true;
+  std::set<Bexpression *> visited;
+  for (auto &p : sharing_) {
+    Bexpression *child = p.first->castToBexpression();
+    parslot ps = p.second;
+    Bnode *parent = ps.first;
+    unsigned slot = ps.second;
+    assert(child);
+    if (visited.find(child) == visited.end()) {
+      // Repairable?
+      if (!repairableSubTree(child))
+        return false;
+      visited.insert(child);
+    }
+    Bexpression *childClone = be_->nodeBuilder().cloneSubtree(child);
+    parent->replaceChild(slot, childClone);
+  }
+  return true;
+}
+
+void IntegrityVisitor::visit(Bnode *node)
+{
+  unsigned idx = 0;
   for (auto &child : node->children()) {
-    rval = (visit(child) && rval);
-    rval = (setParent(child, node) && rval);
+    visit(child);
+    setParent(child, node, idx++);
   }
   Bexpression *expr = node->castToBexpression();
   if (expr) {
+    idx = 0;
     for (auto inst : expr->instructions())
-      rval = (setParent(inst, expr) && rval);
+      setParent(inst, expr, idx++);
   }
-  return rval;
+}
+
+bool IntegrityVisitor::examine(Bnode *node)
+{
+  // Walk the tree to see what sort of sharing we have.
+  visit(node);
+
+  // Inst sharing and statement sharing are not repairable.
+  if (instShareCount_ != 0 || stmtShareCount_ != 0)
+    return false;
+
+  if (exprShareCount_ == 0)
+    return true;
+
+  if (doRepairs() != RepairSharing)
+    return false;
+
+  // Attempt repair..
+  if (repair(node))
+    return true;
+
+  // Repair failed -- return failure
+  return false;
 }

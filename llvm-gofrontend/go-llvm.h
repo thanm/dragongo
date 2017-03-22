@@ -337,6 +337,9 @@ public:
   // DI builder
   llvm::DIBuilder &dibuilder() { return *dibuilder_.get(); }
 
+  // Bnode builder
+  BnodeBuilder &nodeBuilder() { return nbuilder_; }
+
   // Return top-level debug meta data object for module
   llvm::DICompileUnit *getDICompUnit();
 
@@ -356,22 +359,16 @@ public:
 
   // Exposed for unit testing
 
-  // Helpers to check tree integrity. Checks to make sure that
-  // we don't have instructions that are parented by more than
-  // one Bexpression or stmt. Returns <TRUE,""> if tree is ok,
-  // otherwise returns <FALSE,descriptive_message>.
+  // Helpers to check tree integrity. Checks to make sure that we
+  // don't have instructions that are parented by more than one
+  // Bexpression or Bstatement, or Bexpressions parented by more than
+  // one expr/stmt. Returns <TRUE,""> if tree is ok, otherwise returns
+  // <FALSE,descriptive_message>.
   std::pair<bool, std::string>
-  checkTreeIntegrity(Bexpression *e,
-                     CkTreePtrDisp pd = DumpPointers,
-                     CkTreeVarDisp vd = IgnoreVarExprs);
-  std::pair<bool, std::string>
-  checkTreeIntegrity(Bstatement *s,
-                     CkTreePtrDisp pd = DumpPointers,
-                     CkTreeVarDisp vd = IgnoreVarExprs);
+  checkTreeIntegrity(Bnode *n, TreeIntegCtl control);
 
   // Similar to the above, but prints message to std::cerr and aborts if fail
-  void enforceTreeIntegrity(Bexpression *e);
-  void enforceTreeIntegrity(Bstatement *s);
+  void enforceTreeIntegrity(Bnode *n);
 
   // Disable tree integrity checking. This is mainly
   // so that we can unit test the integrity checker.

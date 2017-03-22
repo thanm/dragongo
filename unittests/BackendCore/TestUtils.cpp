@@ -256,6 +256,8 @@ llvm::Type *mkLLFuncTyp(llvm::LLVMContext *context, ...) {
   }
 
   llvm::SmallVector<llvm::Type *, 4> elems(0);
+  llvm::Type *llit = llvm::IntegerType::get(*context, 8);
+  elems.push_back(llvm::PointerType::get(llit, 0));
   if (recv_typ)
     elems.push_back(recv_typ);
   for (auto pt : params)
@@ -688,6 +690,16 @@ bool FcnTestHarness::expectBlock(const std::string &expected)
 {
   std::string reason;
   std::string actual(repr(curBlock_));
+  bool equal = difftokens(expected, actual, reason);
+  if (! equal)
+    complainOnNequal(reason, expected, actual, emitDumpFilesOnDiff_);
+  return equal;
+}
+
+bool FcnTestHarness::expectRepr(Bnode *node, const std::string &expected)
+{
+  std::string reason;
+  std::string actual(repr(node));
   bool equal = difftokens(expected, actual, reason);
   if (! equal)
     complainOnNequal(reason, expected, actual, emitDumpFilesOnDiff_);

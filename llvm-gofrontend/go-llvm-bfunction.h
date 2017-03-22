@@ -54,16 +54,21 @@ public:
   SplitStackDisposition splitStack() const { return splitStack_; }
 
   // Add a local variable
-  Bvariable *local_variable(const std::string &name,
+  Bvariable *localVariable(const std::string &name,
                             Btype *btype,
                             bool is_address_taken,
                             Location location);
 
   // Add a parameter variable
-  Bvariable *parameter_variable(const std::string &name,
+  Bvariable *parameterVariable(const std::string &name,
                                 Btype *btype,
                                 bool is_address_taken,
                                 Location location);
+
+  // Create a Bvariable for the static chain param of the function.
+  Bvariable *staticChainVariable(const std::string &name,
+                                 Btype *btype,
+                                 Location location);
 
   // Record a new Bblock for this function.
   void addBlock(Bblock *block) { blocks_.push_back(block); }
@@ -97,8 +102,9 @@ public:
   // return has to go. Returns NULL if no return or direct return.
   llvm::Value *returnValueMem() const { return rtnValueMem_; }
 
-  // Return the Bvariable corresponding to the Kth function parameter.
-  // Exposed for unit testing.
+  // Return the Bvariable corresponding to the Kth function parameter
+  // (with respect to the abstract or high-level function type, not
+  // the ABI type).  Exposed for unit testing.
   Bvariable *getNthParamVar(unsigned idx);
 
  private:
@@ -110,7 +116,7 @@ public:
   unsigned genArgSpill(Bvariable *paramVar,
                        const CABIParamInfo &paramInfo,
                        Binstructions *spillInstructions,
-                       unsigned pIdx);
+                       llvm::Value *sploc);
 
   // Create an alloca with the specified type. The alloca is recorded
   // in a list so that it can be picked up during prolog generation.
@@ -153,9 +159,12 @@ public:
   // it will be NULL.
   llvm::Value *rtnValueMem_;
 
+  // Holder the argument value for the static chain param of the function.
+  llvm::Value *chainVal_;
+
   // Parameter values. Slot K in this vector will hold the llvm value
   // corresponding to the unpacked Kth parameter (this should be an
-  // AllocatInst or an Argument).
+  // AllocaInst or an Argument).
   std::vector<llvm::Value *> paramValues_;
 
   // Function arguments. These reflect the rules of the ABI, hence the

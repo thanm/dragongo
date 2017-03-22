@@ -180,8 +180,10 @@ BFunctionType *TypeManager::makeAuxFcnType(llvm::FunctionType *ft)
   for (unsigned ii = 0; ii < ft->getNumParams(); ++ii)
     params.push_back(makeAuxType(ft->getParamType(ii)));
   Location loc;
+  bool followsCabi = false;
   BFunctionType *rval =
-      new BFunctionType(recvTyp, params, results, rbtype, ft, loc);
+      new BFunctionType(recvTyp, params, results, rbtype, ft,
+                        followsCabi, loc);
   auxTypeMap_[ft] = rval;
   return rval;
 }
@@ -532,11 +534,12 @@ Btype *TypeManager::placeholderPointerType(const std::string &name,
 
 llvm::Type *
 TypeManager::makeLLVMFunctionType(const std::vector<Btype *> &paramTypes,
-                                  Btype *rbtype)
+                                  Btype *rbtype,
+                                  bool followsCabi)
 {
   // Construct an ABI oracle helper and ask the oracle for the
   // correct ABI-adjusted type.
-  CABIOracle abiOracle(paramTypes, rbtype, this);
+  CABIOracle abiOracle(paramTypes, rbtype, followsCabi, this);
   llvm::FunctionType *llvmft = abiOracle.getFunctionTypeForABI();
 
   // https://gcc.gnu.org/PR72814 handling. From the go-gcc.cc
@@ -559,8 +562,10 @@ Btype *
 TypeManager::functionType(const Btyped_identifier &receiver,
                           const std::vector<Btyped_identifier> &parameters,
                           const std::vector<Btyped_identifier> &results,
-                          Btype *result_struct, Location location) {
-
+                          Btype *result_struct,
+                          bool followsCabi,
+                          Location location)
+{
   std::vector<Btype *> paramTypes;
   if (receiver.btype) {
     if (receiver.btype == errorType_)
@@ -595,11 +600,11 @@ TypeManager::functionType(const Btyped_identifier &receiver,
   }
   assert(rbtype != nullptr);
 
-  llvm::Type *llft = makeLLVMFunctionType(paramTypes, rbtype);
+  llvm::Type *llft = makeLLVMFunctionType(paramTypes, rbtype, followsCabi);
 
   // Consult cache
   BFunctionType cand(receiver.btype, paramTypes, resultTypes, rbtype,
-                     llft, location);
+                     llft, followsCabi, location);
   auto it = anonTypes_.find(&cand);
   if (it != anonTypes_.end()) {
     Btype *existing = *it;
@@ -609,9 +614,9 @@ TypeManager::functionType(const Btyped_identifier &receiver,
   }
 
   // Manufacture new BFunctionType to return
-  BFunctionType *rval = new BFunctionType(receiver.btype,
-                                          paramTypes, resultTypes,
-                                          rbtype, llft, location);
+  BFunctionType *rval =
+      new BFunctionType(receiver.btype, paramTypes, resultTypes,
+                        rbtype, llft, followsCabi, location);
 
   // Do some book-keeping
   bool isPlace = false;
@@ -637,6 +642,8 @@ TypeManager::functionType(const Btyped_identifier &receiver,
   }
   if (isPlace)
     rval->setPlaceholder(true);
+
+  assert(!isPlace || !followsCabi);
 
   // Install in cache and return
   anonTypes_.insert(rval);
@@ -1379,6 +1386,17 @@ bool TypeManager::isPtrToVoidType(llvm::Type *typ)
   return pt->getElementType() == llvmInt8Type_;
 }
 
+bool TypeManager::isPtrToArrayOf(llvm::Type *typ, llvm::Type *arElmTyp)
+{
+  if (! typ->isPointerTy())
+    return false;
+  llvm::PointerType *pt = llvm::cast<llvm::PointerType>(typ);
+  llvm::Type *elt = pt->getElementType();
+  if (! elt->isArrayTy())
+    return false;
+  llvm::ArrayType *llat = llvm::cast<llvm::ArrayType>(elt);
+  return llat->getTypeAtIndex(0u) == arElmTyp;
+}
 
 std::string TypeManager::typToString(Btype *typ)
 {

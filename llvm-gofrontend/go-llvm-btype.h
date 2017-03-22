@@ -324,21 +324,19 @@ class BFunctionType : public Btype {
                 const std::vector<Btype *> &resultTypes,
                 Btype *rtype,
                 llvm::Type *type,
+                bool followsCabi,
                 Location location)
       : Btype(FunctionT, type, location), receiverType_(receiverType),
         paramTypes_(paramTypes), resultTypes_(resultTypes),
-        rtype_(rtype), fcnABIType_(nullptr) {
+        rtype_(rtype), followsCabi_(followsCabi) {
     assert(!receiverType || paramTypes[0] == receiverType);
   }
 
   Btype *resultType() const { return rtype_; }
   Btype *receiverType() const { return receiverType_; }
 
-  // Return the ABI type for this abstract function type. This type
-  // will reflect the ABI's various rules about how structs are passed
-  // (in memory or directly), etc.
-  llvm::Type *abiType() const { return fcnABIType_; }
-  void setAbiType(llvm::Type *t) { assert(!fcnABIType_); fcnABIType_ = t; }
+  // Does this function type follow ABI rules?
+  bool followsCabi() const { return followsCabi_; }
 
   // Note that if the receiver type is non-null, it will
   // occupy the first slot in paramTypes.
@@ -347,7 +345,7 @@ class BFunctionType : public Btype {
   // Create a shallow copy of this type
   Btype *clone() const {
     return new BFunctionType(receiverType_, paramTypes_, resultTypes_, rtype_,
-                             type(), location());
+                             type(), followsCabi(), location());
   }
 
  private:
@@ -355,7 +353,7 @@ class BFunctionType : public Btype {
   std::vector<Btype *> paramTypes_;
   std::vector<Btype *> resultTypes_;
   Btype *rtype_;
-  llvm::Type *fcnABIType_;
+  bool followsCabi_;
 };
 
 inline BFunctionType *Btype::castToBFunctionType() {

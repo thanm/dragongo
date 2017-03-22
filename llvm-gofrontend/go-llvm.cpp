@@ -40,9 +40,6 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/FileSystem.h"
 
-#define CHKTREE(x) if (checkIntegrity_ && traceLevel()) \
-      enforceTreeIntegrity(x)
-
 Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
                            llvm::Module *module,
                            Llvm_linemap *linemap)
@@ -93,7 +90,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
   // avoid any collisions with things that the front end might create, since
   // Go varargs is handled/lowered entirely by the front end.
   llvm::SmallVector<llvm::Type *, 1> elems(0);
-  elems.push_back(llvmBoolType());
+  elems.push_back(llvmPtrType());
   const bool isVarargs = true;
   llvm::FunctionType *eft = llvm::FunctionType::get(
       llvm::Type::getVoidTy(context_), elems, isVarargs);
@@ -177,7 +174,8 @@ void Llvm_backend::dumpExpr(Bexpression *e)
 {
   if (e) {
     e->srcDump(linemap_);
-    auto p = checkTreeIntegrity(e, DumpPointers);
+    TreeIntegCtl ctl(DumpPointers, IgnoreVarExprs, DontRepairSharing);
+    auto p = checkTreeIntegrity(e, ctl);
     if (p.first)
       std::cerr << p.second;
   }
@@ -187,7 +185,8 @@ void Llvm_backend::dumpStmt(Bstatement *s)
 {
   if (s) {
     s->srcDump(linemap_);
-    auto p = checkTreeIntegrity(s, DumpPointers);
+    TreeIntegCtl ctl(DumpPointers, IgnoreVarExprs, DontRepairSharing);
+    auto p = checkTreeIntegrity(s, ctl);
     if (p.first)
       std::cerr << p.second;
   }
@@ -200,38 +199,21 @@ void Llvm_backend::dumpVar(Bvariable *v)
 }
 
 std::pair<bool, std::string>
-Llvm_backend::checkTreeIntegrity(Bexpression *e,
-                                 CkTreePtrDisp ptrDisp,
-                                 CkTreeVarDisp varDisp)
+Llvm_backend::checkTreeIntegrity(Bnode *n, TreeIntegCtl control)
 {
-  IntegrityVisitor iv(this, ptrDisp, varDisp);
-  bool rval = iv.visit(e);
+  Llvm_backend *be = const_cast<Llvm_backend *>(this);
+  IntegrityVisitor iv(be, control);
+  bool rval = iv.examine(n);
   return std::make_pair(rval, iv.msg());
 }
 
-std::pair<bool, std::string>
-Llvm_backend::checkTreeIntegrity(Bstatement *s,
-                                 CkTreePtrDisp ptrDisp,
-                                 CkTreeVarDisp varDisp)
+void Llvm_backend::enforceTreeIntegrity(Bnode *n)
 {
-  IntegrityVisitor iv(this, ptrDisp, varDisp);
-  bool rval = iv.visit(s);
-  return std::make_pair(rval, iv.msg());
-}
-
-void Llvm_backend::enforceTreeIntegrity(Bexpression *e)
-{
-  IntegrityVisitor iv(this, DumpPointers, IgnoreVarExprs);
-  if (! iv.visit(e)) {
-    std::cerr << iv.msg() << "\n";
-    assert(false);
-  }
-}
-
-void Llvm_backend::enforceTreeIntegrity(Bstatement *s)
-{
-  IntegrityVisitor iv(this, DumpPointers, IgnoreVarExprs);
-  if (! iv.visit(s)) {
+  Llvm_backend *be = const_cast<Llvm_backend *>(this);
+  TreeIntegCtl control(DumpPointers, IgnoreVarExprs, RepairSharing);
+  IntegrityVisitor iv(be, control);
+  bool res = iv.examine(n);
+  if (!res && checkIntegrity_) {
     std::cerr << iv.msg() << "\n";
     assert(false);
   }
@@ -294,8 +276,9 @@ Llvm_backend::function_type(const Btyped_identifier &receiver,
                             const std::vector<Btyped_identifier> &parameters,
                             const std::vector<Btyped_identifier> &results,
                             Btype *result_struct, Location loc) {
+  bool followsCabi = true;
   return functionType(receiver, parameters, results,
-                      result_struct, loc);
+                      result_struct, followsCabi, loc);
 }
 
 Btype *Llvm_backend::array_type(Btype *elemType, Bexpression *length)
@@ -419,7 +402,9 @@ Bfunction *Llvm_backend::lookup_builtin(const std::string &name) {
     results.push_back(result);
     for (unsigned idx = 1; idx < types.size(); ++idx)
       params.push_back(Btyped_identifier("", types[idx], bloc));
-    Btype *fcnType = functionType(receiver, params, results, nullptr, bloc);
+    bool followsCabi = false;
+    Btype *fcnType = functionType(receiver, params, results, nullptr,
+                                  followsCabi, bloc);
 
     // Create function
     bf = function(fcnType, be->name(), be->name(),
@@ -1214,7 +1199,7 @@ Bexpression *Llvm_backend::function_code_expression(Bfunction *bfunc,
 
   // Create an address-of-function expr
   Bexpression *fexpr = nbuilder_.mkFcnAddress(fpBtype, bfunc->function(),
-                                                    bfunc, location);
+                                              bfunc, location);
   return makeGlobalExpression(fexpr, bfunc->function(), fpBtype, location);
 }
 
@@ -1833,6 +1818,7 @@ struct GenCallState {
   // BlockLIRBuilder builder;
   std::vector<Bexpression *> resolvedArgs;
   llvm::SmallVector<llvm::Value *, 16> llargs;
+  llvm::Value *chainVal;
   llvm::Value *sretTemp;
   BFunctionType *calleeFcnType;
   Bfunction *callerFcn;
@@ -1844,6 +1830,7 @@ struct GenCallState {
       : oracle(calleeFcnTyp, tm),
         instructions(),
         builder(context, &instructions),
+        chainVal(nullptr),
         sretTemp(nullptr),
         calleeFcnType(calleeFcnTyp),
         callerFcn(callerFunc) { }
@@ -1875,6 +1862,16 @@ void Llvm_backend::genCallProlog(GenCallState &state)
     if (returnInfo.disp() == ParmIndirect)
       state.llargs.push_back(state.sretTemp);
   }
+
+  // Chain param if needed
+  const CABIParamInfo &chainInfo = state.oracle.chainInfo();
+  if (chainInfo.disp() != ParmIgnore) {
+    assert(chainInfo.disp() == ParmDirect);
+    llvm::Value *cval = state.chainVal;
+    if (cval == nullptr)
+      cval = llvm::UndefValue::get(llvmPtrType());
+    state.llargs.push_back(cval);
+  }
 }
 
 void
@@ -1885,6 +1882,9 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
   const std::vector<Btype *> &paramTypes = state.calleeFcnType->paramTypes();
   for (unsigned idx = 0; idx < fn_args.size(); ++idx) {
     const CABIParamInfo &paramInfo = state.oracle.paramInfo(idx);
+
+    if (paramInfo.attr() == AttrNest)
+      continue;
 
     // For arguments passed by value, no call to resolveVarContext
     // (we want var address, not var value).
@@ -2027,9 +2027,6 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
       chain_expr == errorExpression())
     return errorExpression();
 
-  // FIXME: call chain not yet handled
-  // assert(chain_expr == nullptr);
-
   // Resolve fcn. Expect pointer-to-function type here.
   fn_expr = resolveVarContext(fn_expr);
   assert(fn_expr->btype()->type()->isPointerTy());
@@ -2042,6 +2039,17 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
 
   GenCallState state(context_, caller, calleeFcnTyp, typeManager());
   state.resolvedArgs.push_back(fn_expr);
+
+  // Static chain expression if applicable
+  if (chain_expr) {
+    chain_expr = resolveVarContext(chain_expr);
+    assert(chain_expr->btype()->type()->isPointerTy());
+    Btype *bpt = makeAuxType(llvmPtrType());
+    chain_expr = convert_expression(bpt, chain_expr, location);
+    state.resolvedArgs.push_back(chain_expr);
+    state.chainVal = chain_expr->value();
+
+  }
 
   // Set up for call (including creation of return tmp if needed)
   genCallProlog(state);
@@ -2096,7 +2104,7 @@ Bstatement *Llvm_backend::expression_statement(Bfunction *bfunction,
       nbuilder_.mkExprStmt(bfunction,
                            resolve(expr, bfunction),
                            expr->location());
-  CHKTREE(es);
+  enforceTreeIntegrity(es);
   return es;
 }
 
@@ -2115,7 +2123,7 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
       Bstatement *es = nbuilder_.mkExprStmt(bfunction, init,
                                             init->location());
       var->setInitializer(es->getExprStmtExpr()->value());
-      CHKTREE(es);
+      enforceTreeIntegrity(es);
       return es;
     }
   } else {
@@ -2127,7 +2135,7 @@ Bstatement *Llvm_backend::init_statement(Bfunction *bfunction,
   llvm::Value *ival = st->getExprStmtExpr()->value();
   if (! llvm::isa<llvm::UndefValue>(ival))
     var->setInitializer(ival);
-  CHKTREE(st);
+  enforceTreeIntegrity(st);
   return st;
 }
 
@@ -2222,6 +2230,18 @@ Llvm_backend::convertForAssignment(Btype *srcBType,
     return bitcast;
   }
 
+  // Case 7: when creating slice values it's common for the frontend
+  // to mix pointers and arrays, e.g. assign "[3 x i64]*" to "i64**".
+  // Allow this sort of conversion.
+  llvm::Type *elt =
+      (dstToType->isPointerTy() ?
+       llvm::cast<llvm::PointerType>(dstToType)->getElementType() : nullptr);
+  if (elt && isPtrToArrayOf(srcType, elt)) {
+    std::string tag(namegen("cast"));
+    llvm::Value *bitcast = builder->CreateBitCast(srcVal, dstToType, tag);
+    return bitcast;
+  }
+
   return srcVal;
 }
 
@@ -2259,13 +2279,13 @@ Bstatement *Llvm_backend::assignment_statement(Bfunction *bfunction,
         nbuilder_.mkBinaryOp(OPERATOR_EQ, voidType(), lhs2->value(),
                              lhs2, rhs2, location);
     Bstatement *es = nbuilder_.mkExprStmt(bfunction, stexp, location);
-    CHKTREE(es);
+    enforceTreeIntegrity(es);
     return es;
   }
 
   Bstatement *st = makeAssignment(bfunction, lhs->value(),
                                   lhs2, rhs2, location);
-  CHKTREE(st);
+  enforceTreeIntegrity(st);
   return st;
 }
 
@@ -2303,20 +2323,15 @@ Llvm_backend::return_statement(Bfunction *bfunction,
     Btype *rtyp = bfunction->fcnType()->resultType();
     Bexpression *structVal =
         constructor_expression(rtyp, resolvedVals, location);
-    if (! bfunction->returnValueMem()) {
-      structVal = resolve(structVal, bfunction);
-      toret = structVal;
-    } else {
-      if (structVal->compositeInitPending()) {
-        structVal = resolveCompositeInit(structVal, bfunction, nullptr);
-      } else if (llvm::isa<llvm::Constant>(structVal->value())) {
-        llvm::Constant *cval = llvm::cast<llvm::Constant>(structVal->value());
-        Bvariable *cv = genVarForConstant(cval, structVal->btype());
-        structVal = var_expression(cv, VE_rvalue, location);
-        structVal = address_expression(structVal, location);
-      }
-      toret = structVal;
+    if (structVal->compositeInitPending()) {
+      structVal = resolveCompositeInit(structVal, bfunction, nullptr);
+    } else if (llvm::isa<llvm::Constant>(structVal->value())) {
+      llvm::Constant *cval = llvm::cast<llvm::Constant>(structVal->value());
+      Bvariable *cv = genVarForConstant(cval, structVal->btype());
+      structVal = var_expression(cv, VE_rvalue, location);
+      structVal = address_expression(structVal, location);
     }
+    toret = structVal;
   }
 
   Binstructions retInsns;
@@ -2357,7 +2372,7 @@ Bstatement *Llvm_backend::if_statement(Bfunction *bfunction,
 
   Bstatement *ifst = nbuilder_.mkIfStmt(bfunction, conv, then_block,
                                         else_block, location);
-  CHKTREE(ifst);
+  enforceTreeIntegrity(ifst);
   return ifst;
 }
 
@@ -2391,7 +2406,7 @@ Bstatement *Llvm_backend::switch_statement(Bfunction *bfunction,
   Bstatement *swst =
       nbuilder_.mkSwitchStmt(bfunction, value, cases, statements,
                              switch_location);
-  CHKTREE(swst);
+  enforceTreeIntegrity(swst);
   return swst;
 }
 
@@ -2431,7 +2446,7 @@ Llvm_backend::statement_list(const std::vector<Bstatement *> &statements) {
   Bblock *block = nbuilder_.mkBlock(func, novars, Location());
   for (auto &st : statements)
     nbuilder_.addStatementToBlock(block, st);
-  CHKTREE(block);
+  enforceTreeIntegrity(block);
   return block;
 }
 
@@ -2465,13 +2480,12 @@ void Llvm_backend::block_add_statements(Bblock *bblock,
   assert(bblock);
   for (auto st : statements)
     nbuilder_.addStatementToBlock(bblock, st);
-  CHKTREE(bblock);
+  enforceTreeIntegrity(bblock);
 }
 
 // Return a block as a statement.
 
 Bstatement *Llvm_backend::block_statement(Bblock *bblock) {
-  CHKTREE(bblock);
   return bblock; // class Bblock inherits from Bstatement
 }
 
@@ -2588,7 +2602,7 @@ Bvariable *Llvm_backend::local_variable(Bfunction *function,
   if (btype == errorType() || function == errorFunction_.get())
     return errorVariable_.get();
   curFcn_ = function;
-  return function->local_variable(name, btype, is_address_taken, location);
+  return function->localVariable(name, btype, is_address_taken, location);
 }
 
 // Make a function parameter variable.
@@ -2602,8 +2616,8 @@ Bvariable *Llvm_backend::parameter_variable(Bfunction *function,
   curFcn_ = function;
   if (btype == errorType() || function == errorFunction_.get())
     return errorVariable_.get();
-  return function->parameter_variable(name, btype,
-                                      is_address_taken, location);
+  return function->parameterVariable(name, btype,
+                                     is_address_taken, location);
 }
 
 // Make a static chain variable.
@@ -2613,8 +2627,9 @@ Bvariable *Llvm_backend::static_chain_variable(Bfunction *function,
                                                Btype *btype,
                                                Location location)
 {
-  assert(false && "Llvm_backend::static_chain_variable not yet impl");
-  return nullptr;
+  if (function == errorFunction_.get() || btype == errorType())
+    return errorVariable_.get();
+  return function->staticChainVariable(name, btype, location);
 }
 
 // Make a temporary variable.
@@ -3262,9 +3277,6 @@ bool Llvm_backend::function_set_body(Bfunction *function,
     std::cerr << "LLVM function dump:\n";
     function->function()->dump();
   }
-
-  // Free up statement storage (stmts no longer needed at this point)
-  nbuilder_.freeStmts();
 
   return true;
 }

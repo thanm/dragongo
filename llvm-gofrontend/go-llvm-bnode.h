@@ -259,11 +259,16 @@ class BnodeBuilder {
   // Free up this expr (it is garbage). Does not free up children.
   void freeExpr(Bexpression *expr);
 
+  // Clone an expression subtree.
+  Bexpression *cloneSubtree(Bexpression *expr);
+
  private:
   void appendInstIfNeeded(Bexpression *rval, llvm::Value *val);
   Bexpression *archive(Bexpression *expr);
   Bstatement *archive(Bstatement *stmt);
   Bblock *archive(Bblock *bb);
+  Bexpression *cloneSub(Bexpression *expr,
+                        std::map<llvm::Value *, llvm::Value *> &vm);
 
  private:
   std::unique_ptr<Bstatement> errorStatement_;

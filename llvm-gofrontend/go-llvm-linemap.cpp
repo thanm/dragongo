@@ -253,14 +253,19 @@ void Llvm_linemap::dump()
 
 // Return the singleton Linemap to use for the backend.
 
-static Llvm_linemap *singletonLinemap = nullptr;
+Llvm_linemap*
+Llvm_linemap::instance()
+{
+  return static_cast<Llvm_linemap*>(instance_);
+}
 
 Llvm_linemap*
 go_get_llvm_linemap()
 {
-  if (singletonLinemap == nullptr)
-    singletonLinemap = new Llvm_linemap;
-  return singletonLinemap;
+  if (! Llvm_linemap::instance()) {
+    return new Llvm_linemap;
+  }
+  return Llvm_linemap::instance();
 }
 
 Linemap*

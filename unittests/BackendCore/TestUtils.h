@@ -222,6 +222,10 @@ class FcnTestHarness {
   // and emit diagnostics if not.
   bool expectValue(llvm::Value *val, const std::string &expected);
 
+  // Verify that repr() output contains specified contents. Return false
+  // and emit diagnostics if not.
+  bool expectRepr(Bnode *node, const std::string &expected);
+
   //
   // Finish function:
   // - attach current block to function

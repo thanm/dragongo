@@ -56,9 +56,9 @@ class TypeManager {
   Btype *complexType(int);
   Btype *pointerType(Btype *);
   Btype *functionType(const Btyped_identifier &,
-                       const std::vector<Btyped_identifier> &,
-                       const std::vector<Btyped_identifier> &, Btype *,
-                       const Location);
+                      const std::vector<Btyped_identifier> &,
+                      const std::vector<Btyped_identifier> &,
+                      Btype *, bool, const Location);
   Btype *structType(const std::vector<Btyped_identifier> &);
   Btype *arrayType(Btype *, Bexpression *);
   Btype *placeholderPointerType(const std::string &, Location, bool);
@@ -136,7 +136,7 @@ class TypeManager {
   llvm::Type *makeLLVMPointerType(llvm::Type *toTy);
   llvm::Type *makeLLVMStructType(const std::vector<Btyped_identifier> &fields);
   llvm::Type *makeLLVMFunctionType(const std::vector<Btype *> &paramTypes,
-                                   Btype *rbtype);
+                                   Btype *rbtype, bool followsCabi);
 
   // Returns field type from composite (struct/array) type and index
   Btype *elementTypeByIndex(Btype *type, unsigned element_index);
@@ -175,6 +175,7 @@ class TypeManager {
   bool isPtrToIfaceStructType(llvm::Type *typ);
   bool isPtrToFuncType(llvm::Type *typ);
   bool isPtrToVoidType(llvm::Type *typ);
+  bool isPtrToArrayOf(llvm::Type *ptyp, llvm::Type *arrayElmTyp);
 
   // If specified type is a pointer flagged as being a circular
   // type, return conversion needed on load from that type, or NULL

@@ -120,6 +120,8 @@ bool Btype::equal(const Btype &other) const
         if (! pt[i]->equal(*po[i]))
           return false;
       }
+      if (bft->followsCabi() != obft->followsCabi())
+        return false;
       return true;
     }
   }

@@ -81,7 +81,8 @@ Bnode::Bnode(const Bnode &src)
     , id_(0xfeedface)
     , flags_(0)
 {
-  memset(&u, '\0', sizeof(u));
+  assert(! isStmt());
+  memcpy(&u, &src.u, sizeof(u));
 }
 
 Bexpression *Bnode::castToBexpression() const {
@@ -465,10 +466,11 @@ Bexpression *BnodeBuilder::mkAddress(Btype *typ, llvm::Value *val,
 }
 
 Bexpression *BnodeBuilder::mkFcnAddress(Btype *typ, llvm::Value *val,
-                                     Bfunction *func, Location loc)
+                                        Bfunction *func, Location loc)
 {
   std::vector<Bnode *> kids;
   Bexpression *rval = new Bexpression(N_FcnAddress, kids, val, typ, loc);
+  rval->u.func = func;
   return archive(rval);
 }
 
@@ -700,4 +702,51 @@ void BnodeBuilder::addStatementToBlock(Bblock *block, Bstatement *st)
   assert(block);
   assert(st);
   block->kids_.push_back(st);
+}
+
+Bexpression *
+BnodeBuilder::cloneSub(Bexpression *expr,
+                       std::map<llvm::Value *, llvm::Value *> &vm)
+{
+  assert(expr);
+  std::vector<Bnode *> newChildren;
+  for (auto &c : expr->children()) {
+    assert(c);
+    Bexpression *ce = c->castToBexpression();
+    assert(ce);
+    Bexpression *clc = cloneSubtree(ce);
+    newChildren.push_back(clc);
+  }
+  Bexpression *res = new Bexpression(*expr);
+  archive(res);
+  res->kids_ = newChildren;
+
+  llvm::Value *iv = expr->value();
+  llvm::Value *newv = nullptr;
+  for (auto inst : expr->instructions()) {
+    if (inst == iv) {
+      assert(! newv);
+      newv = inst;
+    }
+    llvm::Instruction *icl = inst->clone();
+    unsigned nops = inst->getNumOperands();
+    for (unsigned idx = 0; idx < nops; ++idx) {
+      llvm::Value *v = inst->getOperand(idx);
+      auto it = vm.find(v);
+      if (it != vm.end()) {
+        llvm::Value *cv = it->second;
+        icl->setOperand(idx, cv);
+      }
+    }
+    icl->setName(inst->getName());
+    res->appendInstruction(icl);
+  }
+  if (newv)
+    res->setValue(newv);
+  return res;
+}
+
+Bexpression *BnodeBuilder::cloneSubtree(Bexpression *expr) {
+  std::map<llvm::Value *, llvm::Value *> vm;
+  return cloneSub(expr, vm);
 }
