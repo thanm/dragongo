@@ -39,6 +39,9 @@
 #include <cstring>
 #include <string>
 #include <system_error>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "go-c.h"
 #include "go-llvm-linemap.h"
@@ -60,6 +63,9 @@ InputFilenames(cl::Positional,
 static cl::opt<std::string>
 IncludeDirs("I", cl::desc("<include dirs>"));
 
+static cl::opt<std::string>
+LibDirs("L", cl::desc("<system library dirs>"));
+
 // Determine optimization level.
 static cl::opt<char>
 OptLevel("O",
@@ -73,6 +79,16 @@ static cl::opt<std::string>
 OutputFileName("o",
                cl::desc("Set name of output file."),
                cl::init(""));
+
+// These are provided for compatibility purposes -- they are currently ignored.
+static cl::opt<bool>
+M64Option("m64",  cl::desc("Dummy -m64 arg."), cl::init(false));
+static cl::opt<bool>
+MinusGOption("g",  cl::desc("Dummy -g arg."), cl::init(false));
+static cl::opt<bool>
+MinusCOption("c",  cl::desc("Dummy -c arg."), cl::init(false));
+static cl::opt<bool>
+MinusVOption("v",  cl::desc("Dummy -v arg."), cl::init(false));
 
 static cl::opt<bool>
 NoBackend("nobackend",
@@ -298,9 +314,21 @@ int main(int argc, char **argv)
     std::stringstream ss(IncludeDirs);
     std::string dir;
     while(std::getline(ss, dir, ':')) {
-      std::cerr << "adding search path " << dir.c_str()
-                << "\n";
-      go_add_search_path(dir.c_str());
+      struct stat st;
+      if (stat (dir.c_str(), &st) == 0 && S_ISDIR (st.st_mode))
+        go_add_search_path(dir.c_str());
+    }
+  }
+
+  // Library dirs
+  // TODO: add version, architecture dirs
+  if (! LibDirs.empty()) {
+    std::stringstream ss(LibDirs);
+    std::string dir;
+    while(std::getline(ss, dir, ':')) {
+      struct stat st;
+      if (stat (dir.c_str(), &st) == 0 && S_ISDIR (st.st_mode))
+        go_add_search_path(dir.c_str());
     }
   }
 

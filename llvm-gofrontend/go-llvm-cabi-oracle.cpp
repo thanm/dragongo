@@ -152,11 +152,13 @@ class EightByteInfo {
   std::vector<EightByteRegion> ebrs_;
   TypeManager *typeManager_;
 
+  typedef std::pair<Btype *, unsigned> typAndOffset;
+  void addLeafTypes(Btype *bt, unsigned off,
+                    std::vector<typAndOffset> *leaves);
   void explodeStruct(BStructType *bst);
   void explodeArray(BArrayType *bat);
   void incorporateScalar(Btype *bt);
   void determineABITypes();
-
   TypeManager *tm() const { return typeManager_; }
 };
 
@@ -174,6 +176,33 @@ EightByteInfo::EightByteInfo(Btype *bt, TypeManager *tmgr)
   }
   assert(ebrs_.size() <= 2);
   determineABITypes();
+}
+
+void EightByteInfo::addLeafTypes(Btype *bt,
+                                 unsigned offset,
+                                 std::vector<typAndOffset> *leaves)
+{
+  assert(bt && leaves);
+  BStructType *bst = bt->castToBStructType();
+  if (bst) {
+    unsigned numFields = bst->fields().size();
+    for (unsigned fidx = 0; fidx < numFields; ++fidx) {
+      unsigned foff = tm()->typeFieldOffset(bst, fidx);
+      addLeafTypes(bst->fieldType(fidx), offset + foff, leaves);
+    }
+    return;
+  }
+  BArrayType *bat = bt->castToBArrayType();
+  if (bat) {
+    Btype *et = bat->elemType();
+    for (unsigned elidx = 0; elidx < bat->nelSize(); ++elidx) {
+      unsigned eloff = elidx * allocSize(et->type(), tm());
+      addLeafTypes(et, offset + eloff, leaves);
+    }
+    return;
+  }
+  assert(bt->flavor() != Btype::AuxT && bt->flavor() != Btype::FunctionT);
+  leaves->push_back(std::make_pair(bt, offset));
 }
 
 // Given a struct type, explode it into 0, 1, or two EightByteRegion
@@ -204,18 +233,21 @@ EightByteInfo::EightByteInfo(Btype *bt, TypeManager *tmgr)
 void EightByteInfo::explodeStruct(BStructType *bst)
 {
   assert(allocSize(bst->type(), tm()) <= 16);
-  unsigned numFields = bst->fields().size();
+
+  std::vector<typAndOffset> leafTypes;
+  addLeafTypes(bst, 0, &leafTypes);
 
   // collect offsets and field types
   EightByteRegion *cur8 = nullptr;
-  for (unsigned fidx = 0; fidx < numFields; ++fidx) {
-    unsigned offset = typeManager_->typeFieldOffset(bst, fidx);
+
+  for (auto &pair : leafTypes) {
+    Btype *lt = pair.first;
+    unsigned offset = pair.second;
     if (cur8 == nullptr || (offset >= 8 && ebrs_.size() == 1)) {
       ebrs_.push_back(EightByteRegion());
       cur8 = &ebrs_.back();
     }
-    // note that field type here may be a struct or array
-    cur8->types.push_back(bst->fieldType(fidx)->type());
+    cur8->types.push_back(lt->type());
     cur8->offsets.push_back(offset);
   }
 }

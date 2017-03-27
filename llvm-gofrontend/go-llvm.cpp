@@ -1408,8 +1408,10 @@ Bexpression *Llvm_backend::unary_expression(Operator op, Bexpression *expr,
   return nullptr;
 }
 
-static llvm::CmpInst::Predicate compare_op_to_pred(Operator op, llvm::Type *typ,
-                                                   bool isUnsigned) {
+static llvm::CmpInst::Predicate compare_op_to_pred(Operator op,
+                                                   llvm::Type *typ,
+                                                   bool isUnsigned)
+{
   bool isFloat = typ->isFloatingPointTy();
 
   if (isFloat) {
@@ -1430,7 +1432,6 @@ static llvm::CmpInst::Predicate compare_op_to_pred(Operator op, llvm::Type *typ,
       break;
     }
   } else {
-    assert(!isUnsigned || typ->isIntegerTy());
     switch (op) {
     case OPERATOR_EQEQ:
       return llvm::CmpInst::Predicate::ICMP_EQ;
@@ -1886,13 +1887,20 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
     if (paramInfo.attr() == AttrNest)
       continue;
 
-    // For arguments passed by value, no call to resolveVarContext
+    // For arguments not passed by value, no call to resolveVarContext
     // (we want var address, not var value).
     if (paramInfo.disp() == ParmIndirect) {
       state.resolvedArgs.push_back(fn_args[idx]);
-      llvm::Value *mem = fn_args[idx]->value();
-      assert(mem && mem->getType()->isPointerTy());
-      state.llargs.push_back(mem);
+      llvm::Value *val = fn_args[idx]->value();
+      assert(val);
+      // spill a constant arg to memory if needed
+      if (llvm::isa<llvm::Constant>(val)) {
+        llvm::Constant *cval = llvm::cast<llvm::Constant>(val);
+        Bvariable *cv = genVarForConstant(cval, fn_args[idx]->btype());
+        val = cv->value();
+      }
+      assert(val->getType()->isPointerTy());
+      state.llargs.push_back(val);
       continue;
     }
 

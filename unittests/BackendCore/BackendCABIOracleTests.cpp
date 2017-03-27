@@ -64,7 +64,9 @@ TEST(BackendCABIOracleTests, Extended) {
 
   Btype *bi8t = be->integer_type(false, 8);
   Btype *bu8t = be->integer_type(true, 8);
-  Btype *bi64t = be->integer_type(true, 64);
+  Btype *bu64t = be->integer_type(true, 64);
+  Btype *bu32t = be->integer_type(true, 32);
+  Btype *bi16t = be->integer_type(false, 16);
   Btype *bf32t = be->float_type(32);
   Btype *bf64t = be->float_type(64);
   Btype *bpf64t = be->pointer_type(bf64t);
@@ -75,7 +77,9 @@ TEST(BackendCABIOracleTests, Extended) {
   Btype *st4 = mkBackendStruct(be, bf32t, "f1", bf32t, "f2", nullptr);
   Btype *st5 = mkBackendStruct(be, bf32t, "f1", nullptr);
   Btype *st6 = mkBackendStruct(be, bf32t, "f1", bi8t, "a", bu8t, "b",
-                               bi64t, "c", nullptr);
+                               bu64t, "c", nullptr);
+  Btype *st7 = mkBackendStruct(be, bf32t, "f1", bu32t, "f2", nullptr);
+  Btype *st8 = mkBackendStruct(be, bi8t, "f1", bi16t, "f2", st7, "f3", nullptr);
 
   struct FcnItem {
     FcnItem(const std::vector<Btype*> &r,
@@ -146,6 +150,12 @@ TEST(BackendCABIOracleTests, Extended) {
              "Param 2: Direct { i48, i64 } sigOffset: 1 "
              "Param 3: Direct { i48, i64 } sigOffset: 3",
              "{ i48, i64 } (i8*, i48, i64, i48, i64)"),
+
+    FcnItem( { st8 }, { st8 },
+             "Return: Direct { { i64, i32 } } sigOffset: -1 "
+             "Param 1: Direct AttrNest { i8* } sigOffset: 0 "
+             "Param 2: Direct { i64, i32 } sigOffset: 1",
+             "{ i64, i32 } (i8*, i64, i32)"),
   };
 
   for (auto &item : items) {
