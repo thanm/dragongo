@@ -635,11 +635,12 @@ Bvariable *Llvm_backend::genVarForConstant(llvm::Constant *conval,
   bool isConstant = true;
   bool isCommon = false;
   std::string ctag(namegen("const"));
-  Bvariable *rv = implicit_variable(ctag, "", type, isHidden,
-                                    isConstant, isCommon, 0);
+  Bvariable *rv = makeModuleVar(type, ctag, "", Location(),
+                                MV_Constant, MV_DefaultSection,
+                                MV_NotInComdat, MV_DefaultVisibility,
+                                llvm::GlobalValue::PrivateLinkage,
+                                conval, 0);
   assert(llvm::isa<llvm::GlobalVariable>(rv->value()));
-  llvm::GlobalVariable *gvar = llvm::cast<llvm::GlobalVariable>(rv->value());
-  gvar->setInitializer(conval);
   return rv;
 }
 
