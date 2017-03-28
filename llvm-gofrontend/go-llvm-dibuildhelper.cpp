@@ -23,6 +23,7 @@
 #include "llvm/IR/DebugInfoMetadata.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Function.h"
+#include "llvm/IR/Instructions.h"
 
 DIBuildHelper::DIBuildHelper(Bnode *topnode,
                              TypeManager *typemanager,
@@ -92,14 +93,18 @@ void DIBuildHelper::insertVarDecl(Bvariable *var,
       dibuilder().insertDeclare(var->value(), dilv, expr, vloc, insertionPoint);
   if (var->initializer()) {
     assert(var->initializerInstruction()->getParent());
-    decl->insertAfter(var->initializerInstruction());
+    insertionPoint = var->initializerInstruction();
   } else {
     // locals with no initializer should only be zero-sized vars.
     // make them available immediately after their alloca.
     assert(typemanager()->typeSize(var->btype()) == 0);
     llvm::Instruction *alloca = llvm::cast<llvm::Instruction>(var->value());
-    decl->insertAfter(alloca);
+    insertionPoint = alloca;
   }
+
+  assert(! llvm::isa<llvm::BranchInst>(insertionPoint));
+  assert(insertionPoint != insertionPoint->getParent()->getTerminator());
+  decl->insertAfter(insertionPoint);
 }
 
 void DIBuildHelper::endFunction(Bfunction *function)

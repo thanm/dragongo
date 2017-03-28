@@ -413,6 +413,11 @@ class ABIState {
   void addIndirectArg() {
     argCount_ += 1;
   }
+  void addIndirectReturn() {
+    if (availIntRegs_)
+      availIntRegs_ -= 1;
+    argCount_ += 1;
+  }
   void addChainArg() {
     argCount_ += 1;
   }
@@ -545,7 +550,7 @@ CABIParamInfo CABIOracle::analyzeABIReturn(Btype *resultType, ABIState &state)
     // Return value will be passed in memory, via a hidden
     // struct return param.
     llvm::Type *ptrTyp = tm()->makeLLVMPointerType(rtyp);
-    state.addIndirectArg();
+    state.addIndirectReturn();
     return CABIParamInfo(ptrTyp, ParmIndirect, AttrStructReturn, 0);
   }
 
@@ -634,7 +639,7 @@ CABIParamInfo CABIOracle::analyzeABIParam(Btype *paramType, ABIState &state)
   } else {
     state.addIndirectArg();
     llvm::Type *ptrTyp = tm()->makeLLVMPointerType(ptyp);
-    return CABIParamInfo(ptrTyp, ParmDirect, AttrByVal, sigOff);
+    return CABIParamInfo(ptrTyp, ParmIndirect, AttrByVal, sigOff);
   }
 }
 

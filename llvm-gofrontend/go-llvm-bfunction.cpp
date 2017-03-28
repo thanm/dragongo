@@ -366,17 +366,35 @@ void Bfunction::genProlog(llvm::BasicBlock *entry)
   for (auto sp : spills.instructions())
     entry->getInstList().push_back(sp);
 
-  // Debug meta-data generation needs to know the position at which
-  // a parameter variable is available for inspection -- it does this
-  // currently by looking at the initializer for the var. Walk through the
-  // params and fix things up to make sure they all have initializers.
-  for (unsigned pidx = 0; pidx < nParms; ++pidx) {
-    Bvariable *v = getNthParamVar(pidx);
-    if (v->initializer() == nullptr)
-      v->setInitializer(&entry->back());
+  // Debug meta-data generation needs to know the position at which a
+  // parameter variable is available for inspection -- this is
+  // typically either A) the start of the function for by-address
+  // params, or B) the spill instruction that copies a direct param to
+  // the stack. If the entry block is not empty, then use the last
+  // inst in it as an initializer for by-address params. If the block
+  // is still empty at this point we'll take care of things later.
+  if (! entry->empty()) {
+    for (unsigned pidx = 0; pidx < nParms; ++pidx) {
+      Bvariable *v = getNthParamVar(pidx);
+      if (v->initializer() == nullptr)
+        v->setInitializer(&entry->front());
+    }
   }
 
   prologGenerated_ = true;
+}
+
+void Bfunction::fixupProlog(llvm::BasicBlock *entry)
+{
+  const std::vector<Btype *> &paramTypes = fcnType()->paramTypes();
+  unsigned nParms = paramTypes.size();
+  for (unsigned pidx = 0; pidx < nParms; ++pidx) {
+      Bvariable *v = getNthParamVar(pidx);
+      if (v->initializer() == nullptr) {
+        assert(! entry->empty());
+        v->setInitializer(&entry->front());
+      }
+  }
 }
 
 llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,

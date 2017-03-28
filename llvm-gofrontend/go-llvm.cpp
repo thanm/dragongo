@@ -2959,7 +2959,7 @@ public:
             bool createDebugMetadata, llvm::BasicBlock *entryBlock);
 
   llvm::BasicBlock *walk(Bnode *node, llvm::BasicBlock *curblock);
-  void finishFunction();
+  void finishFunction(llvm::BasicBlock *entry);
 
   Bfunction *function() { return function_; }
   llvm::BasicBlock *genIf(Bstatement *ifst,
@@ -3009,8 +3009,9 @@ GenBlocks::GenBlocks(llvm::LLVMContext &context,
   }
 }
 
-void GenBlocks::finishFunction()
+void GenBlocks::finishFunction(llvm::BasicBlock *entry)
 {
+  function_->fixupProlog(entry);
   if (createDebugMetaData_)
     dibuildhelper().endFunction(function_);
 }
@@ -3275,7 +3276,7 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   GenBlocks gb(context_, this, function, code_stmt,
                getDICompUnit(), dodebug, entryBlock);
   llvm::BasicBlock *block = gb.walk(code_stmt, entryBlock);
-  gb.finishFunction();
+  gb.finishFunction(entryBlock);
 
   // Fix up epilog block if needed
   fixupEpilogBlog(function, block);

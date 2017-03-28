@@ -83,6 +83,10 @@ public:
   // allocas for local variables.
   void genProlog(llvm::BasicBlock *entry);
 
+  // Perform an necessary prolog fixups after instructions have been
+  // assigned to LLVM basic blocks for the function.
+  void fixupProlog(llvm::BasicBlock *entry);
+
   // Create code to return a function value from this fcn, following ABI rules.
   llvm::Value *genReturnSequence(Bexpression *toRet, Binstructions *retInstrs);
 
