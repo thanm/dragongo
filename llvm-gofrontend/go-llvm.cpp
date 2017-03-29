@@ -1877,7 +1877,6 @@ void
 Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
                                   GenCallState &state)
 {
-
   const std::vector<Btype *> &paramTypes = state.calleeFcnType->paramTypes();
   for (unsigned idx = 0; idx < fn_args.size(); ++idx) {
     const CABIParamInfo &paramInfo = state.oracle.paramInfo(idx);
@@ -1990,11 +1989,42 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
   }
 }
 
+void Llvm_backend::genCallAttributes(GenCallState &state, llvm::CallInst *call)
+{
+  // Sret attribute if needed
+  const CABIParamInfo &returnInfo = state.oracle.returnInfo();
+  if (returnInfo.disp() == ParmIndirect)
+    call->addAttribute(1, llvm::Attribute::StructRet);
+
+  // Nest attribute if needed
+  const CABIParamInfo &chainInfo = state.oracle.chainInfo();
+  if (chainInfo.disp() != ParmIgnore)
+    call->addAttribute(chainInfo.sigOffset()+1, llvm::Attribute::Nest);
+
+  // Remainder of param attributes
+  const std::vector<Btype *> &paramTypes = state.calleeFcnType->paramTypes();
+  for (unsigned idx = 0; idx < paramTypes.size(); ++idx) {
+    const CABIParamInfo &paramInfo = state.oracle.paramInfo(idx);
+    if (paramInfo.disp() == ParmIgnore)
+      continue;
+    assert(paramInfo.attr() != AttrNest);
+    assert(paramInfo.attr() != AttrStructReturn);
+    unsigned off = paramInfo.sigOffset() + 1;
+    if (paramInfo.attr() == AttrByVal)
+      call->addAttribute(off, llvm::Attribute::ByVal);
+    else if (paramInfo.attr() == AttrZext)
+      call->addAttribute(off, llvm::Attribute::ZExt);
+    else if (paramInfo.attr() == AttrSext)
+      call->addAttribute(off, llvm::Attribute::SExt);
+  }
+}
+
 void Llvm_backend::genCallEpilog(GenCallState &state,
                                  llvm::Instruction *callInst,
                                  Bexpression *callExpr)
 {
   const CABIParamInfo &returnInfo = state.oracle.returnInfo();
+
 
   if (needSretTemp(returnInfo, state.calleeFcnType)) {
     assert(state.sretTemp);
@@ -2002,11 +2032,6 @@ void Llvm_backend::genCallEpilog(GenCallState &state,
     callExpr->setVarExprPending(VE_rvalue, 0);
 
     if (returnInfo.disp() == ParmDirect) {
-#if 0
-      llvm::Type *llst = returnInfo.computeABIStructType(typeManager());
-      llvm::Type *ptst = makeLLVMPointerType(llst);
-#endif
-
       // The call is returning something by value that doesn't match
       // the expected abstract result type of the function. Cast the
       // sret storage location to a pointer to the abi type and store
@@ -2074,6 +2099,7 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
   llvm::CallInst *call =
       state.builder.CreateCall(llft, fn_expr->value(),
                                state.llargs, callname);
+  genCallAttributes(state, call);
 
   llvm::Value *callValue = (state.sretTemp ? state.sretTemp : call);
   Bexpression *rval =
@@ -2081,7 +2107,6 @@ Llvm_backend::call_expression(Bexpression *fn_expr,
                        state.instructions, location);
   state.instructions.clear();
 
-  // Any epilog processing here
   genCallEpilog(state, call, rval);
 
   return rval;

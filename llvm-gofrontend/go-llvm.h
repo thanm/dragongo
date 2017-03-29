@@ -36,6 +36,7 @@ namespace llvm {
 class Argument;
 class ArrayType;
 class BasicBlock;
+class CallInst;
 class Constant;
 class ConstantFolder;
 class DataLayout;
@@ -580,6 +581,7 @@ public:
 
   // Helpers for call sequence generation.
   void genCallProlog(GenCallState &state);
+  void genCallAttributes(GenCallState &state, llvm::CallInst *call);
   void genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
                            GenCallState &state);
   void genCallEpilog(GenCallState &state, llvm::Instruction *callInst,

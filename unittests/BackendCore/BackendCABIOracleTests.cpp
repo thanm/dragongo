@@ -299,7 +299,7 @@ TEST(BackendCABIOracleTests, RecursiveCall1) {
      %ld.2 = load double, double* %field0.1
      %field1.1 = getelementptr inbounds { double, <2 x float> }, { double, <2 x float> }* %cast.1, i32 0, i32 1
      %ld.3 = load <2 x float>, <2 x float>* %field1.1
-     %call.0 = call { double, <2 x float> } @foo(i8* undef, <2 x float> %ld.0, i48 %ld.1, double %ld.2, <2 x float> %ld.3, i8 %sub.0, i8 %p4.ld.0, { { float, float, i16, i16, i16 }, { double, float, float } }* %p5)
+     %call.0 = call { double, <2 x float> } @foo(i8* nest undef, <2 x float> %ld.0, i48 %ld.1, double %ld.2, <2 x float> %ld.3, i8 zeroext %sub.0, i8 signext %p4.ld.0, { { float, float, i16, i16, i16 }, { double, float, float } }* byval %p5)
      %cast.2 = bitcast { double, float, float }* %sret.actual.0 to { double, <2 x float> }*
      store { double, <2 x float> } %call.0, { double, <2 x float> }* %cast.2
      %cast.4 = bitcast { double, float, float }* %sret.actual.0 to { double, <2 x float> }*
@@ -351,7 +351,7 @@ TEST(BackendCABIOracleTests, PassAndReturnArrays) {
   const char *exp = R"RAW_RESULT(
     %cast.0 = bitcast [2 x float]* %p0.addr to <2 x float>*
     %ld.0 = load <2 x float>, <2 x float>* %cast.0
-    call void @foo([3 x double]* %sret.actual.0, i8* undef, <2 x float> %ld.0)
+    call void @foo([3 x double]* sret %sret.actual.0, i8* nest undef, <2 x float> %ld.0)
     %cast.1 = bitcast [3 x double]* %sret.formal.0 to i8*
     %cast.2 = bitcast [3 x double]* %sret.actual.0 to i8*
     call void @llvm.memcpy.p0i8.p0i8.i64(i8* %cast.1, i8* %cast.2, i64 24, i32 8, i1 false)
@@ -401,7 +401,7 @@ TEST(BackendCABIOracleTests, EmptyStructParamsAndReturns) {
   h.mkReturn(rvals);
 
   const char *exp = R"RAW_RESULT(
-     call void @foo(i8* undef, i32 4)
+     call void @foo(i8* nest undef, i32 4)
      ret void
     )RAW_RESULT";
 

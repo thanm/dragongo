@@ -37,7 +37,7 @@ TEST(BackendCallTests, TestSimpleCall) {
   h.mkReturn(be->var_expression(x, VE_rvalue, loc));
 
   const char *exp = R"RAW_RESULT(
-      %call.0 = call i64 @foo(i8* undef, i32 3, i32 6, i64* null)
+      %call.0 = call i64 @foo(i8* nest undef, i32 3, i32 6, i64* null)
       store i64 %call.0, i64* %x
       %x.ld.0 = load i64, i64* %x
       ret i64 %x.ld.0
@@ -72,7 +72,7 @@ TEST(BackendCallTests, CallToVoid) {
   h.mkExprStmt(call);
 
   const char *exp = R"RAW_RESULT(
-     call void @bar(i8* undef)
+     call void @bar(i8* nest undef)
     )RAW_RESULT";
 
   bool isOK = h.expectBlock(exp);

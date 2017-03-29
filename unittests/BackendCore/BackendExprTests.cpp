@@ -643,14 +643,14 @@ entry:
   br i1 %trunc.0, label %then.0, label %else.0
 
 then.0:                                           ; preds = %entry
-  call void @foo(i8* undef)
+  call void @foo(i8* nest undef)
   br label %fallthrough.0
 
 fallthrough.0:                                    ; preds = %else.0, %then.0
   ret void
 
 else.0:                                           ; preds = %entry
-  call void @foo(i8* undef)
+  call void @foo(i8* nest undef)
   br label %fallthrough.0
 }
     )RAW_RESULT";
@@ -693,7 +693,7 @@ TEST(BackendExprTests, TestConditionalExpression2) {
       store i64 0, i64* %a
       br i1 true, label %then.0, label %else.0
     then.0:                                           ; preds = %entry
-      call void @foo(i8* undef)
+      call void @foo(i8* nest undef)
       br label %fallthrough.0
     fallthrough.0:                                    ; preds = %else.0, %then.0
       %tmpv.0.ld.0 = load i64, i64* %tmpv.0
@@ -894,7 +894,7 @@ TEST(BackendExprTests, TestCallArgConversions) {
   h.mkExprStmt(call1);
 
   const char *exp = R"RAW_RESULT(
-     call void @foo(i8* undef, i8* null, i32* null, i64* null)
+     call void @foo(i8* nest undef, i8* null, i32* null, i64* null)
     )RAW_RESULT";
 
   // Note that this
