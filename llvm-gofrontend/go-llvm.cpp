@@ -2538,7 +2538,7 @@ Llvm_backend::makeModuleVar(Btype *btype,
 
   // FIXME: add DIGlobalVariable to debug info for this variable
 
-  llvm::Constant *init = nullptr;
+  llvm::Constant *init = llvm::Constant::getNullValue(btype->type());
   std::string gname(asm_name.empty() ? name : asm_name);
   llvm::GlobalVariable *glob = new llvm::GlobalVariable(
       module(), btype->type(), isConstant == MV_Constant,
