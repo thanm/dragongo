@@ -631,9 +631,6 @@ Bvariable *Llvm_backend::genVarForConstant(llvm::Constant *conval,
   if (it != valueVarMap_.end())
     return it->second;
 
-  bool isHidden = true;
-  bool isConstant = true;
-  bool isCommon = false;
   std::string ctag(namegen("const"));
   Bvariable *rv = makeModuleVar(type, ctag, "", Location(),
                                 MV_Constant, MV_DefaultSection,
@@ -1891,8 +1888,11 @@ Llvm_backend::genCallMarshallArgs(const std::vector<Bexpression *> &fn_args,
     // For arguments not passed by value, no call to resolveVarContext
     // (we want var address, not var value).
     if (paramInfo.disp() == ParmIndirect) {
-      state.resolvedArgs.push_back(fn_args[idx]);
-      llvm::Value *val = fn_args[idx]->value();
+      Bexpression *fnarg = fn_args[idx];
+      if (fnarg->compositeInitPending())
+        fnarg = resolveCompositeInit(fnarg, state.callerFcn, nullptr);
+      state.resolvedArgs.push_back(fnarg);
+      llvm::Value *val = fnarg->value();
       assert(val);
       // spill a constant arg to memory if needed
       if (llvm::isa<llvm::Constant>(val)) {
@@ -2246,6 +2246,15 @@ Llvm_backend::convertForAssignment(Btype *srcBType,
       (dstToType->isPointerTy() ?
        llvm::cast<llvm::PointerType>(dstToType)->getElementType() : nullptr);
   if (elt && isPtrToArrayOf(srcType, elt)) {
+    std::string tag(namegen("cast"));
+    llvm::Value *bitcast = builder->CreateBitCast(srcVal, dstToType, tag);
+    return bitcast;
+  }
+
+  // Case 7: also when creating slice values it's common for the
+  // frontend to assign pointer-to-X to unsafe.Pointer or equivalent,
+  // without an explicit cast. Allow this for now.
+  if (dstToType == llvmPtrType() && llvm::isa<llvm::PointerType>(srcType)) {
     std::string tag(namegen("cast"));
     llvm::Value *bitcast = builder->CreateBitCast(srcVal, dstToType, tag);
     return bitcast;

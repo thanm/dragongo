@@ -76,8 +76,8 @@ void Bfunction::abiSetup()
 {
   // Populate argument list
   if (arguments_.empty())
-    for (auto &arg : function()->getArgumentList())
-      arguments_.push_back(&arg);
+    for (auto argit = function()->arg_begin(), argen = function()->arg_end(); argit != argen; ++argit)
+      arguments_.push_back(&(*argit));
 
   // If the return value is going to be passed via memory, make a note
   // of the argument in question, and set up the arg.
