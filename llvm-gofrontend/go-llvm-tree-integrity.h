@@ -110,6 +110,8 @@ class IntegrityVisitor {
   bool repair(Bnode *n);
   void visit(Bnode *n);
   bool repairableSubTree(Bexpression *root);
+  bool shouldBeTracked(Bnode *child);
+  void unsetParent(Bnode *child, Bnode *parent, unsigned slot);
   void setParent(Bnode *child, Bnode *parent, unsigned slot);
   void setParent(llvm::Instruction *inst, Bexpression *par, unsigned slot);
   void dumpTag(const char *tag, void *ptr);

@@ -167,6 +167,7 @@ void Bnode::osdump(llvm::raw_ostream &os, unsigned ilevel,
     if (linemap) {
       indent(os, ilevel);
       os << linemap->to_string(location()) << "\n";
+      linemap = nullptr; // just want top-level src, not src for all kids
     }
   }
 
@@ -290,8 +291,7 @@ LabelId Bnode::label() const
 //......................................................................
 
 BnodeBuilder::BnodeBuilder(Llvm_backend *be)
-    : be_(be)
-    , integrityVisitor_(new IntegrityVisitor(be, TreeIntegCtl(DumpPointers, IgnoreVarExprs, DontRepairSharing)))
+    : integrityVisitor_(new IntegrityVisitor(be, TreeIntegCtl(DumpPointers, IgnoreVarExprs, DontRepairSharing)))
 {
 }
 
@@ -514,28 +514,6 @@ Bexpression *BnodeBuilder::mkComposite(Btype *btype,
     rval->appendInstruction(inst);
   return archive(rval);
 }
-
-#if 0
-void BnodeBuilder::updateCompositeChild(Bexpression *composite,
-                                        unsigned childIdx,
-                                        Bexpression *newChild)
-{
-  assert(composite->flavor() == N_Composite);
-  assert(composite->value() == nullptr);
-  assert(childIdx < composite->kids_.size());
-  Bexpression *oldChild = composite->kids_[childIdx]->castToBexpression();
-  assert(oldChild && oldChild->btype()->type() == newChild->btype()->type());
-  composite->replaceChild(childIdx, newChild);
-}
-
-void BnodeBuilder::finishComposite(Bexpression *composite, llvm::Value *val)
-{
-  assert(composite->flavor() == N_Composite);
-  assert(composite->value() == nullptr);
-  assert(val != nullptr);
-  composite->value_ = val;
-}
-#endif
 
 Bexpression *BnodeBuilder::mkStructField(Btype *typ,
                                          llvm::Value *val,
@@ -767,4 +745,22 @@ BnodeBuilder::cloneSub(Bexpression *expr,
 Bexpression *BnodeBuilder::cloneSubtree(Bexpression *expr) {
   std::map<llvm::Value *, llvm::Value *> vm;
   return cloneSub(expr, vm);
+}
+
+std::vector<Bexpression *>
+BnodeBuilder::extractChildenAndDestroy(Bexpression *expr)
+{
+  std::vector<Bexpression *> orphans;
+  assert(expr);
+  assert(expr->value() == nullptr);
+  assert(expr->instructions().empty());
+  for (unsigned idx = 0; idx < expr->kids_.size(); ++idx) {
+    Bnode *kid = expr->kids_[idx];
+    integrityVisitor_->unsetParent(kid, expr, idx);
+    Bexpression *ekid = kid->castToBexpression();
+    assert(ekid);
+    orphans.push_back(ekid);
+  }
+  freeExpr(expr);
+  return orphans;
 }

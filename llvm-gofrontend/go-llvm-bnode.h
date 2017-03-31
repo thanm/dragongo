@@ -252,20 +252,16 @@ class BnodeBuilder {
                   Location loc);
   void addStatementToBlock(Bblock *block, Bstatement *st);
 
-#if 0
-  // Update child of composite construction
-  void updateCompositeChild(Bexpression *composite,
-                            unsigned childIdx,
-                            Bexpression *newChildExpr);
-  // Finish creation of delayed composite.
-  void finishComposite(Bexpression *composite, llvm::Value *val);
-#endif
-
   // Free up this expr (it is garbage). Does not free up children.
   void freeExpr(Bexpression *expr);
 
   // Clone an expression subtree.
   Bexpression *cloneSubtree(Bexpression *expr);
+
+  // Inform the builder that we're about to extract all of the
+  // children of the specified node and incorporate them into a new
+  // node (after which the old node will be thrown away). Returns
+  std::vector<Bexpression *> extractChildenAndDestroy(Bexpression *expr);
 
  private:
   void appendInstIfNeeded(Bexpression *rval, llvm::Value *val);
@@ -277,7 +273,6 @@ class BnodeBuilder {
   void checkTreeInteg(Bnode *node);
 
  private:
-  Llvm_backend *be_;
   std::unique_ptr<Bstatement> errorStatement_;
   std::vector<Bexpression *> earchive_;
   std::vector<Bstatement *> sarchive_;

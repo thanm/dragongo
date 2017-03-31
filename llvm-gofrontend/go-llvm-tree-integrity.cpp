@@ -49,12 +49,33 @@ static bool varExprOrConvVar(Bnode *node)
   return false;
 }
 
-void IntegrityVisitor::setParent(Bnode *child, Bnode *parent, unsigned slot)
+bool IntegrityVisitor::shouldBeTracked(Bnode *child)
 {
   Bexpression *expr = child->castToBexpression();
   if (expr && be_->moduleScopeValue(expr->value(), expr->btype()))
-    return;
+    return false;
   if (includeVarExprs() == IgnoreVarExprs && varExprOrConvVar(child))
+    return false;
+  return true;
+}
+
+void IntegrityVisitor::unsetParent(Bnode *child, Bnode *parent, unsigned slot)
+{
+  if (! shouldBeTracked(child))
+    return;
+  auto it = nparent_.find(child);
+  assert(it != nparent_.end());
+  parslot pps = it->second;
+  Bnode *prevParent = pps.first;
+  unsigned prevSlot = pps.second;
+  assert(prevParent == parent);
+  assert(prevSlot == slot);
+  nparent_.erase(it);
+}
+
+void IntegrityVisitor::setParent(Bnode *child, Bnode *parent, unsigned slot)
+{
+  if (! shouldBeTracked(child))
     return;
   auto it = nparent_.find(child);
   if (it != nparent_.end()) {

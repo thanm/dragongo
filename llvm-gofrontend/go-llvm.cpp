@@ -736,7 +736,11 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
                                         llvm::Value *storage,
                                         Bfunction *bfunc)
 {
-  const std::vector<Bexpression *> aexprs = expr->getChildExprs();
+  Location loc = expr->location();
+  Btype *btype = expr->btype();
+  std::vector<Bexpression *> aexprs = nbuilder_.extractChildenAndDestroy(expr);
+  expr = nullptr;
+
   unsigned nElements = llat->getNumElements();
   assert(nElements == aexprs.size());
 
@@ -766,21 +770,19 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
 
   Binstructions instructions(builder.instructions());
   Bexpression *arexp =
-      nbuilder_.mkComposite(expr->btype(), storage, values,
-                            instructions, expr->location());
+      nbuilder_.mkComposite(btype, storage, values, instructions, loc);
   return arexp;
 }
-
-// This version repurposes/reuses the input Bexpression as the
-// result (which could be changed if needed).
 
 Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
                                          Bexpression *expr,
                                          llvm::Value *storage,
                                          Bfunction *bfunc)
 {
-  //BinstructionsLIRBuilder builder(context_, expr);
-  const std::vector<Bexpression *> fexprs = expr->getChildExprs();
+  Location loc = expr->location();
+  Btype *btype = expr->btype();
+  std::vector<Bexpression *> fexprs = nbuilder_.extractChildenAndDestroy(expr);
+  expr = nullptr;
   unsigned nFields = llst->getNumElements();
   assert(nFields == fexprs.size());
 
@@ -810,8 +812,7 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
 
   Binstructions instructions(builder.instructions());
   Bexpression *structexp =
-      nbuilder_.mkComposite(expr->btype(), storage, values,
-                            instructions, expr->location());
+      nbuilder_.mkComposite(btype, storage, values, instructions, loc);
   return structexp;
 }
 
