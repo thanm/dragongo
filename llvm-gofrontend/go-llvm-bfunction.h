@@ -88,7 +88,9 @@ public:
   void fixupProlog(llvm::BasicBlock *entry);
 
   // Create code to return a function value from this fcn, following ABI rules.
-  llvm::Value *genReturnSequence(Bexpression *toRet, Binstructions *retInstrs);
+  llvm::Value *genReturnSequence(Bexpression *toRet,
+                                 Binstructions *retInstrs,
+                                 NameGen *namegen);
 
   // Return a vector of the local variables for the function. This will
   // not include block-scoped variables, only function-scoped locals.

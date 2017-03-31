@@ -498,6 +498,7 @@ Bexpression *BnodeBuilder::mkDeref(Btype *typ, llvm::Value *val,
 Bexpression *BnodeBuilder::mkComposite(Btype *btype,
                                        llvm::Value *value,
                                        const std::vector<Bexpression *> &vals,
+                                       Binstructions &instructions,
                                        Location loc)
 {
   std::vector<Bnode *> kids;
@@ -509,9 +510,12 @@ Bexpression *BnodeBuilder::mkComposite(Btype *btype,
   // so as to see whether it might feed into a variable init.
   Bexpression *rval =
       new Bexpression(N_Composite, kids, value, btype, loc);
+  for (auto &inst : instructions.instructions())
+    rval->appendInstruction(inst);
   return archive(rval);
 }
 
+#if 0
 void BnodeBuilder::updateCompositeChild(Bexpression *composite,
                                         unsigned childIdx,
                                         Bexpression *newChild)
@@ -531,6 +535,7 @@ void BnodeBuilder::finishComposite(Bexpression *composite, llvm::Value *val)
   assert(val != nullptr);
   composite->value_ = val;
 }
+#endif
 
 Bexpression *BnodeBuilder::mkStructField(Btype *typ,
                                          llvm::Value *val,

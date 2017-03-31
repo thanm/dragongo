@@ -220,6 +220,7 @@ class BnodeBuilder {
                             Location loc);
   Bexpression *mkComposite(Btype *btype, llvm::Value *value,
                            const std::vector<Bexpression *> &vals,
+                           Binstructions &instructions,
                            Location loc);
   Bexpression *mkCall(Btype *btype, llvm::Value *value,
                       const std::vector<Bexpression *> &vals,
@@ -251,12 +252,14 @@ class BnodeBuilder {
                   Location loc);
   void addStatementToBlock(Bblock *block, Bstatement *st);
 
+#if 0
   // Update child of composite construction
   void updateCompositeChild(Bexpression *composite,
                             unsigned childIdx,
                             Bexpression *newChildExpr);
   // Finish creation of delayed composite.
   void finishComposite(Bexpression *composite, llvm::Value *val);
+#endif
 
   // Free up this expr (it is garbage). Does not free up children.
   void freeExpr(Bexpression *expr);

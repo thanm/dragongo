@@ -615,10 +615,7 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr,
     assert(vc.addrLevel() == 0 || vc.addrLevel() == 1);
     if (vc.addrLevel() == 1 || vc.lvalue() || ctx == VE_lvalue) {
       assert(vc.addrLevel() == 0 || expr->btype()->type()->isPointerTy());
-#if 0
-      return nbuilder_.mkAddress(expr->btype(), expr->value(),
-                                 expr, expr->location());
-#endif
+      expr->resetVarExprContext();
       return expr;
     }
     Btype *btype = expr->btype();
@@ -706,7 +703,7 @@ Bexpression *Llvm_backend::genStore(Bfunction *func,
                                     Bexpression *dstExpr,
                                     Location location)
 {
-  BlockLIRBuilder builder(func->function());
+  BlockLIRBuilder builder(func->function(), this);
 
   Varexpr_context ctx = srcExpr->varContextDisp();
 
@@ -734,9 +731,6 @@ Bexpression *Llvm_backend::genStore(Bfunction *func,
   return rval;
 }
 
-// This version repurposes/reuses the input Bexpression as the
-// result (which could be changed if needed).
-
 Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
                                         Bexpression *expr,
                                         llvm::Value *storage,
@@ -746,7 +740,8 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
   unsigned nElements = llat->getNumElements();
   assert(nElements == aexprs.size());
 
-  BlockLIRBuilder builder(bfunc->function());
+  BlockLIRBuilder builder(bfunc->function(), this);
+  std::vector<Bexpression *> values;
 
   for (unsigned eidx = 0; eidx < nElements; ++eidx) {
 
@@ -761,24 +756,19 @@ Bexpression *Llvm_backend::genArrayInit(llvm::ArrayType *llat,
     // Resolve element value if needed
     Varexpr_context ctx = aexprs[eidx]->varContextDisp();
     Bexpression *valexp = resolve(aexprs[eidx], bfunc, ctx);
-    nbuilder_.updateCompositeChild(expr, eidx, valexp);
 
     // Store field value into GEP
     genStore(&builder, valexp->btype(), gep->getType(),
              valexp->value(), gep);
 
-    // Collect any instructions created by the call above
-    // and transfer them to the composite child.
-    for (auto i : builder.instructions()) {
-      // hack: irbuilder likes to create unnamed bitcasts
-      if (i->isCast() && i->getName() == "")
-        i->setName(namegen("cast"));
-      expr->appendInstruction(i);
-    }
+    values.push_back(valexp);
   }
 
-  nbuilder_.finishComposite(expr, storage);
-  return expr;
+  Binstructions instructions(builder.instructions());
+  Bexpression *arexp =
+      nbuilder_.mkComposite(expr->btype(), storage, values,
+                            instructions, expr->location());
+  return arexp;
 }
 
 // This version repurposes/reuses the input Bexpression as the
@@ -794,15 +784,15 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
   unsigned nFields = llst->getNumElements();
   assert(nFields == fexprs.size());
 
+  BlockLIRBuilder builder(bfunc->function(), this);
+  std::vector<Bexpression *> values;
+
   for (unsigned fidx = 0; fidx < nFields; ++fidx) {
     Bexpression *fieldValExpr = fexprs[fidx];
     assert(fieldValExpr);
 
     Varexpr_context ctx = fieldValExpr->varContextDisp();
     Bexpression *valexp = resolve(fieldValExpr, bfunc, ctx);
-    nbuilder_.updateCompositeChild(expr, fidx, valexp);
-
-    BlockLIRBuilder builder(bfunc->function());
 
     // Create GEP
     assert(fidx < llst->getNumElements());
@@ -815,18 +805,14 @@ Bexpression *Llvm_backend::genStructInit(llvm::StructType *llst,
     genStore(&builder, valexp->btype(), gep->getType(),
              valexp->value(), gep);
 
-    // Collect any instructions created by the call above
-    // and transfer them to the composite child.
-    for (auto i : builder.instructions()) {
-      // hack: irbuilder likes to create unnamed bitcasts
-      if (i->isCast() && i->getName() == "")
-        i->setName(namegen("cast"));
-      expr->appendInstruction(i);
-    }
+    values.push_back(valexp);
   }
 
-  nbuilder_.finishComposite(expr, storage);
-  return expr;
+  Binstructions instructions(builder.instructions());
+  Bexpression *structexp =
+      nbuilder_.mkComposite(expr->btype(), storage, values,
+                            instructions, expr->location());
+  return structexp;
 }
 
 Bexpression *Llvm_backend::resolveCompositeInit(Bexpression *expr,
@@ -1682,7 +1668,9 @@ Llvm_backend::makeDelayedCompositeExpr(Btype *btype,
   // Here the NULL value signals that we want to delay full instantiation
   // of this constant expression until we can identify the storage for it.
   llvm::Value *nilval = nullptr;
-  Bexpression *ccon = nbuilder_.mkComposite(btype, nilval, init_vals, location);
+  Binstructions instructions;
+  Bexpression *ccon = nbuilder_.mkComposite(btype, nilval, init_vals,
+                                            instructions, location);
   return ccon;
 }
 
@@ -1725,7 +1713,9 @@ Llvm_backend::makeConstCompositeExpr(Btype *btype,
     scon = llvm::ConstantArray::get(llat, llvals);
   }
 
-  Bexpression *bcon = nbuilder_.mkComposite(btype, scon, vals, location);
+  Binstructions instructions;
+  Bexpression *bcon = nbuilder_.mkComposite(btype, scon, vals,
+                                            instructions, location);
   return makeGlobalExpression(bcon, scon, btype, location);
 }
 
@@ -1818,7 +1808,6 @@ struct GenCallState {
   CABIOracle oracle;
   Binstructions instructions;
   BinstructionsLIRBuilder builder;
-  // BlockLIRBuilder builder;
   std::vector<Bexpression *> resolvedArgs;
   llvm::SmallVector<llvm::Value *, 16> llargs;
   llvm::Value *chainVal;
@@ -2185,7 +2174,7 @@ Llvm_backend::convertForAssignment(Bexpression *src,
   if (src->value()->getType() == dstToType)
     return src->value();
 
-  BlockLIRBuilder builder(bfunc->function());
+  BlockLIRBuilder builder(bfunc->function(), this);
   llvm::Value *val = convertForAssignment(src->btype(), src->value(),
                                           dstToType, &builder);
   // hack: irbuilder likes to create unnamed bitcasts
@@ -2382,7 +2371,7 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   }
 
   Binstructions retInsns;
-  llvm::Value *rval = bfunction->genReturnSequence(toret, &retInsns);
+  llvm::Value *rval = bfunction->genReturnSequence(toret, &retInsns, this);
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, rval);
   Bexpression *rexp =
       nbuilder_.mkReturn(btype, ri, toret, retInsns, location);

@@ -36,6 +36,7 @@ go-llvm-cabi-oracle.cpp
 go-llvm-diagnostics.cpp
 go-llvm-dibuildhelper.cpp
 go-llvm-genblocks.cpp
+go-llvm-irbuilders.cpp
 go-llvm-linemap.cpp
 go-llvm-tree-integrity.cpp
 go-llvm-typemanager.cpp

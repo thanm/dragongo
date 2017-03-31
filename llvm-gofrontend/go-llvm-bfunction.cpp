@@ -398,10 +398,10 @@ void Bfunction::fixupProlog(llvm::BasicBlock *entry)
 }
 
 llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,
-                                          Binstructions *retInstrs)
+                                          Binstructions *retInstrs,
+                                          NameGen *inamegen)
 {
   const CABIParamInfo &returnInfo = abiOracle_->returnInfo();
-  BinstructionsLIRBuilder builder(function()->getContext(), retInstrs);
 
   // If we're returning an empty struct, or if the function has void
   // type, then return a null ptr (return "void").
@@ -414,16 +414,13 @@ llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,
 
   // Indirect return: emit memcpy into sret
   if (returnInfo.disp() == ParmIndirect) {
-    BlockLIRBuilder bbuilder(function());
+    BlockLIRBuilder bbuilder(function(), inamegen);
     uint64_t sz = tm->typeSize(fcnType_->resultType());
     uint64_t algn = tm->typeAlignment(fcnType_->resultType());
     bbuilder.CreateMemCpy(rtnValueMem_, toRet->value(), sz, algn);
-    for (auto i : bbuilder.instructions()) {
-      // hack: irbuilder likes to create unnamed bitcasts
-      if (i->isCast())
-        i->setName(namegen("cast"));
+    std::vector<llvm::Instruction*> instructions = bbuilder.instructions();
+    for (auto i : instructions)
       retInstrs->appendInstruction(i);
-    }
     llvm::Value *rval = nullptr;
     return rval;
   }
@@ -441,6 +438,7 @@ llvm::Value *Bfunction::genReturnSequence(Bexpression *toRet,
                       returnInfo.computeABIStructType(tm) :
                       returnInfo.abiType());
   llvm::Type *ptst = tm->makeLLVMPointerType(llrt);
+  BinstructionsLIRBuilder builder(function()->getContext(), retInstrs);
   std::string castname(namegen("cast"));
   llvm::Value *bitcast = builder.CreateBitCast(toRet->value(), ptst, castname);
   std::string loadname(namegen("ld"));
