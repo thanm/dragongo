@@ -717,14 +717,8 @@ Bexpression *Llvm_backend::genStore(Bfunction *func,
                                  dstExpr->value()->getType(),
                                  val, dst);
 
-  Binstructions insns(builder.instructions());
-  for (auto i : insns.instructions()) {
-    // hack: irbuilder likes to create unnamed bitcasts
-    if (i->isCast() && i->getName() == "")
-      i->setName(namegen("cast"));
-  }
-
   // Wrap result in a Bexpression
+  Binstructions insns(builder.instructions());
   Bexpression *rval =
       nbuilder_.mkBinaryOp(OPERATOR_EQ, valexp->btype(), result,
                              dstExpr, valexp, insns, location);
@@ -2178,13 +2172,7 @@ Llvm_backend::convertForAssignment(Bexpression *src,
   BlockLIRBuilder builder(bfunc->function(), this);
   llvm::Value *val = convertForAssignment(src->btype(), src->value(),
                                           dstToType, &builder);
-  // hack: irbuilder likes to create unnamed bitcasts
-  std::vector<llvm::Instruction*> insns = builder.instructions();
-  for (auto i : insns) {
-    if (i->isCast() && i->getName() == "")
-      i->setName(namegen("cast"));
-    src->appendInstruction(i);
-  }
+  src->appendInstructions(builder.instructions());
   return val;
 }
 
