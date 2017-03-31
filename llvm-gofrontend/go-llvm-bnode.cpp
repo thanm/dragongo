@@ -16,6 +16,7 @@
 #include "go-llvm-bvariable.h"
 #include "go-llvm-bexpression.h"
 #include "go-llvm-bstatement.h"
+#include "go-llvm-tree-integrity.h"
 #include "go-system.h"
 
 #include "llvm/Support/raw_ostream.h"
@@ -288,7 +289,9 @@ LabelId Bnode::label() const
 
 //......................................................................
 
-BnodeBuilder::BnodeBuilder()
+BnodeBuilder::BnodeBuilder(Llvm_backend *be)
+    : be_(be)
+    , integrityVisitor_(new IntegrityVisitor(be, TreeIntegCtl(DumpPointers, IgnoreVarExprs, DontRepairSharing)))
 {
 }
 
@@ -322,10 +325,19 @@ void BnodeBuilder::freeExpr(Bexpression *expr)
   delete expr;
 }
 
+void BnodeBuilder::checkTreeInteg(Bnode *node)
+{
+  for (unsigned idx = 0; idx < node->kids_.size(); ++idx) {
+    Bnode *kid = node->kids_[idx];
+    integrityVisitor_->setParent(kid, node, idx);
+  }
+}
+
 Bexpression *BnodeBuilder::archive(Bexpression *expr)
 {
   expr->id_ = earchive_.size();
   earchive_.push_back(expr);
+  checkTreeInteg(expr);
   return expr;
 }
 
@@ -333,6 +345,7 @@ Bstatement *BnodeBuilder::archive(Bstatement *stmt)
 {
   stmt->id_ = sarchive_.size();
   sarchive_.push_back(stmt);
+  checkTreeInteg(stmt);
   return stmt;
 }
 

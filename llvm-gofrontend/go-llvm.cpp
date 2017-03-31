@@ -47,6 +47,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , context_(context)
     , module_(module)
     , datalayout_(module ? &module->getDataLayout() : nullptr)
+    , nbuilder_(this)
     , diCompileUnit_(nullptr)
     , linemap_(linemap)
     , addressSpace_(0)
@@ -614,8 +615,11 @@ Bexpression *Llvm_backend::resolveVarContext(Bexpression *expr,
     assert(vc.addrLevel() == 0 || vc.addrLevel() == 1);
     if (vc.addrLevel() == 1 || vc.lvalue() || ctx == VE_lvalue) {
       assert(vc.addrLevel() == 0 || expr->btype()->type()->isPointerTy());
+#if 0
       return nbuilder_.mkAddress(expr->btype(), expr->value(),
                                  expr, expr->location());
+#endif
+      return expr;
     }
     Btype *btype = expr->btype();
     Bexpression *rval = loadFromExpr(expr, btype, expr->location(), expr->tag());

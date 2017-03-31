@@ -33,6 +33,8 @@ typedef unsigned LabelId;
 class Bexpression;
 class Binstructions;
 class SwitchDescriptor;
+class IntegrityVisitor;
+class Llvm_backend;
 
 // Use when deleting a Bnode subtree. Controls whether to delete just
 // the Bnode objects, just the LLVM instructions they contain, or both.
@@ -180,7 +182,7 @@ class Bnode {
 
 class BnodeBuilder {
  public:
-  BnodeBuilder();
+  BnodeBuilder(Llvm_backend *be);
   ~BnodeBuilder();
 
   // Deletes all allocated Bstatements (also switch descriptors)
@@ -269,12 +271,15 @@ class BnodeBuilder {
   Bblock *archive(Bblock *bb);
   Bexpression *cloneSub(Bexpression *expr,
                         std::map<llvm::Value *, llvm::Value *> &vm);
+  void checkTreeInteg(Bnode *node);
 
  private:
+  Llvm_backend *be_;
   std::unique_ptr<Bstatement> errorStatement_;
   std::vector<Bexpression *> earchive_;
   std::vector<Bstatement *> sarchive_;
   std::vector<SwitchDescriptor*> swcases_;
+  std::unique_ptr<IntegrityVisitor> integrityVisitor_;
 };
 
 // This class helps automate walking of a Bnode subtree; it invokes

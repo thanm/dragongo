@@ -23,6 +23,7 @@ class Instruction;
 class Bstatement;
 class Bexpression;
 class Llvm_backend;
+class BnodeBuilder;
 
 enum CkTreePtrDisp { DumpPointers, NoDumpPointers };
 enum CkTreeVarDisp { CheckVarExprs, IgnoreVarExprs };
@@ -117,6 +118,8 @@ class IntegrityVisitor {
   CkTreePtrDisp includePointers() const { return control_.ptrDisp; }
   CkTreeVarDisp includeVarExprs() const { return control_.varDisp; }
   CkTreeRepairDisp doRepairs() const { return control_.repairDisp; }
+
+  friend BnodeBuilder;
 };
 
 #endif // LLVMGOFRONTEND_GO_LLVM_TREE_INTEGRITY_H
