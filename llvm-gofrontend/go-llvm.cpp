@@ -562,9 +562,19 @@ Bexpression *Llvm_backend::address_expression(Bexpression *bexpr,
       llvm::isa<llvm::Constant>(bexpr->value()))
     return bexpr;
 
+  // If the value we're trying to take the address of is a composite
+  // constant, we have to spill it to memory here in order for us to
+  // take its address.
+  llvm::Value *val = bexpr->value();
+  if (llvm::isa<llvm::Constant>(val)) {
+    llvm::Constant *cval = llvm::cast<llvm::Constant>(val);
+    Bvariable *cv = genVarForConstant(cval, bexpr->btype());
+    val = cv->value();
+  }
+
   // Create new expression with proper type.
   Btype *pt = pointer_type(bexpr->btype());
-  Bexpression *rval = nbuilder_.mkAddress(pt, bexpr->value(), bexpr, location);
+  Bexpression *rval = nbuilder_.mkAddress(pt, val, bexpr, location);
   std::string adtag(bexpr->tag());
   adtag += ".ad";
   rval->setTag(adtag);
