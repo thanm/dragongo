@@ -24,6 +24,7 @@ gofrontend/go/runtime.cc
 gofrontend/go/statements.cc
 gofrontend/go/types.cc
 gofrontend/go/unsafe.cc
+gofrontend/go/wb.cc
 go-backend.cpp
 go-llvm-bexpression.cpp
 go-llvm-bfunction.cpp
