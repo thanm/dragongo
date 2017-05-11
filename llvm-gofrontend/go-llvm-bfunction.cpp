@@ -65,7 +65,7 @@ std::string Bfunction::namegen(const std::string &tag)
 llvm::Instruction *Bfunction::addAlloca(llvm::Type *typ,
                                         const std::string &name)
 {
-  llvm::Instruction *inst = new llvm::AllocaInst(typ);
+  llvm::Instruction *inst = new llvm::AllocaInst(typ, 0);
   if (! name.empty())
     inst->setName(name);
   allocas_.push_back(inst);
