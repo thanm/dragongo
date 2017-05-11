@@ -11,6 +11,7 @@
 #include <sstream>
 #include <climits>
 #include <ctype.h>
+#include <stdarg.h>
 
 # include <unordered_map>
 # include <unordered_set>
