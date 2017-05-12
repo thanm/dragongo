@@ -199,10 +199,10 @@ public:
   Bexpression *array_index_expression(Bexpression *array, Bexpression *index,
                                       Location);
 
-  Bexpression *call_expression(Bexpression *fn,
+  Bexpression *call_expression(Bfunction *caller,
+                               Bexpression *fn,
                                const std::vector<Bexpression *> &args,
                                Bexpression *static_chain,
-                               Bfunction *caller,
                                Location);
 
   Bexpression *stack_allocation_expression(int64_t size, Location);

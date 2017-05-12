@@ -42,6 +42,7 @@ Bexpression::Bexpression(NodeFlavor fl, const std::vector<Bnode *> &kids,
 
 Bexpression::Bexpression(const Bexpression &src)
     : Bnode(src)
+    , Binstructions()
     , value_(src.value_)
     , btype_(src.btype_)
 {

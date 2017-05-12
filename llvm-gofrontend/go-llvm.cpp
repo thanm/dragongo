@@ -2050,10 +2050,10 @@ void Llvm_backend::genCallEpilog(GenCallState &state,
 
 // Create an expression for a call to FN_EXPR with FN_ARGS.
 Bexpression *
-Llvm_backend::call_expression(Bexpression *fn_expr,
+Llvm_backend::call_expression(Bfunction *caller,
+                              Bexpression *fn_expr,
                               const std::vector<Bexpression *> &fn_args,
                               Bexpression *chain_expr,
-                              Bfunction *caller,
                               Location location) {
   if (fn_expr == errorExpression() || exprVectorHasError(fn_args) ||
       chain_expr == errorExpression())
@@ -3114,7 +3114,7 @@ llvm::BasicBlock *GenBlocks::genIf(Bstatement *ifst,
 
   // Walk false block if present
   if (falseStmt) {
-    llvm::BasicBlock *fsucc = fsucc = walk(falseStmt, fblock);
+    llvm::BasicBlock *fsucc = walk(falseStmt, fblock);
     if (fsucc && ! fsucc->getTerminator())
       llvm::BranchInst::Create(ft, fsucc);
   }

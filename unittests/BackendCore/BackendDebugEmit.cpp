@@ -90,7 +90,7 @@ TEST(BackendDebugEmit, MoreComplexVarDecls) {
   Bexpression *fn2 = be->function_code_expression(func2, loc);
   std::vector<Bexpression *> noargs;
   Bexpression *call2 =
-      be->call_expression(fn2, noargs, nullptr, func2,  h.loc());
+      be->call_expression(func2, fn2, noargs, nullptr,  h.loc());
   h.addStmt(be->init_statement(func, vlist[0], call2));
   h.addStmt(be->init_statement(func, vlist[1], be->zero_expression(beat)));
   h.addStmt(be->init_statement(func, vlist[2], be->zero_expression(bi32t)));
@@ -105,7 +105,7 @@ TEST(BackendDebugEmit, MoreComplexVarDecls) {
   args.push_back(mkInt32Const(be, 4));
   args.push_back(be->var_expression(p0, VE_rvalue, loc));
   args.push_back(be->var_expression(p1, VE_rvalue, loc));
-  Bexpression *call = be->call_expression(fn, args, nullptr, func, h.loc());
+  Bexpression *call = be->call_expression(func, fn, args, nullptr, h.loc());
   std::vector<Bexpression *> rvals;
   rvals.push_back(call);
   h.mkReturn(rvals);
