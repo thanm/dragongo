@@ -17,6 +17,8 @@
 // Currently these need to be included before backend.h
 #include "go-llvm-linemap.h"
 #include "go-location.h"
+
+// Definitions of Btype, Bexpression, and related B* classes.
 #include "go-llvm-btype.h"
 #include "go-llvm-bexpression.h"
 #include "go-llvm-bstatement.h"
@@ -58,7 +60,6 @@ class raw_ostream;
 class BuiltinTable;
 class BlockLIRBuilder;
 class BinstructionsLIRBuilder;
-
 struct GenCallState;
 
 #include "llvm/IR/GlobalValue.h"
@@ -724,10 +725,9 @@ private:
   // so that we can free them on exit.
   std::vector<Bfunction *> functions_;
 
-  // HACK: pointer to current function being generated.  This really
-  // should not be here, but at the moment there is no way to recover
-  // the enclosing function at the point from within
-  // Llvm_backend::call_expression.
+  // Pointer to current function being generated. Used for sanity checking,
+  // to catch cases where the front end switches between functions in
+  // an expected way.
   Bfunction *curFcn_;
 };
 
