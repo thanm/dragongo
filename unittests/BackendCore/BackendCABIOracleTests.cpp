@@ -272,7 +272,7 @@ TEST(BackendCABIOracleTests, RecursiveCall1) {
 
   Bvariable *p5 = func->getNthParamVar(5);
   args.push_back(be->var_expression(p5, VE_rvalue, loc));
-  Bexpression *call = be->call_expression(fn, args, nullptr, func, h.loc());
+  Bexpression *call = be->call_expression(func, fn, args, nullptr, h.loc());
 
 
   // return y
@@ -341,7 +341,7 @@ TEST(BackendCABIOracleTests, PassAndReturnArrays) {
   Bexpression *fn = be->function_code_expression(func, loc);
   std::vector<Bexpression *> args;
   args.push_back(vex);
-  Bexpression *call = be->call_expression(fn, args, nullptr, func, h.loc());
+  Bexpression *call = be->call_expression(func, fn, args, nullptr, h.loc());
 
   // return foo(fp)
   std::vector<Bexpression *> rvals;
@@ -393,7 +393,7 @@ TEST(BackendCABIOracleTests, EmptyStructParamsAndReturns) {
   args.push_back(mkInt32Const(be, 4));
   args.push_back(be->var_expression(p0, VE_rvalue, loc));
   args.push_back(be->var_expression(p0, VE_rvalue, loc));
-  Bexpression *call = be->call_expression(fn, args, nullptr, func, h.loc());
+  Bexpression *call = be->call_expression(func, fn, args, nullptr, h.loc());
 
   // return the call above
   std::vector<Bexpression *> rvals;
@@ -423,7 +423,7 @@ TEST(BackendCABIOracleTests, CallBuiltinFunction) {
   Location loc;
   Bexpression *fn = be->function_code_expression(tfunc, loc);
   std::vector<Bexpression *> args;
-  h.mkExprStmt(be->call_expression(fn, args, nullptr, func, h.loc()));
+  h.mkExprStmt(be->call_expression(func, fn, args, nullptr, h.loc()));
 
   const char *exp = R"RAW_RESULT(
      call void @llvm.trap()

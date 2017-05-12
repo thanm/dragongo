@@ -32,7 +32,7 @@ TEST(BackendCallTests, TestSimpleCall) {
   args.push_back(mkInt32Const(be, int64_t(3)));
   args.push_back(mkInt32Const(be, int64_t(6)));
   args.push_back(be->zero_expression(bpi64t));
-  Bexpression *call = be->call_expression(fn, args, nullptr, func, h.loc());
+  Bexpression *call = be->call_expression(func, fn, args, nullptr, h.loc());
   Bvariable *x = h.mkLocal("x", bi64t, call);
   h.mkReturn(be->var_expression(x, VE_rvalue, loc));
 
@@ -68,7 +68,7 @@ TEST(BackendCallTests, CallToVoid) {
   // Create call to it
   Bexpression *fn = be->function_code_expression(befcn, loc);
   std::vector<Bexpression *> args;
-  Bexpression *call = be->call_expression(fn, args, nullptr, func, loc);
+  Bexpression *call = be->call_expression(func, fn, args, nullptr, loc);
   h.mkExprStmt(call);
 
   const char *exp = R"RAW_RESULT(

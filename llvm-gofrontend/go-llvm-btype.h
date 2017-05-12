@@ -310,12 +310,12 @@ class BPointerType : public Btype {
 inline BPointerType *Btype::castToBPointerType() {
   return (flavor_ == PointerT ? static_cast<BPointerType *>(this)
           : nullptr);
-};
+}
 
 inline const BPointerType *Btype::castToBPointerType() const {
   return (flavor_ == PointerT ? static_cast<const BPointerType *>(this)
           : nullptr);
-};
+}
 
 class BFunctionType : public Btype {
  public:
