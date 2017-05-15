@@ -78,6 +78,39 @@ entry:
 %
 ```
 
+## Using llvm-goparse in combination with a GCCGO installation
+
+At the moment llvm-goparse is not capable of building the Go libraries + runtime (libgo), which makes it difficult/unwieldy to use for running actual Go programs. As an interim workaround, I've written a shim/wrapper script that allows you to use llvm-goparse in combination with an existing GCCGO installation, using gccgo for the runtime/libraries and the linking step, but llvm-goparse for any compilation. 
+
+The wrapper script can be found in the tools/ subdir. To use it, build a copy of GCCGO and run "make install" to copy the bits into an install directory. From the GCCGO install directory, you can insert the wrapper by running it with the "--install" option:
+
+```
+ % cd /my/gccgo/install
+ % /my/dragongo/sandbox/tools/gollvm-wrap.py --install
+ executing: mv bin/gccgo bin/gccgo.real
+ executing: chmod 0755 bin/gccgo
+ executing: cp /my/dragongo/sandbox/tools/gollvm-wrap.py bin
+ executing: cp /my/dragongo/sandbox/tools/script_utils.py bin
+ wrapper installed successfully
+ %
+
+```
+
+At this point you can now run "go build", "go run", etc using GCCGO -- the compilation steps will be performed by llvm-goparse, and the remainder (linking, incorporation of runtime) will be done by gccgo. Example:
+
+```
+% cd $GOPATH/src/himom
+% go run himom.go
+hi mom!
+% go run -compiler gccgo himom.go
+hi mom!
+% GOLLVM_WRAP_OPTIONS=-t go run -compiler gccgo himom.go
+# command-line-arguments
++ llvm-goparse -I $WORK -c -g -m64 -fgo-relative-import-path=_/mygopath/src/himom -o $WORK/command-line-arguments/_obj/_go_.o.s ./himom.go -L /my/gccgo/install/lib64/go/8.0.0/x86_64-pc-linux-gnu
+hi mom
+%
+```
+
 ## Building and running the unit tests
 
 Here are instructions on building and running the unit tests for the middle layer:
