@@ -1199,6 +1199,27 @@ Btype *TypeManager::circularTypeAddrConversion(Btype *typ) {
   return nullptr;
 }
 
+llvm::Type *TypeManager::landingPadExceptionType()
+{
+  llvm::SmallVector<llvm::Type *, 2> elems(2);
+  elems[0] = llvmPtrType();
+  elems[1] = llvmInt32Type();
+  return llvm::StructType::get(context_, elems);
+}
+
+llvm::FunctionType *TypeManager::personalityFunctionType()
+{
+  const bool isVarargs = false;
+  llvm::SmallVector<llvm::Type *, 4> elems(4);
+  elems[0] = llvmInt32Type();
+  elems[1] = llvmInt64Type();
+  elems[2] = llvmPtrType();
+  elems[3] = llvmPtrType();
+  llvm::FunctionType *llft =
+      llvm::FunctionType::get(llvmInt32Type(), elems, isVarargs);
+  return llft;
+}
+
 llvm::Type *TypeManager::placeholderProxyType(Btype *typ,
                                               pproxymap *pmap)
 {

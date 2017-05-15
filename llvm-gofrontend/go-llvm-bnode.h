@@ -73,7 +73,9 @@ enum NodeFlavor {
   N_GotoStmt,
   N_ExprStmt,
   N_ReturnStmt,
+  N_DeferStmt,
   N_IfStmt,
+  N_ExcepStmt,
   N_BlockStmt,
   N_SwitchStmt,
   N_LastStmt=N_SwitchStmt
@@ -236,6 +238,15 @@ class BnodeBuilder {
   Bstatement *mkIfStmt(Bfunction *func,
                        Bexpression *cond, Bblock *trueBlock,
                        Bblock *thenBlock, Location loc);
+  Bstatement *mkDeferStmt(Bfunction *func,
+                          Bexpression *undefer,
+                          Bexpression *defer,
+                          Location loc);
+  Bstatement *mkExcepStmt(Bfunction *func,
+                          Bstatement *body,
+                          Bstatement *onexception,
+                          Bstatement *finally,
+                          Location loc);
   Bstatement *mkSwitchStmt(Bfunction *func,
                            Bexpression *swvalue,
                            const std::vector<std::vector<Bexpression *> > &vals,

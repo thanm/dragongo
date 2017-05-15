@@ -388,6 +388,9 @@ public:
   void setTraceLevel(unsigned level);
   unsigned traceLevel() const { return traceLevel_; }
 
+  // Personality function
+  llvm::Function *personalityFunction();
+
  private:
   Bexpression *errorExpression() const { return errorExpression_; }
   Bstatement *errorStatement() const { return errorStatement_; }
@@ -724,6 +727,9 @@ private:
   // by the frontend, so here we keep track of all returned Bfunctions
   // so that we can free them on exit.
   std::vector<Bfunction *> functions_;
+
+  // Personality function
+  llvm::Function *personalityFunction_;
 
   // Pointer to current function being generated. Used for sanity checking,
   // to catch cases where the front end switches between functions in

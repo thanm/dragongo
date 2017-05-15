@@ -108,7 +108,7 @@ class TypeManager {
   // only for debugging).
   llvm::Type *makeOpaqueLlvmType(const char *tag);
 
-  // Precomputer LLVM types of various sorts
+  // Precomputed LLVM types of various sorts
   llvm::Type *llvmVoidType() const { return llvmVoidType_; }
   llvm::Type *llvmBoolType() const { return llvmBoolType_; }
   llvm::Type *llvmPtrType() const { return llvmPtrType_; }
@@ -122,6 +122,8 @@ class TypeManager {
   llvm::Type *llvmLongDoubleType() const { return llvmLongDoubleType_; }
   llvm::Type *llvmTwoFloatVecType() const { return llvmTwoFloatVecType_; }
   llvm::Type *llvmArbitraryIntegerType(unsigned bytes);
+  llvm::Type *landingPadExceptionType();
+  llvm::FunctionType *personalityFunctionType();
 
   // Context + address space.
   llvm::LLVMContext &context() const { return context_; }

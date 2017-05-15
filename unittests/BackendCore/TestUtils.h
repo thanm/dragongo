@@ -165,6 +165,9 @@ class FcnTestHarness {
   // expressions it creates -- this helper returns that location.
   Location loc() const { return loc_; }
 
+  // Update the dummy location to something new, then return it.
+  Location newloc();
+
   // Return current function
   Bfunction *func() const { return func_; }
 
@@ -248,6 +251,7 @@ class FcnTestHarness {
   Bblock *entryBlock_;
   Bblock *curBlock_;
   Blabel *nextLabel_;
+  unsigned lineNum_;
   bool finished_;
   bool returnAdded_;
   bool emitDumpFilesOnDiff_;

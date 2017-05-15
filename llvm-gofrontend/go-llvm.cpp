@@ -60,6 +60,7 @@ Llvm_backend::Llvm_backend(llvm::LLVMContext &context,
     , TLI_(nullptr)
     , builtinTable_(new BuiltinTable(typeManager(), false))
     , errorFunction_(nullptr)
+    , personalityFunction_(nullptr)
     , curFcn_(nullptr)
 {
   // If nobody passed in a linemap, create one for internal use (unit testing)
@@ -350,6 +351,19 @@ int64_t Llvm_backend::type_field_alignment(Btype *btype)
 int64_t Llvm_backend::type_field_offset(Btype *btype, size_t index)
 {
   return typeFieldOffset(btype, index);
+}
+
+llvm::Function *Llvm_backend::personalityFunction()
+{
+  if (personalityFunction_)
+    return personalityFunction_;
+
+  llvm::FunctionType *pft = personalityFunctionType();
+  llvm::GlobalValue::LinkageTypes plinkage = llvm::GlobalValue::ExternalLinkage;
+  const char *pfn = "__gccgo_personality_v0";
+  personalityFunction_ =
+      llvm::Function::Create(pft, plinkage, pfn, module_);
+  return personalityFunction_;
 }
 
 Bfunction *Llvm_backend::defineBuiltinFcn(const std::string &name,
@@ -863,8 +877,6 @@ Bexpression *Llvm_backend::var_expression(Bvariable *var,
                                           Location location) {
   if (var == errorVariable_.get())
     return errorExpression();
-
-  // FIXME: record debug location
 
   Bexpression *varexp = nbuilder_.mkVar(var, location);
   varexp->setTag(var->name().c_str());
@@ -2382,9 +2394,23 @@ Llvm_backend::return_statement(Bfunction *bfunction,
 Bstatement *Llvm_backend::exception_handler_statement(Bstatement *bstat,
                                                       Bstatement *except_stmt,
                                                       Bstatement *finally_stmt,
-                                                      Location location) {
-  assert(false && "Llvm_backend::exception_handler_statement not yet impl");
-  return nullptr;
+                                                      Location location)
+{
+  if (bstat == errorStatement() ||
+      except_stmt == errorStatement() ||
+      finally_stmt == errorStatement())
+    return errorStatement();
+
+  Bfunction *func = bstat->function();
+  assert(func == except_stmt->function());
+  assert(!finally_stmt || func == finally_stmt->function());
+
+  Bstatement *excepst = nbuilder_.mkExcepStmt(func, bstat,
+                                              except_stmt,
+                                              finally_stmt, location);
+  enforceTreeIntegrity(excepst);
+
+  return excepst;
 }
 
 // If statement.
@@ -2955,8 +2981,16 @@ Bstatement *Llvm_backend::function_defer_statement(Bfunction *function,
                                                    Bexpression *defer,
                                                    Location location)
 {
-  assert(false && "Llvm_backend::function_defer_statement not yet impl");
-  return nullptr;
+  if (function == errorFunction_.get() ||
+      undefer == errorExpression() ||
+      defer == errorExpression())
+    return errorStatement();
+
+  Bstatement *defst = nbuilder_.mkDeferStmt(function, undefer, defer,
+                                            location);
+  enforceTreeIntegrity(defst);
+
+  return defst;
 }
 
 // Record PARAM_VARS as the variables to use for the parameters of FUNCTION.
@@ -2989,13 +3023,24 @@ public:
                           llvm::BasicBlock *curblock);
   llvm::BasicBlock *genSwitch(Bstatement *swst,
                               llvm::BasicBlock *curblock);
+  llvm::BasicBlock *genDefer(Bstatement *defst,
+                             llvm::BasicBlock *curblock);
+  llvm::BasicBlock *genReturn(Bstatement *rst,
+                             llvm::BasicBlock *curblock);
+  llvm::BasicBlock *genExcep(Bstatement *excepst,
+                             llvm::BasicBlock *curblock);
 
  private:
   llvm::BasicBlock *mkLLVMBlock(const std::string &name,
                             unsigned expl = Llvm_backend::ChooseVer);
   llvm::BasicBlock *getBlockForLabel(LabelId lab);
   llvm::BasicBlock *walkExpr(llvm::BasicBlock *curblock, Bexpression *expr);
-
+  std::pair<llvm::Instruction*, llvm::BasicBlock *>
+  rewriteToMayThrowCall(llvm::CallInst *call,
+                        llvm::BasicBlock *curblock);
+  std::pair<llvm::Instruction*, llvm::BasicBlock *>
+  postProcessInst(llvm::Instruction *inst,
+                  llvm::BasicBlock *curblock);
   llvm::DIBuilder &dibuilder() { return be_->dibuilder(); }
   DIBuildHelper &dibuildhelper() { return *dibuildhelper_.get(); }
   Llvm_linemap *linemap() { return be_->linemap(); }
@@ -3006,6 +3051,9 @@ public:
   Bfunction *function_;
   std::unique_ptr<DIBuildHelper> dibuildhelper_;
   std::map<LabelId, llvm::BasicBlock *> labelmap_;
+  std::vector<llvm::BasicBlock*> padBlockStack_;
+  llvm::BasicBlock* finallyBlock_;
+  Bstatement *cachedReturn_;
   bool emitOrphanedCode_;
   bool createDebugMetaData_;
 };
@@ -3018,7 +3066,8 @@ GenBlocks::GenBlocks(llvm::LLVMContext &context,
                      bool createDebugMetadata,
                      llvm::BasicBlock *entryBlock)
     : context_(context), be_(be), function_(function),
-      dibuildhelper_(nullptr), emitOrphanedCode_(false),
+      dibuildhelper_(nullptr), finallyBlock_(nullptr),
+      cachedReturn_(nullptr), emitOrphanedCode_(false),
       createDebugMetaData_(createDebugMetadata)
 {
   if (createDebugMetaData_) {
@@ -3056,6 +3105,65 @@ llvm::BasicBlock *GenBlocks::getBlockForLabel(LabelId lab) {
   return bb;
 }
 
+// This helper routine takes a garden variety call instruction and
+// rewrites it to an equivalent llvm::InvokeInst that may throw an
+// exception (with associated explicit EH control flow). The helper is
+// used to fix up calls that appear within the body or catch clauses
+// of an EH statement (see Llvm_backend::exception_handler_statement).
+// Redoing calls in this way (as opposed to creating the correct
+// flavor of call from the get-go) is mildly hacky, but seems to be
+// the most practical way to get the sort of call we need, given that
+// at the point where Backend::call_expression is originally invoked
+// we don't know whether the call will reside in a try block.
+
+std::pair<llvm::Instruction*, llvm::BasicBlock *>
+GenBlocks::rewriteToMayThrowCall(llvm::CallInst *call,
+                                 llvm::BasicBlock *curblock)
+{
+  llvm::BasicBlock *padbb = padBlockStack_.back();
+  llvm::Function *func = function()->function();
+
+  // Create 'continue' block, where control will flow if
+  // the call to the function does not result in an exception.
+  llvm::BasicBlock *contbb =
+      llvm::BasicBlock::Create(context_, be_->namegen("cont"), func);
+
+  // Create a new InvokeInst that is equivalent (in terms of
+  // target, operands, etc) to the CallInst 'call', but uses a
+  // possibly-excepting call with landing pad.
+  llvm::SmallVector<llvm::Value *, 8> args(call->arg_begin(), call->arg_end());
+  llvm::InvokeInst *invcall =
+      llvm::InvokeInst::Create(call->getCalledValue(),
+                               contbb, padbb, args,
+                               call->getName());
+
+  // Rewrite uses of the original call's return value to be the new call's
+  // return value.
+  call->replaceAllUsesWith(invcall);
+
+  // New call needs same attributes
+  invcall->setAttributes(call->getAttributes());
+
+  // Old call longer needed
+  delete call;
+
+  return std::make_pair(invcall, contbb);
+}
+
+// Hook to post-process an LLVM instruction immediately before it
+// is assigned to a block.
+
+std::pair<llvm::Instruction*, llvm::BasicBlock *>
+GenBlocks::postProcessInst(llvm::Instruction *inst,
+                           llvm::BasicBlock *curblock)
+{
+  if (llvm::isa<llvm::CallInst>(inst) && !padBlockStack_.empty()) {
+    llvm::CallInst *call = llvm::cast<llvm::CallInst>(inst);
+    return rewriteToMayThrowCall(call, curblock);
+  }
+  return std::make_pair(inst, curblock);
+}
+
 llvm::BasicBlock *GenBlocks::walkExpr(llvm::BasicBlock *curblock,
                                       Bexpression *expr)
 {
@@ -3065,13 +3173,17 @@ llvm::BasicBlock *GenBlocks::walkExpr(llvm::BasicBlock *curblock,
     curblock = walk(child, curblock);
 
   // Now visit instructions for this expr
-  for (auto inst : expr->instructions()) {
+  for (auto originst : expr->instructions()) {
+    if (!curblock) {
+      delete originst;
+      continue;
+    }
+    auto pair = postProcessInst(originst, curblock);
+    auto inst = pair.first;
     if (createDebugMetaData_)
       dibuildhelper().processExprInst(expr, inst);
-    if (curblock)
-      curblock->getInstList().push_back(inst);
-    else
-      delete inst;
+    curblock->getInstList().push_back(inst);
+    curblock = pair.second;
   }
   return curblock;
 }
@@ -3179,12 +3291,217 @@ llvm::BasicBlock *GenBlocks::genSwitch(Bstatement *swst,
   return epilogBB;
 }
 
+// In most cases a return statement is handled in canonical way,
+// that is, any associated expressions are added to the current block
+// (including an llvm::ReturnInst) and the current block is closed out.
+//
+// Special handling is needed when the return appears within a
+// try/catch block (see Llvm_backend::exception_handler_statement)
+// with a "finally" clause. In such cases we have to rewrite each
+// return instruction into a jump to the finally block.
+//
+// HACK: we're taking advantage of the fact that the front end always
+// stores return values to a local variable as opposed to returning
+// those values directly (hence evern return sequence should always
+// look like "return X" where X is a load from an appropriately typed
+// variable. This fact permits us to copy a return from one place in
+// the program to another while getting the same semantics.
+
+llvm::BasicBlock *GenBlocks::genReturn(Bstatement *rst,
+                                       llvm::BasicBlock *curblock)
+{
+  assert(rst->flavor() == N_ReturnStmt);
+
+  Bexpression *re = rst->getReturnStmtExpr();
+
+  if (finallyBlock_) {
+    // Rewrite the return to a jump into the 'finally' block (see above).
+    // Here we also cache away a return statement so as to relocate
+    // it after the 'finally' block.
+    if (cachedReturn_ == nullptr) {
+      // Steal this return.
+      cachedReturn_ = rst;
+    } else {
+      Bnode::destroy(re, DelInstructions);
+    }
+    llvm::BranchInst::Create(finallyBlock_, curblock);
+  } else {
+    // Walk return expression
+    llvm::BasicBlock *bb = walkExpr(curblock, re);
+    assert(curblock == bb);
+  }
+  // A return terminates the current block
+  return nullptr;
+}
+
+llvm::BasicBlock *GenBlocks::genDefer(Bstatement *defst,
+                                      llvm::BasicBlock *curblock)
+{
+  assert(defst->flavor() == N_DeferStmt);
+
+  // Insure that current function has personality set
+  llvm::Function *func = function()->function();
+  if (! func->hasPersonalityFn())
+    func->setPersonalityFn(be_->personalityFunction());
+
+  Bexpression *defcallex = defst->getDeferStmtDeferCall();
+  Bexpression *undcallex = defst->getDeferStmtUndeferCall();
+
+  // Finish bb (see the comments for Llvm_backend::function_defer_statement
+  // as to why we use this name).
+  llvm::BasicBlock *finbb =
+      llvm::BasicBlock::Create(context_, be_->namegen("finish"), func);
+
+  // Landing pad to which control will be transferred if an exception
+  // is thrown when executing "undcallex".
+  llvm::BasicBlock *padbb =
+      llvm::BasicBlock::Create(context_, be_->namegen("pad"), func);
+
+  // Catch BB containing checkdefer (defercall) code.
+  llvm::BasicBlock *catchbb =
+      llvm::BasicBlock::Create(context_, be_->namegen("catch"), func);
+  if (curblock)
+    llvm::BranchInst::Create(finbb, curblock);
+  curblock = finbb;
+
+  // Push pad block onto stack. This will be an indication that any call
+  // in the defcallex subtree should be converted into an invoke with
+  // suitable landing pad.
+  padBlockStack_.push_back(padbb);
+
+  // Walk the defcall expression
+  curblock = walkExpr(curblock, defcallex);
+
+  // Pop the pad block stack
+  padBlockStack_.pop_back();
+
+  // Emit landing pad into pad block, followed by branch to catch block
+  llvm::LandingPadInst *padinst =
+      llvm::LandingPadInst::Create(be_->landingPadExceptionType(),
+                                   0, be_->namegen("ex"), padbb);
+  padinst->addClause(llvm::Constant::getNullValue(be_->llvmPtrType()));
+  llvm::BranchInst::Create(catchbb, padbb);
+
+  llvm::BasicBlock *contbb = curblock;
+
+  // Catch block containing defer call
+  curblock = catchbb;
+  auto bb = walkExpr(curblock, undcallex);
+  assert(bb == curblock);
+  llvm::BranchInst::Create(finbb, catchbb);
+
+  // Continue bb is final bb
+  return contbb;
+}
+
+llvm::BasicBlock *GenBlocks::genExcep(Bstatement *excepst,
+                                      llvm::BasicBlock *curblock)
+{
+  assert(excepst->flavor() == N_ExcepStmt);
+
+  // Insure that current function has personality set
+  llvm::Function *func = function()->function();
+  if (! func->hasPersonalityFn())
+    func->setPersonalityFn(be_->personalityFunction());
+
+  Bstatement *body = excepst->getExcepStmtBody();
+  assert(body);
+  Bstatement *ifexception = excepst->getExcepStmtOnException();
+  assert(ifexception);
+  Bstatement *finally = excepst->getExcepStmtFinally(); // may be null
+
+  // Create a landing pad block. This pad will be where control
+  // will arrive if an exception is thrown within the "body" code.
+  llvm::BasicBlock *padbb =
+      llvm::BasicBlock::Create(context_, be_->namegen("pad"), func);
+
+  // Create a "finally" BB, corresponding to where control will wind
+  // up once both the body and (possibly) the exception clause are
+  // complete. This will also be where we'll place any code in the
+  // "finally" statement above.
+  std::string cbbname(be_->namegen("finally"));
+  llvm::BasicBlock *contbb =
+      llvm::BasicBlock::Create(context_, cbbname, func);
+
+  // Not expecting to see nested exception statements, assert if
+  // this crops up.
+  assert(padBlockStack_.empty());
+
+  // If there is a finally block, then record the block for purposes
+  // of return handling.
+  finallyBlock_ = (finally ? contbb : nullptr);
+  assert(!cachedReturn_);
+
+  // Push first pad block onto stack. The presence of a non-empty pad
+  // block stack will be an indication that any call in the body
+  // subtree should be converted into an invoke using the pad.
+  padBlockStack_.push_back(padbb);
+
+  // Walk the body statement.
+  curblock = walk(body, curblock);
+
+  // Pop the pad block stack
+  padBlockStack_.pop_back();
+
+  // If the body block ended without a return, then insert a jump
+  // to the continue / or finally clause.
+  if (curblock)
+    llvm::BranchInst::Create(contbb, curblock);
+
+  // Emit landing pad inst in pad block, followed by branch to catch bb
+  llvm::LandingPadInst *padinst =
+      llvm::LandingPadInst::Create(be_->landingPadExceptionType(),
+                                   0, be_->namegen("ex"), padbb);
+  padinst->addClause(llvm::Constant::getNullValue(be_->llvmPtrType()));
+    llvm::BasicBlock *catchbb =
+      llvm::BasicBlock::Create(context_, be_->namegen("catch"), func);
+  llvm::BranchInst::Create(catchbb, padbb);
+
+  // Create second pad block. Here the idea is that if an exception
+  // is thrown as a result of any call within the catch ("ifexception" code)
+  // it will wind up at this pad.
+  llvm::BasicBlock *catchpadbb =
+      llvm::BasicBlock::Create(context_, be_->namegen("catchpad"), func);
+
+  // Push second pad, walk exception stmt, then pop the pad.
+  padBlockStack_.push_back(catchpadbb);
+  auto bb = walk(ifexception, catchbb);
+  if (bb)
+    llvm::BranchInst::Create(contbb, bb);
+  padBlockStack_.pop_back();
+
+  // Return handling now complete.
+  finallyBlock_ = nullptr;
+
+  // Fix up second pad block, followed by branch to continue block
+  llvm::LandingPadInst *padinst2 =
+      llvm::LandingPadInst::Create(be_->landingPadExceptionType(),
+                                   0, be_->namegen("ex2"), catchpadbb);
+  padinst2->addClause(llvm::Constant::getNullValue(be_->llvmPtrType()));
+  llvm::BranchInst::Create(contbb, catchpadbb);
+
+  // Handle finally statement where applicable
+  curblock = contbb;
+  if (finally != nullptr) {
+    curblock = walk(finally, curblock);
+    if (cachedReturn_ != nullptr) {
+      Bexpression *re = cachedReturn_->getReturnStmtExpr();
+      llvm::BasicBlock *bb = walkExpr(curblock, re);
+      assert(curblock == bb);
+      cachedReturn_ = nullptr;
+    }
+  }
+
+  return curblock;
+}
+
 llvm::BasicBlock *GenBlocks::walk(Bnode *node,
                                   llvm::BasicBlock *curblock)
 {
   Bexpression *expr = node->castToBexpression();
   if (expr)
     return walkExpr(curblock, expr);
+  llvm::Function *func = function()->function();
   Bstatement *stmt = node->castToBstatement();
   assert(stmt);
   switch (stmt->flavor()) {
@@ -3211,12 +3528,15 @@ llvm::BasicBlock *GenBlocks::walk(Bnode *node,
       break;
     }
     case N_ReturnStmt: {
-      // Walk return expression
-      Bexpression *re = stmt->getReturnStmtExpr();
-      llvm::BasicBlock *bb = walkExpr(curblock, re);
-      assert(curblock == bb);
-      // Returns terminate the current block
-      curblock = nullptr;
+      curblock = genReturn(stmt, curblock);
+      break;
+    }
+    case N_DeferStmt: {
+      curblock = genDefer(stmt, curblock);
+      break;
+    }
+    case N_ExcepStmt: {
+      curblock = genExcep(stmt, curblock);
       break;
     }
     case N_GotoStmt: {
@@ -3225,7 +3545,6 @@ llvm::BasicBlock *GenBlocks::walk(Bnode *node,
         llvm::BranchInst::Create(lbb, curblock);
       if (emitOrphanedCode_) {
         std::string n = be_->namegen("orphan");
-        llvm::Function *func = function()->function();
         llvm::BasicBlock *orphan =
             llvm::BasicBlock::Create(context_, n, func, lbb);
         curblock = orphan;
