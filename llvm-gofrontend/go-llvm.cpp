@@ -2333,12 +2333,6 @@ Llvm_backend::return_statement(Bfunction *bfunction,
     return errorStatement();
   curFcn_ = bfunction;
 
-  // For the moment the Bexpression for a return is going to have null
-  // type, since the value of a return expr should not be feeding into
-  // anything else (and since Go functions can return multiple
-  // values).
-  Btype *btype = nullptr;
-
   // Resolve arguments
   std::vector<Bexpression *> resolvedVals;
   for (auto &val : vals)
@@ -2372,9 +2366,11 @@ Llvm_backend::return_statement(Bfunction *bfunction,
   Binstructions retInsns;
   llvm::Value *rval = bfunction->genReturnSequence(toret, &retInsns, this);
   llvm::ReturnInst *ri = llvm::ReturnInst::Create(context_, rval);
-  Bexpression *rexp =
-      nbuilder_.mkReturn(btype, ri, toret, retInsns, location);
-  return nbuilder_.mkExprStmt(bfunction, rexp, location);
+  toret->appendInstructions(retInsns.instructions());
+  toret->appendInstruction(ri);
+  Bstatement *rst =
+      nbuilder_.mkReturn(bfunction, toret, location);
+  return rst;
 }
 
 // Create a statement that attempts to execute BSTAT and calls EXCEPT_STMT if an
@@ -3214,6 +3210,15 @@ llvm::BasicBlock *GenBlocks::walk(Bnode *node,
       curblock = genSwitch(stmt, curblock);
       break;
     }
+    case N_ReturnStmt: {
+      // Walk return expression
+      Bexpression *re = stmt->getReturnStmtExpr();
+      llvm::BasicBlock *bb = walkExpr(curblock, re);
+      assert(curblock == bb);
+      // Returns terminate the current block
+      curblock = nullptr;
+      break;
+    }
     case N_GotoStmt: {
       llvm::BasicBlock *lbb = getBlockForLabel(stmt->getGotoStmtTargetLabel());
       if (curblock && ! curblock->getTerminator())
@@ -3253,7 +3258,7 @@ llvm::BasicBlock *Llvm_backend::genEntryBlock(Bfunction *bfunction) {
   return entry;
 }
 
-void Llvm_backend::fixupEpilogBlog(Bfunction *bfunction,
+void Llvm_backend::fixupEpilogBlock(Bfunction *bfunction,
                                    llvm::BasicBlock *epilog)
 {
   // Append a return instruction if the block does not end with
@@ -3306,7 +3311,8 @@ bool Llvm_backend::function_set_body(Bfunction *function,
   gb.finishFunction(entryBlock);
 
   // Fix up epilog block if needed
-  fixupEpilogBlog(function, block);
+  if (block)
+    fixupEpilogBlock(function, block);
 
   // debugging
   if (traceLevel() > 0) {

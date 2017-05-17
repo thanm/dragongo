@@ -65,6 +65,10 @@ class Bstatement : public Bnode {
   // a pointer to the Bexpression it contains.
   Bexpression *getExprStmtExpr();
 
+  // If this is a return statement (flavor N_ReturnStmt), return
+  // a pointer to the Bexpression it contains.
+  Bexpression *getReturnStmtExpr();
+
   // If this is an if statement (flavor N_IfStmt), return
   // components of the "if" (condition, true block, false block).
   Bexpression *getIfStmtCondition();

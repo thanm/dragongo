@@ -59,7 +59,6 @@ enum NodeFlavor {
   N_Deref,
   N_Address,
   N_UnaryOp,
-  N_Return,
   N_StructField,
   N_BinaryOp,
   N_Compound,
@@ -73,6 +72,7 @@ enum NodeFlavor {
   N_LabelStmt,
   N_GotoStmt,
   N_ExprStmt,
+  N_ReturnStmt,
   N_IfStmt,
   N_BlockStmt,
   N_SwitchStmt,
@@ -226,17 +226,13 @@ class BnodeBuilder {
                       const std::vector<Bexpression *> &vals,
                       Binstructions &instructions,
                       Location loc);
-  Bexpression *mkReturn(Btype *typ,
-                        llvm::Value *value,
-                        Bexpression *returnVal,
-                        Binstructions &instructions,
-                        Location loc);
 
   // statements
   Bstatement *mkErrorStmt();
   Bstatement *mkLabelDefStmt(Bfunction *func, Blabel *label, Location loc);
   Bstatement *mkGotoStmt(Bfunction *func, Blabel *label, Location loc);
   Bstatement *mkExprStmt(Bfunction *func, Bexpression *expr, Location loc);
+  Bstatement *mkReturn(Bfunction *func, Bexpression *returnVal, Location loc);
   Bstatement *mkIfStmt(Bfunction *func,
                        Bexpression *cond, Bblock *trueBlock,
                        Bblock *thenBlock, Location loc);

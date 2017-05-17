@@ -463,7 +463,7 @@ public:
   llvm::BasicBlock *genEntryBlock(Bfunction *bfunction);
 
   // Helper to fix up epilog block for function (add return if needed)
-  void fixupEpilogBlog(Bfunction *bfunction, llvm::BasicBlock *epilog);
+  void fixupEpilogBlock(Bfunction *bfunction, llvm::BasicBlock *epilog);
 
   // Load-generation helper
   Bexpression *loadFromExpr(Bexpression *space,

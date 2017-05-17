@@ -47,7 +47,6 @@ static BnodePropVals BnodeProperties[] = {
   /* N_Deref */       {  "deref", 1, IsExpr },
   /* N_Address */     {  "addr", 1, IsExpr },
   /* N_UnaryOp */     {  "unary", 1, IsExpr },
-  /* N_Return */      {  "return", 1, IsExpr },
   /* N_StructField */ {  "field", 1, IsExpr },
   /* N_BinaryOp */    {  "binary", 2, IsExpr },
   /* N_Compound */    {  "compound", 2, IsExpr },
@@ -59,6 +58,7 @@ static BnodePropVals BnodeProperties[] = {
   /* N_LabelStmt */   {  "label", 0, IsStmt },
   /* N_GotoStmt */    {  "goto", 0, IsStmt },
   /* N_ExprStmt */    {  "exprst", 1, IsStmt },
+  /* N_ReturnStmt */  {  "return", 1, IsStmt },
   /* N_IfStmt */      {  "ifstmt", 3, IsStmt },
   /* N_BlockStmt */   {  "block", Variadic, IsStmt },
   /* N_SwitchStmt */  {  "switch", Variadic, IsStmt }
@@ -584,23 +584,6 @@ Bexpression *BnodeBuilder::mkCall(Btype *btype,
   return archive(rval);
 }
 
-Bexpression *BnodeBuilder::mkReturn(Btype *typ,
-                                    llvm::Value *val,
-                                    Bexpression *toret,
-                                    Binstructions &instructions,
-                                    Location loc)
-{
-  std::vector<Bnode *> kids = { toret };
-  assert(val);
-  Bexpression *rval =
-      new Bexpression(N_Return, kids, val, typ, loc);
-  for (auto &i : instructions.instructions())
-    rval->appendInstruction(i);
-  assert(llvm::isa<llvm::Instruction>(val));
-  rval->appendInstruction(llvm::cast<llvm::Instruction>(val));
-  return archive(rval);
-}
-
 Bstatement *BnodeBuilder::mkErrorStmt()
 {
   assert(! errorStatement_.get());
@@ -615,6 +598,15 @@ Bstatement *BnodeBuilder::mkExprStmt(Bfunction *func,
 {
   std::vector<Bnode *> kids = { expr };
   Bstatement *rval = new Bstatement(N_ExprStmt, func, kids, loc);
+  return archive(rval);
+}
+
+Bstatement *BnodeBuilder::mkReturn(Bfunction *func,
+                                   Bexpression *returnVal,
+                                   Location loc)
+{
+  std::vector<Bnode *> kids = { returnVal };
+  Bstatement *rval = new Bstatement(N_ReturnStmt, func, kids, loc);
   return archive(rval);
 }
 

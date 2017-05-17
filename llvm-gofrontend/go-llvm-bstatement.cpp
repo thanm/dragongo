@@ -73,6 +73,11 @@ Bexpression *Bstatement::getExprStmtExpr()
   return getNthChildAsExpr(N_ExprStmt, 0);
 }
 
+Bexpression *Bstatement::getReturnStmtExpr()
+{
+  return getNthChildAsExpr(N_ReturnStmt, 0);
+}
+
 Bexpression *Bstatement::getIfStmtCondition()
 {
   return getNthChildAsExpr(N_IfStmt, 0);
