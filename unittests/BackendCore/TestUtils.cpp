@@ -471,13 +471,14 @@ FcnTestHarness::FcnTestHarness(const char *fcnName)
     , entryBlock_(nullptr)
     , curBlock_(nullptr)
     , nextLabel_(nullptr)
+    , lineNum_(1)
     , finished_(false)
     , returnAdded_(false)
     , emitDumpFilesOnDiff_(false)
 {
   // establish initial file so as to make verifier happy
   be_->linemap()->start_file("unit_testing.go", 1);
-  loc_ = be_->linemap()->get_location(1);
+  loc_ = be_->linemap()->get_location(lineNum_);
 
   // Eager function creation if name not specified
   if (fcnName) {
@@ -494,6 +495,12 @@ FcnTestHarness::FcnTestHarness(const char *fcnName)
 FcnTestHarness::~FcnTestHarness()
 {
   assert(finished_);
+}
+
+Location FcnTestHarness::newloc()
+{
+  loc_ = be_->linemap()->get_location(++lineNum_);
+  return loc_;
 }
 
 Bfunction *FcnTestHarness::mkFunction(const char *fcnName, BFunctionType *befty)

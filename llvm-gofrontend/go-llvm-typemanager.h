@@ -108,7 +108,7 @@ class TypeManager {
   // only for debugging).
   llvm::Type *makeOpaqueLlvmType(const char *tag);
 
-  // Precomputer LLVM types of various sorts
+  // Precomputed LLVM types of various sorts.
   llvm::Type *llvmVoidType() const { return llvmVoidType_; }
   llvm::Type *llvmBoolType() const { return llvmBoolType_; }
   llvm::Type *llvmPtrType() const { return llvmPtrType_; }
@@ -122,6 +122,8 @@ class TypeManager {
   llvm::Type *llvmLongDoubleType() const { return llvmLongDoubleType_; }
   llvm::Type *llvmTwoFloatVecType() const { return llvmTwoFloatVecType_; }
   llvm::Type *llvmArbitraryIntegerType(unsigned bytes);
+  llvm::Type *landingPadExceptionType();
+  llvm::FunctionType *personalityFunctionType();
 
   // Context + address space.
   llvm::LLVMContext &context() const { return context_; }
@@ -138,10 +140,10 @@ class TypeManager {
   llvm::Type *makeLLVMFunctionType(const std::vector<Btype *> &paramTypes,
                                    Btype *rbtype, bool followsCabi);
 
-  // Returns field type from composite (struct/array) type and index
+  // Returns field type from composite (struct/array) type and index.
   Btype *elementTypeByIndex(Btype *type, unsigned element_index);
 
-  // Returns function result type from pointer-to-function type
+  // Returns function result type from pointer-to-function type.
   Btype *functionReturnType(Btype *functionType);
 
   // When making a change to a Btype (for example,modifying its underlying

@@ -84,6 +84,17 @@ class Bstatement : public Bnode {
   std::vector<Bexpression *> getSwitchStmtNthCase(unsigned idx);
   Bstatement *getSwitchStmtNthStmt(unsigned idx);
 
+  // If this is a defer statement (flavor N_DeferStmt), return
+  // components of the defer.
+  Bexpression *getDeferStmtUndeferCall();
+  Bexpression *getDeferStmtDeferCall();
+
+  // If this is an exception handling statement (flavor N_ExcepStmt), return
+  // components of the statement.
+  Bstatement *getExcepStmtBody();
+  Bstatement *getExcepStmtOnException();
+  Bstatement *getExcepStmtFinally();
+
   // If this is a goto statement (flavor N_GotoStmt), return
   // the target label for the goto.
   LabelId getGotoStmtTargetLabel();

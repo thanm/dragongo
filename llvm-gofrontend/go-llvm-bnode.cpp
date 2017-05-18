@@ -59,7 +59,9 @@ static BnodePropVals BnodeProperties[] = {
   /* N_GotoStmt */    {  "goto", 0, IsStmt },
   /* N_ExprStmt */    {  "exprst", 1, IsStmt },
   /* N_ReturnStmt */  {  "return", 1, IsStmt },
+  /* N_DeferStmt */   {  "defer", 2, IsStmt },
   /* N_IfStmt */      {  "ifstmt", 3, IsStmt },
+  /* N_ExcepStmt */   {  "excepstmt", 3, IsStmt },
   /* N_BlockStmt */   {  "block", Variadic, IsStmt },
   /* N_SwitchStmt */  {  "switch", Variadic, IsStmt }
 };
@@ -184,7 +186,10 @@ void Bnode::osdump(llvm::raw_ostream &os, unsigned ilevel,
     }
     case N_Const: {
       assert(expr);
-      expr->value()->print(os);
+      if (expr->value())
+        expr->value()->print(os);
+      else
+        os << "<nil const>";
       os << "\n";
       return;
     }
@@ -259,6 +264,8 @@ void Bnode::destroy(Bnode *node, WhichDel which)
   if (which != DelWrappers) {
     Bexpression *expr = node->castToBexpression();
     if (expr) {
+      for (auto inst : expr->instructions())
+        inst->dropAllReferences();
       for (auto inst : expr->instructions())
         delete inst;
     }
@@ -638,6 +645,33 @@ Bstatement *BnodeBuilder::mkIfStmt(Bfunction *func,
     falseBlock = new Bblock(func, std::vector<Bvariable *>(), loc);
   std::vector<Bnode *> kids = { cond, trueBlock, falseBlock };
   Bstatement *rval = new Bstatement(N_IfStmt, func, kids, loc);
+  return archive(rval);
+}
+
+Bstatement *BnodeBuilder::mkDeferStmt(Bfunction *func,
+                                      Bexpression *undefer,
+                                      Bexpression *defer,
+                                      Location loc)
+{
+  assert(func);
+  assert(undefer);
+  assert(defer);
+  std::vector<Bnode *> kids = { undefer, defer };
+  Bstatement *rval = new Bstatement(N_DeferStmt, func, kids, loc);
+  return archive(rval);
+}
+
+Bstatement *BnodeBuilder::mkExcepStmt(Bfunction *func,
+                                      Bstatement *body,
+                                      Bstatement *onexception,
+                                      Bstatement *finally,
+                                      Location loc)
+{
+  assert(body);
+  assert(onexception);
+  assert(finally);
+  std::vector<Bnode *> kids = { body, onexception, finally };
+  Bstatement *rval = new Bstatement(N_ExcepStmt, func, kids, loc);
   return archive(rval);
 }
 

@@ -93,9 +93,34 @@ Bstatement *Bstatement::getIfStmtFalseBlock()
   return getNthChildAsStmt(N_IfStmt, 2);
 }
 
+Bexpression *Bstatement::getDeferStmtUndeferCall()
+{
+  return getNthChildAsExpr(N_DeferStmt, 0);
+}
+
+Bexpression *Bstatement::getDeferStmtDeferCall()
+{
+  return getNthChildAsExpr(N_DeferStmt, 1);
+}
+
 Bexpression *Bstatement::getSwitchStmtValue()
 {
   return getNthChildAsExpr(N_SwitchStmt, 0);
+}
+
+Bstatement *Bstatement::getExcepStmtBody()
+{
+  return getNthChildAsStmt(N_ExcepStmt, 0);
+}
+
+Bstatement *Bstatement::getExcepStmtOnException()
+{
+  return getNthChildAsStmt(N_ExcepStmt, 1);
+}
+
+Bstatement *Bstatement::getExcepStmtFinally()
+{
+  return getNthChildAsStmt(N_ExcepStmt, 2);
 }
 
 unsigned Bstatement::getSwitchStmtNumCases()
