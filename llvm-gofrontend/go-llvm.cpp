@@ -3159,7 +3159,9 @@ GenBlocks::postProcessInst(llvm::Instruction *inst,
 {
   if (llvm::isa<llvm::CallInst>(inst) && !padBlockStack_.empty()) {
     llvm::CallInst *call = llvm::cast<llvm::CallInst>(inst);
-    return rewriteToMayThrowCall(call, curblock);
+    llvm::Function *func = call->getCalledFunction();
+    if (!func || !func->isIntrinsic())
+      return rewriteToMayThrowCall(call, curblock);
   }
   return std::make_pair(inst, curblock);
 }
