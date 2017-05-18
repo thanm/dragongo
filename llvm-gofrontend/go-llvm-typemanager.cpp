@@ -1210,11 +1210,12 @@ llvm::Type *TypeManager::landingPadExceptionType()
 llvm::FunctionType *TypeManager::personalityFunctionType()
 {
   const bool isVarargs = false;
-  llvm::SmallVector<llvm::Type *, 4> elems(4);
+  llvm::SmallVector<llvm::Type *, 5> elems(5);
   elems[0] = llvmInt32Type();
-  elems[1] = llvmInt64Type();
-  elems[2] = llvmPtrType();
+  elems[1] = llvmInt32Type();
+  elems[2] = llvmInt64Type();
   elems[3] = llvmPtrType();
+  elems[4] = llvmPtrType();
   llvm::FunctionType *llft =
       llvm::FunctionType::get(llvmInt32Type(), elems, isVarargs);
   return llft;

@@ -3339,7 +3339,7 @@ llvm::BasicBlock *GenBlocks::genDefer(Bstatement *defst,
 {
   assert(defst->flavor() == N_DeferStmt);
 
-  // Insure that current function has personality set
+  // Insure that current function has personality routine set.
   llvm::Function *func = function()->function();
   if (! func->hasPersonalityFn())
     func->setPersonalityFn(be_->personalityFunction());
@@ -3357,7 +3357,7 @@ llvm::BasicBlock *GenBlocks::genDefer(Bstatement *defst,
   llvm::BasicBlock *padbb =
       llvm::BasicBlock::Create(context_, be_->namegen("pad"), func);
 
-  // Catch BB containing checkdefer (defercall) code.
+  // Catch BB will contain checkdefer (defercall) code.
   llvm::BasicBlock *catchbb =
       llvm::BasicBlock::Create(context_, be_->namegen("catch"), func);
   if (curblock)
@@ -3369,13 +3369,13 @@ llvm::BasicBlock *GenBlocks::genDefer(Bstatement *defst,
   // suitable landing pad.
   padBlockStack_.push_back(padbb);
 
-  // Walk the defcall expression
+  // Walk the defcall expression.
   curblock = walkExpr(curblock, defcallex);
 
-  // Pop the pad block stack
+  // Pop the pad block stack.
   padBlockStack_.pop_back();
 
-  // Emit landing pad into pad block, followed by branch to catch block
+  // Emit landing pad into pad block, followed by branch to catch block.
   llvm::LandingPadInst *padinst =
       llvm::LandingPadInst::Create(be_->landingPadExceptionType(),
                                    0, be_->namegen("ex"), padbb);
@@ -3384,13 +3384,13 @@ llvm::BasicBlock *GenBlocks::genDefer(Bstatement *defst,
 
   llvm::BasicBlock *contbb = curblock;
 
-  // Catch block containing defer call
+  // Catch block containing defer call.
   curblock = catchbb;
   auto bb = walkExpr(curblock, undcallex);
   assert(bb == curblock);
   llvm::BranchInst::Create(finbb, catchbb);
 
-  // Continue bb is final bb
+  // Continue bb is final bb.
   return contbb;
 }
 
@@ -3399,7 +3399,7 @@ llvm::BasicBlock *GenBlocks::genExcep(Bstatement *excepst,
 {
   assert(excepst->flavor() == N_ExcepStmt);
 
-  // Insure that current function has personality set
+  // Insure that current function has personality set.
   llvm::Function *func = function()->function();
   if (! func->hasPersonalityFn())
     func->setPersonalityFn(be_->personalityFunction());
@@ -3440,7 +3440,7 @@ llvm::BasicBlock *GenBlocks::genExcep(Bstatement *excepst,
   // Walk the body statement.
   curblock = walk(body, curblock);
 
-  // Pop the pad block stack
+  // Pop the pad block stack.
   padBlockStack_.pop_back();
 
   // If the body block ended without a return, then insert a jump
@@ -3448,7 +3448,7 @@ llvm::BasicBlock *GenBlocks::genExcep(Bstatement *excepst,
   if (curblock)
     llvm::BranchInst::Create(contbb, curblock);
 
-  // Emit landing pad inst in pad block, followed by branch to catch bb
+  // Emit landing pad inst in pad block, followed by branch to catch bb.
   llvm::LandingPadInst *padinst =
       llvm::LandingPadInst::Create(be_->landingPadExceptionType(),
                                    0, be_->namegen("ex"), padbb);
@@ -3473,14 +3473,14 @@ llvm::BasicBlock *GenBlocks::genExcep(Bstatement *excepst,
   // Return handling now complete.
   finallyBlock_ = nullptr;
 
-  // Fix up second pad block, followed by branch to continue block
+  // Fix up second pad block, followed by branch to continue block.
   llvm::LandingPadInst *padinst2 =
       llvm::LandingPadInst::Create(be_->landingPadExceptionType(),
                                    0, be_->namegen("ex2"), catchpadbb);
   padinst2->addClause(llvm::Constant::getNullValue(be_->llvmPtrType()));
   llvm::BranchInst::Create(contbb, catchpadbb);
 
-  // Handle finally statement where applicable
+  // Handle finally statement where applicable.
   curblock = contbb;
   if (finally != nullptr) {
     curblock = walk(finally, curblock);
