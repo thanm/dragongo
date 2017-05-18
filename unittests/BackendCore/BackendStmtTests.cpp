@@ -369,7 +369,7 @@ TEST(BackendStmtTests, TestDeferStmt) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 
   const char *exp = R"RAW_RESULT(
-define void @foo(i8* nest %nest.0) #0 personality i32 (i32, i64, i8*, i8*)* @__gccgo_personality_v0 {
+define void @foo(i8* nest %nest.0) #0 personality i32 (i32, i32, i64, i8*, i8*)* @__gccgo_personality_v0 {
 entry:
   %x = alloca i8
   store i8 0, i8* %x
@@ -465,7 +465,7 @@ TEST(BackendStmtTests, TestExceptionHandlingStmt) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 
   const char *exp = R"RAW_RESULT(
-define void @baz(i8* nest %nest.0) #0 personality i32 (i32, i64, i8*, i8*)* @__gccgo_personality_v0 {
+define void @baz(i8* nest %nest.0) #0 personality i32 (i32, i32, i64, i8*, i8*)* @__gccgo_personality_v0 {
 entry:
   %x = alloca i64
   store i64 0, i64* %x
@@ -617,7 +617,7 @@ TEST(BackendStmtTests, TestExceptionHandlingStmtWithReturns) {
   EXPECT_FALSE(broken && "Module failed to verify.");
 
   const char *exp = R"RAW_RESULT(
-define i64 @baz(i8* nest %nest.0, i64 %p0) #0 personality i32 (i32, i64, i8*, i8*)* @__gccgo_personality_v0 {
+define i64 @baz(i8* nest %nest.0, i64 %p0) #0 personality i32 (i32, i32, i64, i8*, i8*)* @__gccgo_personality_v0 {
 entry:
   %p0.addr = alloca i64
   %ret = alloca i64
