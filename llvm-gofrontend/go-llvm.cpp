@@ -3367,12 +3367,12 @@ llvm::BasicBlock *GenBlocks::genDefer(Bstatement *defst,
   curblock = finbb;
 
   // Push pad block onto stack. This will be an indication that any call
-  // in the defcallex subtree should be converted into an invoke with
+  // in the undcallex subtree should be converted into an invoke with
   // suitable landing pad.
   padBlockStack_.push_back(padbb);
 
-  // Walk the defcall expression.
-  curblock = walkExpr(curblock, defcallex);
+  // Walk the undcall expression.
+  curblock = walkExpr(curblock, undcallex);
 
   // Pop the pad block stack.
   padBlockStack_.pop_back();
@@ -3388,7 +3388,7 @@ llvm::BasicBlock *GenBlocks::genDefer(Bstatement *defst,
 
   // Catch block containing defer call.
   curblock = catchbb;
-  auto bb = walkExpr(curblock, undcallex);
+  auto bb = walkExpr(curblock, defcallex);
   assert(bb == curblock);
   llvm::BranchInst::Create(finbb, catchbb);
 

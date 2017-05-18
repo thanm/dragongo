@@ -376,7 +376,7 @@ entry:
   br label %finish.0
 
 finish.0:                                         ; preds = %catch.0, %entry
-  invoke void @checkdefer(i8* nest undef, i8* %x)
+  invoke void @deferreturn(i8* nest undef, i8* %x)
           to label %cont.0 unwind label %pad.0
 
 pad.0:                                            ; preds = %finish.0
@@ -385,7 +385,7 @@ pad.0:                                            ; preds = %finish.0
   br label %catch.0
 
 catch.0:                                          ; preds = %pad.0
-  call void @deferreturn(i8* nest undef, i8* %x)
+  call void @checkdefer(i8* nest undef, i8* %x)
   br label %finish.0
 
 cont.0:                                           ; preds = %finish.0
