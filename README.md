@@ -1,4 +1,7 @@
-# dragongo
+
+# dragongo is now: [gollvm](https://go.googlesource.com/gollvm)
+
+## dragongo
 
 LLVM IR generation "middle end" for LLVM-based go compiler. This is currently very much in a prototype phase, with a fairly brittle/fragile build process, so please take careful note of the setup instructions.
 
